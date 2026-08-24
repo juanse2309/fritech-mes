@@ -5,6 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from datetime import datetime
 from backend.models.sql_models import Pedido, DistribucionOpPedidos
+from backend.utils.formatters import preservar_o_normalizar_prefijo
 
 logger = logging.getLogger(__name__)
 
@@ -178,12 +179,15 @@ def reiniciar_pedido_wo(id_pedido_numero, db_session):
             item = normalizar_llaves_dict(raw_dict)
             
             prod_id = str(item.get('productos', '')).strip()
-            mapped_prod = str(mapping.get(prod_id, prod_id)).strip()
-            
-            # El código de World Office se persiste TAL CUAL. Antes se anteponía
-            # 'FR-' a todo código que empezara por '9', lo que reetiquetaba como
-            # FriParts referencias numéricas de otras divisiones. La unificación
-            # '9304'/'FR-9304' se resuelve en las consultas, no en la escritura.
+            mapped_prod_raw = str(mapping.get(prod_id, prod_id)).strip()
+            # reiniciar_pedido_wo() solo escribe en Pedido (db_pedidos), la tabla
+            # exclusiva de pedidos FriParts -- Frimetals vive aparte en
+            # metals_pedidos. Un codigo numerico huerfano que venga de WO en este
+            # flujo es siempre FriParts, así que se antepone 'FR-' vía opt-in
+            # explicito (igual que en pedidos_routes.registrar_pedido); de lo
+            # contrario procesar_datos_wo() vuelve a exportar la referencia
+            # incompleta y World Office rechaza la carga del archivo plano.
+            mapped_prod = preservar_o_normalizar_prefijo(mapped_prod_raw, prefijo_defecto='FR-')
 
             cantidad = float(item.get('cantidad', 0))
             precio = float(item.get('precio_unitario', 0))

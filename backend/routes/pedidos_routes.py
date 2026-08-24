@@ -7,7 +7,7 @@ from backend.config.constants import FALLBACK_OPERARIO
 from sqlalchemy import text
 from backend.core.tenant import get_tenant_from_request
 from backend.utils.time_utils import get_colombia_time
-from backend.utils.formatters import normalizar_codigo_sin_prefijo, sql_expr_codigo_sin_prefijo_fr
+from backend.utils.formatters import normalizar_codigo_sin_prefijo, sql_expr_codigo_sin_prefijo_fr, preservar_o_normalizar_prefijo
 from datetime import datetime
 import logging
 import json
@@ -188,10 +188,15 @@ def registrar_pedido():
         items_procesados = 0
         for prod in productos:
             id_sql = prod.get('id_sql')
-            # Se persiste la referencia tal como la envió el comercial. Antes se
-            # anteponía 'FR-' a todo código que empezara por '9', reetiquetando
-            # como FriParts referencias de otras divisiones.
-            codigo = str(prod.get('codigo', '')).strip().upper()
+            # db_pedidos (Pedido) es EXCLUSIVAMENTE FriParts -- Frimetals vive en
+            # metals_pedidos, una tabla distinta que esta ruta nunca escribe. Por
+            # eso, a diferencia de Inyeccion/Pulido (donde la division reportada
+            # es ambigua y NO debe inferirse), aqui es seguro y necesario anteponer
+            # 'FR-' a un codigo numerico huerfano vía opt-in explicito: sin el
+            # prefijo, procesar_datos_wo() (facturacion_routes.py) escribe la
+            # referencia incompleta en el archivo plano y World Office rechaza la
+            # carga.
+            codigo = preservar_o_normalizar_prefijo(prod.get('codigo', ''), prefijo_defecto='FR-').upper()
             cantidad = float(prod.get('cantidad', 0))
             precio = float(prod.get('precio_unitario', 0))
             descripcion = prod.get('descripcion', '')
