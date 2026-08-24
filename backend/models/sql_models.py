@@ -899,19 +899,25 @@ class ChecklistEnsamble(db.Model):
     __tablename__ = 'db_checklist_ensamble'
     __table_args__ = {'extend_existing': True}
 
-    id_checklist          = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    id_checklist            = db.Column(db.Integer, primary_key=True, autoincrement=True)
     # FK lógica (sin constraint formal, mismo patrón que id_prog en Ensamble)
     # hacia programacion_ensamble.id_prog. Única: 1 checklist por meta.
-    id_prog               = db.Column(db.Integer, index=True, unique=True, nullable=False)
-    ensamble_estado        = db.Column(db.String(20), default='PENDIENTE')
-    rayada_carcaza_estado  = db.Column(db.String(20), default='PENDIENTE')
-    rayada_interno_estado  = db.Column(db.String(20), default='PENDIENTE')
-    pintura_estado         = db.Column(db.String(20), default='PENDIENTE')
-    horno1_estado          = db.Column(db.String(20), default='PENDIENTE')
-    cerrada_estado         = db.Column(db.String(20), default='PENDIENTE')
-    horno2_estado          = db.Column(db.String(20), default='PENDIENTE')
-    actualizado_en         = db.Column(db.DateTime, nullable=True)
-    actualizado_por        = db.Column(db.Text, nullable=True)
+    id_prog                 = db.Column(db.Integer, index=True, unique=True, nullable=False)
+    # "Crudo": único proceso que SIEMPRE aplica (productos simples que no
+    # llevan nada más). Antes se llamaba solo "ensamble" -- renombrada por
+    # migrate_checklist_ensamble_ensamble_curado.py.
+    ensamble_crudo_estado   = db.Column(db.String(20), default='PENDIENTE')
+    rayada_carcaza_estado   = db.Column(db.String(20), default='PENDIENTE')
+    rayada_interno_estado   = db.Column(db.String(20), default='PENDIENTE')
+    pintura_estado          = db.Column(db.String(20), default='PENDIENTE')
+    horno1_estado           = db.Column(db.String(20), default='PENDIENTE')
+    # Segundo armado, con la pieza ya curada (después de Horno 1) -- distinto
+    # del crudo de arriba.
+    ensamble_estado         = db.Column(db.String(20), default='PENDIENTE')
+    cerrada_estado          = db.Column(db.String(20), default='PENDIENTE')
+    horno2_estado           = db.Column(db.String(20), default='PENDIENTE')
+    actualizado_en          = db.Column(db.DateTime, nullable=True)
+    actualizado_por         = db.Column(db.Text, nullable=True)
 
 
 class DistribucionOpPedidos(db.Model):

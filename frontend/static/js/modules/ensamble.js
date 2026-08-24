@@ -5,15 +5,17 @@
 
 // Procesos del checklist de Ensamble, en el orden en que se muestran y se
 // envían al backend (debe coincidir con PROCESOS_CHECKLIST en
-// backend/services/ensamble_service.py). "ensamble" va primero porque es
-// el único proceso que SIEMPRE aplica -- los otros 6 pueden marcarse
-// "No aplica" en productos que no los requieren.
+// backend/services/ensamble_service.py). "Ensamble Crudo" va primero: es el
+// único proceso que SIEMPRE aplica (para productos simples que no llevan
+// nada más). "Ensamble" (a secas) es un segundo armado que se hace después
+// de Horno 1, con la pieza ya curada -- distinto del crudo.
 const PROCESOS_CHECKLIST = [
-    { key: 'ensamble', label: 'Ensamble' },
+    { key: 'ensamble_crudo', label: 'Ensamble Crudo' },
     { key: 'rayada_carcaza', label: 'Rayada Carcaza' },
     { key: 'rayada_interno', label: 'Rayada Interno' },
     { key: 'pintura', label: 'Pintura' },
     { key: 'horno1', label: 'Horno 1' },
+    { key: 'ensamble', label: 'Ensamble' },
     { key: 'cerrada', label: 'Cerrada' },
     { key: 'horno2', label: 'Horno 2' },
 ];
@@ -1046,12 +1048,26 @@ const ModuloEnsamble = {
 
             let html = '<div class="p-3">';
             res.data.forEach(p => {
-                const completada = p.estado === 'COMPLETADO';
+                const checklist = p.checklist || checklistPorDefecto();
+                const checklistCompleto = PROCESOS_CHECKLIST.every(proc => checklist[proc.key] !== 'PENDIENTE');
+                // "Completada" de verdad exige los dos ejes: unidades Y checklist.
+                // Si las unidades ya llegaron al 100% pero el checklist no, se
+                // avisa aparte -- decirle "Completada" ahí sería engañoso.
+                const completada = p.estado === 'COMPLETADO' && checklistCompleto;
+                const faltaChecklist = p.estado === 'COMPLETADO' && !checklistCompleto;
                 const porc = Math.min(100, Math.round((p.cantidad_realizada / p.cantidad_objetivo) * 100));
+
+                let badge = '';
+                if (completada) {
+                    badge = ' <span class="badge rounded-pill ms-1" style="background:#e3f3e8;color:#1f7a44;font-weight:600;">✓ Completada hoy</span>';
+                } else if (faltaChecklist) {
+                    badge = ' <span class="badge rounded-pill ms-1" style="background:#fdf3e2;color:#96650b;font-weight:600;">⚠ Faltan procesos</span>';
+                }
+
                 html += `
                     <div class="mb-2 p-2 border-bottom">
                         <div class="d-flex justify-content-between align-items-center small">
-                            <span>${p.id_codigo}${completada ? ' <span class="badge rounded-pill ms-1" style="background:#e3f3e8;color:#1f7a44;font-weight:600;">✓ Completada hoy</span>' : ''}</span>
+                            <span>${p.id_codigo}${badge}</span>
                             <span>${p.cantidad_realizada}/${p.cantidad_objetivo}</span>
                         </div>
                         <div class="progress" style="height: 3px;">

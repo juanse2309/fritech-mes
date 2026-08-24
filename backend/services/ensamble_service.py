@@ -18,18 +18,20 @@ from backend.utils.time_utils import get_colombia_time
 logger = logging.getLogger(__name__)
 
 # Procesos de planta del checklist de Ensamble, en el orden en que se
-# muestran/reportan. "ensamble" va primero: es el único proceso que SIEMPRE
-# aplica (este módulo existe para él); los otros 6 son adicionales y pueden
+# muestran/reportan. "ensamble_crudo" va primero: es el único proceso que
+# SIEMPRE aplica (productos simples que no llevan nada más). "ensamble" (a
+# secas) es un segundo armado que se hace después de Horno 1, con la pieza
+# ya curada -- distinto del crudo. Los demás son adicionales y pueden
 # marcarse NO_APLICA en productos que no los requieren.
 PROCESOS_CHECKLIST = [
-    'ensamble', 'rayada_carcaza', 'rayada_interno',
-    'pintura', 'horno1', 'cerrada', 'horno2',
+    'ensamble_crudo', 'rayada_carcaza', 'rayada_interno',
+    'pintura', 'horno1', 'ensamble', 'cerrada', 'horno2',
 ]
 ESTADOS_CHECKLIST_VALIDOS = {'PENDIENTE', 'HECHO', 'NO_APLICA'}
 
 
 def _checklist_default():
-    """Checklist en blanco: los 7 procesos en PENDIENTE."""
+    """Checklist en blanco: los 8 procesos en PENDIENTE."""
     return {proc: 'PENDIENTE' for proc in PROCESOS_CHECKLIST}
 
 
@@ -38,6 +40,22 @@ def _checklist_a_dict(row):
     if not row:
         return _checklist_default()
     return {proc: getattr(row, f'{proc}_estado') or 'PENDIENTE' for proc in PROCESOS_CHECKLIST}
+
+
+def _condicion_checklist_incompleto():
+    """
+    Condición SQL: la fila de checklist no existe o tiene algún proceso en
+    PENDIENTE. Requiere que la query venga de un outerjoin contra
+    ChecklistEnsamble (ChecklistEnsamble.id_prog == ProgramacionEnsamble.id_prog).
+
+    Se usa para que una meta no se dé por "resuelta" en las listas de
+    trabajo solo porque cantidad_realizada llegó a cantidad_objetivo -- ese
+    es un eje independiente del checklist de procesos (ver reportar_multi).
+    """
+    return or_(
+        ChecklistEnsamble.id_prog.is_(None),
+        or_(*[getattr(ChecklistEnsamble, f'{proc}_estado') == 'PENDIENTE' for proc in PROCESOS_CHECKLIST])
+    )
 
 
 class BomNoDisponibleException(Exception):
@@ -184,10 +202,19 @@ class EnsambleService:
 
     @staticmethod
     def listar_tareas_pendientes():
-        """Lista programaciones no completadas con el cálculo de cantidad faltante
-        y su checklist de procesos (PENDIENTE por defecto si aún no se ha reportado)."""
-        tareas = ProgramacionEnsamble.query.filter(
-            ProgramacionEnsamble.estado != 'COMPLETADO'
+        """Lista programaciones con trabajo real pendiente -- en unidades
+        (estado != COMPLETADO) o en checklist de procesos (ver
+        _condicion_checklist_incompleto). Una meta que ya llegó al 100% en
+        unidades pero todavía tiene procesos sin marcar NO desaparece de
+        esta lista: son dos ejes independientes, y al operario le sigue
+        faltando terminar de marcar el checklist."""
+        tareas = ProgramacionEnsamble.query.outerjoin(
+            ChecklistEnsamble, ChecklistEnsamble.id_prog == ProgramacionEnsamble.id_prog
+        ).filter(
+            or_(
+                ProgramacionEnsamble.estado != 'COMPLETADO',
+                _condicion_checklist_incompleto()
+            )
         ).order_by(ProgramacionEnsamble.fecha_programada.asc()).all()
 
         ids_prog = [t.id_prog for t in tareas]
@@ -216,19 +243,25 @@ class EnsambleService:
     @staticmethod
     def listar_historial_metas():
         """
-        Panel "Historial de Metas" (pestaña Programación): todo lo aún no
-        completado -- sin importar el día, para que algo pendiente de ayer
-        se siga viendo hoy -- más lo que se completó HOY, como confirmación
+        Panel "Historial de Metas" (pestaña Programación): todo lo que
+        todavía necesita algo -- en unidades (estado != COMPLETADO, sin
+        importar el día, para que algo pendiente de ayer se siga viendo
+        hoy) o en checklist de procesos (ver _condicion_checklist_incompleto,
+        mismo criterio que listar_tareas_pendientes) -- más lo que quedó
+        totalmente resuelto HOY (unidades y checklist), como confirmación
         rápida de cierre sin tener que abrir el archivo completo de
-        "Completadas". Lo completado de hace más de un día ya no aparece
-        aquí; eso es justamente lo que evita que este panel crezca sin
-        límite con años de historial (a diferencia de GET /programacion,
-        que sigue trayendo todo para el modal de "Completadas").
+        "Completadas". Lo resuelto de hace más de un día ya no aparece aquí;
+        eso es justamente lo que evita que este panel crezca sin límite con
+        años de historial (a diferencia de GET /programacion, que sigue
+        trayendo todo para el modal de "Completadas").
         """
         hoy = get_colombia_time().date()
-        schedules = ProgramacionEnsamble.query.filter(
+        schedules = ProgramacionEnsamble.query.outerjoin(
+            ChecklistEnsamble, ChecklistEnsamble.id_prog == ProgramacionEnsamble.id_prog
+        ).filter(
             or_(
                 ProgramacionEnsamble.estado != 'COMPLETADO',
+                _condicion_checklist_incompleto(),
                 ProgramacionEnsamble.fecha_programada == hoy
             )
         ).order_by(
@@ -236,13 +269,22 @@ class EnsambleService:
             ProgramacionEnsamble.fecha_programada.asc()
         ).limit(12).all()
 
+        ids_prog = [s.id_prog for s in schedules]
+        checklists_por_id_prog = {}
+        if ids_prog:
+            filas_checklist = ChecklistEnsamble.query.filter(
+                ChecklistEnsamble.id_prog.in_(ids_prog)
+            ).all()
+            checklists_por_id_prog = {row.id_prog: _checklist_a_dict(row) for row in filas_checklist}
+
         return [{
             'id_prog': s.id_prog,
             'id_codigo': s.id_codigo,
             'cantidad_objetivo': s.cantidad_objetivo,
             'cantidad_realizada': s.cantidad_realizada,
             'fecha_programada': s.fecha_programada.strftime('%Y-%m-%d') if s.fecha_programada else '',
-            'estado': s.estado
+            'estado': s.estado,
+            'checklist': checklists_por_id_prog.get(s.id_prog, _checklist_default())
         } for s in schedules]
 
     @staticmethod
