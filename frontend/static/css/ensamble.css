@@ -1,0 +1,42 @@
+/* Checklist de Procesos (módulo Ensamble, pestaña Reporte de Tareas). */
+
+.checklist-chip {
+    border: 1.5px solid transparent;
+    font-size: 0.85rem;
+    transition: filter 0.12s ease, transform 0.06s ease;
+    cursor: pointer;
+}
+
+.checklist-chip:hover {
+    filter: brightness(0.97);
+}
+
+.checklist-chip:active {
+    transform: scale(0.97);
+}
+
+/* Puntos de resumen del checklist en la tarjeta de tarea (lista de pendientes). */
+.checklist-dot {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+}
+
+/* Franja compacta que agrupa los puntos del checklist + la fracción, dentro
+   de la tarjeta de tarea -- le da peso visual propio en vez de perderse
+   como una línea de texto suelta entre la barra de progreso y el CTA. */
+.checklist-strip {
+    background: #f8f9fb;
+    border-radius: 10px;
+    padding: 8px 12px;
+}
+
+.task-card-ensamble {
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.task-card-ensamble:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(16, 22, 29, 0.1) !important;
+}

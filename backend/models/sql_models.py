@@ -886,6 +886,34 @@ class ProgramacionEnsamble(db.Model):
     cantidad_realizada = db.Column(db.Integer, default=0)
     fecha_programada   = db.Column(db.Date, nullable=False)
     estado             = db.Column(db.String(20), default='PENDIENTE') # PENDIENTE, EN_PROCESO, COMPLETADO
+
+
+class ChecklistEnsamble(db.Model):
+    """
+    Checklist de procesos por producto programado (1 fila por id_prog).
+    Cada columna es independiente de cantidad_realizada/estado de
+    ProgramacionEnsamble -- ese eje mide unidades, este mide qué procesos
+    de planta se le hicieron al producto (o si no le correspondían).
+    Estados válidos por columna: PENDIENTE, HECHO, NO_APLICA.
+    """
+    __tablename__ = 'db_checklist_ensamble'
+    __table_args__ = {'extend_existing': True}
+
+    id_checklist          = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    # FK lógica (sin constraint formal, mismo patrón que id_prog en Ensamble)
+    # hacia programacion_ensamble.id_prog. Única: 1 checklist por meta.
+    id_prog               = db.Column(db.Integer, index=True, unique=True, nullable=False)
+    ensamble_estado        = db.Column(db.String(20), default='PENDIENTE')
+    rayada_carcaza_estado  = db.Column(db.String(20), default='PENDIENTE')
+    rayada_interno_estado  = db.Column(db.String(20), default='PENDIENTE')
+    pintura_estado         = db.Column(db.String(20), default='PENDIENTE')
+    horno1_estado          = db.Column(db.String(20), default='PENDIENTE')
+    cerrada_estado         = db.Column(db.String(20), default='PENDIENTE')
+    horno2_estado          = db.Column(db.String(20), default='PENDIENTE')
+    actualizado_en         = db.Column(db.DateTime, nullable=True)
+    actualizado_por        = db.Column(db.Text, nullable=True)
+
+
 class DistribucionOpPedidos(db.Model):
     """
     Sistema de cubetas para la Vista Gerencial. 

@@ -3,12 +3,43 @@
 // Versión RE-ESTABLECIDA: Captura Infalible de Usuario y Corrección de IDs
 // ============================================
 
+// Procesos del checklist de Ensamble, en el orden en que se muestran y se
+// envían al backend (debe coincidir con PROCESOS_CHECKLIST en
+// backend/services/ensamble_service.py). "ensamble" va primero porque es
+// el único proceso que SIEMPRE aplica -- los otros 6 pueden marcarse
+// "No aplica" en productos que no los requieren.
+const PROCESOS_CHECKLIST = [
+    { key: 'ensamble', label: 'Ensamble' },
+    { key: 'rayada_carcaza', label: 'Rayada Carcaza' },
+    { key: 'rayada_interno', label: 'Rayada Interno' },
+    { key: 'pintura', label: 'Pintura' },
+    { key: 'horno1', label: 'Horno 1' },
+    { key: 'cerrada', label: 'Cerrada' },
+    { key: 'horno2', label: 'Horno 2' },
+];
+const CHECKLIST_CICLO = ['PENDIENTE', 'HECHO', 'NO_APLICA'];
+// Estilo de "chip" con tinte suave (fondo pastel + borde + texto del mismo
+// tono) en vez de los badges de relleno sólido de Bootstrap -- más cercano
+// al boceto aprobado que a un botón genérico.
+const CHECKLIST_UI = {
+    PENDIENTE: { label: 'Pendiente', icono: 'fa-circle', style: 'background:#fdf3e2;color:#96650b;border-color:#f3ddac;' },
+    HECHO: { label: 'Hecho', icono: 'fa-check', style: 'background:#e3f3e8;color:#1f7a44;border-color:#b9e2c6;' },
+    NO_APLICA: { label: 'No aplica', icono: 'fa-ban', style: 'background:#eef0f2;color:#8b95a1;border-color:#dfe3e8;text-decoration:line-through;' },
+};
+
+function checklistPorDefecto() {
+    const estados = {};
+    PROCESOS_CHECKLIST.forEach(p => { estados[p.key] = 'PENDIENTE'; });
+    return estados;
+}
+
 const ModuloEnsamble = {
     productosData: [],
     responsablesData: [],
     currentTab: 'programacion',
     isManualMode: false,
     pncDetalles: [],
+    checklistEstados: {}, // {proceso: 'PENDIENTE'|'HECHO'|'NO_APLICA'} de la tarea seleccionada
     isSubmitting: false, // Guardia anti doble-clic para reportarAvance/pausarReporte
 
     // Estado de Sesión Persistente
@@ -76,12 +107,7 @@ const ModuloEnsamble = {
 
                 // Poblar UI y Bloquear
                 const prodInput = document.getElementById('reporte-producto-manual');
-                const prodDisplay = document.getElementById('reporte-producto-display');
                 if (prodInput) prodInput.value = session.id_codigo;
-                if (prodDisplay) {
-                    prodDisplay.textContent = session.id_codigo;
-                    prodDisplay.style.display = 'block';
-                }
                 const opInput = document.getElementById('reporte-op');
                 if (opInput) opInput.value = session.orden_produccion || '';
                 const cantInput = document.getElementById('reporte-cantidad');
@@ -399,6 +425,52 @@ const ModuloEnsamble = {
         }
     },
 
+    // --- CHECKLIST DE PROCESOS ---
+    renderChecklist: function () {
+        const wrapper = document.getElementById('reporte-checklist-wrapper');
+        const container = document.getElementById('reporte-checklist-container');
+        if (!container || !wrapper) return;
+
+        wrapper.style.display = 'block';
+
+        const chips = PROCESOS_CHECKLIST.map(p => {
+            const estado = this.checklistEstados[p.key] || 'PENDIENTE';
+            const ui = CHECKLIST_UI[estado];
+            return `
+                <button type="button" class="checklist-chip fw-bold rounded-pill px-3 py-2"
+                        style="${ui.style}" onclick="ModuloEnsamble.toggleChecklistProceso('${p.key}')">
+                    <i class="fas ${ui.icono} me-1"></i>${p.label}
+                    <span style="${estado === 'NO_APLICA' ? 'text-decoration:line-through;' : ''}opacity:.85;font-weight:500;"> · ${ui.label}</span>
+                </button>
+            `;
+        }).join('');
+
+        const leyenda = `
+            <div class="d-flex flex-wrap gap-3 small text-muted mt-2">
+                <span><i class="fas fa-circle me-1" style="color:#96650b;"></i>Pendiente</span>
+                <span><i class="fas fa-check me-1" style="color:#1f7a44;"></i>Hecho</span>
+                <span><i class="fas fa-ban me-1" style="color:#8b95a1;"></i>No aplica (clic para ciclar)</span>
+            </div>
+        `;
+
+        container.innerHTML = `<div class="d-flex flex-wrap gap-2">${chips}</div>${leyenda}`;
+    },
+
+    toggleChecklistProceso: function (proceso) {
+        const actual = this.checklistEstados[proceso] || 'PENDIENTE';
+        const siguiente = CHECKLIST_CICLO[(CHECKLIST_CICLO.indexOf(actual) + 1) % CHECKLIST_CICLO.length];
+        this.checklistEstados[proceso] = siguiente;
+        this.renderChecklist();
+    },
+
+    ocultarChecklist: function () {
+        this.checklistEstados = {};
+        const wrapper = document.getElementById('reporte-checklist-wrapper');
+        if (wrapper) wrapper.style.display = 'none';
+        const container = document.getElementById('reporte-checklist-container');
+        if (container) container.innerHTML = '';
+    },
+
     seleccionarTarea: function (tarea) {
         if (this.sesionActiva) {
             Swal.fire('Sesión Activa', 'Termina el trabajo actual antes de iniciar una nueva tarea.', 'warning');
@@ -408,11 +480,12 @@ const ModuloEnsamble = {
         this.resetFormulario(false);
 
         document.getElementById('reporte-id-prog').value = tarea.id_prog;
-        document.getElementById('reporte-producto-display').textContent = tarea.id_codigo;
-        document.getElementById('reporte-producto-display').style.display = 'block';
         document.getElementById('reporte-producto-manual').value = tarea.id_codigo;
         document.getElementById('reporte-buje-origen').value = tarea.id_codigo;
         document.getElementById('reporte-cantidad').value = tarea.faltante;
+
+        this.checklistEstados = Object.assign(checklistPorDefecto(), tarea.checklist || {});
+        this.renderChecklist();
 
         this.intentarAutoSeleccionarResponsable();
         this.renderBOMCheckboxes(tarea.id_codigo, 'reporte-bom-check-container');
@@ -432,8 +505,6 @@ const ModuloEnsamble = {
     seleccionarProductoManual: async function (producto) {
         if (this.sesionActiva) return;
         document.getElementById('reporte-id-prog').value = '';
-        document.getElementById('reporte-producto-display').textContent = producto.codigo_sistema;
-        document.getElementById('reporte-producto-display').style.display = 'block';
         document.getElementById('reporte-buje-origen').value = producto.codigo_sistema;
 
         this.intentarAutoSeleccionarResponsable();
@@ -452,9 +523,6 @@ const ModuloEnsamble = {
             const el = document.getElementById(id);
             if (el) el.value = '';
         });
-
-        const prodDisplay = document.getElementById('reporte-producto-display');
-        if (prodDisplay) prodDisplay.style.display = 'none';
 
         const bomContainer = document.getElementById('reporte-bom-check-container');
         if (bomContainer) bomContainer.innerHTML = '<div class="col-12 text-center text-muted py-2">Escribe un código para cargar el BOM.</div>';
@@ -583,7 +651,7 @@ const ModuloEnsamble = {
             const res = await fetch('/api/ensamble/reportar', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ registros: registrosPayload })
+                body: JSON.stringify({ registros: registrosPayload, checklist: this.checklistEstados })
             });
             const data = await res.json();
             mostrarLoading(false);
@@ -686,13 +754,11 @@ const ModuloEnsamble = {
             const idProg = document.getElementById('reporte-id-prog');
             if (idProg) idProg.value = '';
 
-            const prodDisplay = document.getElementById('reporte-producto-display');
-            if (prodDisplay) prodDisplay.style.display = 'none';
-
             const bomContainer = document.getElementById('reporte-bom-check-container');
             if (bomContainer) bomContainer.innerHTML = '<div class="col-12 text-center text-muted py-2">Selecciona un producto.</div>';
 
             this.pncDetalles = [];
+            this.ocultarChecklist(); // Sin tarea seleccionada no hay id_prog contra el cual guardar el checklist
             this.bloquearFormulario(false);
             this.actualizarUIBotones();
 
@@ -724,9 +790,9 @@ const ModuloEnsamble = {
         let opcionesHTML = '<option value="">Seleccione defecto...</option>';
         let criteriosProcesados = [];
         try {
-            const respuestaCriterios = await fetchData('/api/obtener_criterios_pnc/ensamble');
-            // Normalizar la respuesta por si viene como lista de objetos o lista de strings
-            criteriosProcesados = Array.isArray(respuestaCriterios) ? respuestaCriterios : (respuestaCriterios.criterios || []);
+            const respuestaCriterios = await fetchData('/api/pnc/criterios');
+            // El catálogo viene agrupado por área: { success, criterios: { ensamble: [...], ... } }
+            criteriosProcesados = (respuestaCriterios && respuestaCriterios.criterios && respuestaCriterios.criterios.ensamble) || [];
 
             criteriosProcesados.forEach(crit => {
                 // Si el criterio es un objeto, extraer el nombre o valor; si es un string, usarlo directo
@@ -863,13 +929,32 @@ const ModuloEnsamble = {
                 return;
             }
 
-            let html = '<div class="row g-3">';
+            const leyendaChecklist = `
+                <div class="d-flex flex-wrap gap-3 small text-muted mb-3">
+                    <span><span class="checklist-dot" style="background:#1f7a44;"></span> Hecho</span>
+                    <span><span class="checklist-dot" style="background:#96650b;"></span> Pendiente</span>
+                    <span><span class="checklist-dot" style="background:#adb5bd;"></span> No aplica</span>
+                </div>
+            `;
+
+            let html = leyendaChecklist + '<div class="row g-3">';
             res.data.forEach(t => {
                 const porc = Math.round((t.cantidad_realizada / t.cantidad_objetivo) * 100);
                 const porcColor = porc >= 80 ? '#16a34a' : (porc >= 40 ? '#f8961e' : '#4361ee');
+
+                const checklist = t.checklist || checklistPorDefecto();
+                const dots = PROCESOS_CHECKLIST.map(p => {
+                    const estado = checklist[p.key] || 'PENDIENTE';
+                    const color = estado === 'HECHO' ? '#1f7a44' : (estado === 'NO_APLICA' ? '#adb5bd' : '#96650b');
+                    return `<span class="checklist-dot" title="${p.label}: ${CHECKLIST_UI[estado].label}" style="background:${color};"></span>`;
+                }).join('');
+                const aplicables = PROCESOS_CHECKLIST.filter(p => checklist[p.key] !== 'NO_APLICA');
+                const hechos = aplicables.filter(p => checklist[p.key] === 'HECHO').length;
+                const checklistLabel = aplicables.length === 0 ? 'N/A' : `${hechos}/${aplicables.length}`;
+
                 html += `
                     <div class="col-12 col-md-6 col-lg-4">
-                        <div class="card shadow-sm border-0 rounded-4 hover-lift cursor-pointer bg-white h-100" onclick="ModuloEnsamble.seleccionarTarea(${JSON.stringify(t).replace(/"/g, '&quot;')})">
+                        <div class="card task-card-ensamble shadow-sm border-0 rounded-4 hover-lift cursor-pointer bg-white h-100" style="border-left: 4px solid ${porcColor} !important;" onclick="ModuloEnsamble.seleccionarTarea(${JSON.stringify(t).replace(/"/g, '&quot;')})">
                             <div class="card-body p-3">
                                 <div class="d-flex justify-content-between align-items-center mb-2">
                                     <span class="badge rounded-pill px-3 py-2" style="background:#4361ee; color:#fff; font-weight:600;">TAREA #${t.id_prog}</span>
@@ -880,6 +965,10 @@ const ModuloEnsamble = {
                                     <div class="progress-bar" style="width: ${porc}%; background:${porcColor};"></div>
                                 </div>
                                 <p class="small text-muted mb-3">Faltan: <span class="text-danger fw-bold">${t.faltante}</span> / Objetivo: ${t.cantidad_objetivo}</p>
+                                <div class="checklist-strip d-flex align-items-center justify-content-between mb-3">
+                                    <span class="d-flex gap-1 align-items-center">${dots}</span>
+                                    <span class="small fw-bold text-muted"><i class="fas fa-tasks me-1"></i>${checklistLabel}</span>
+                                </div>
                                 <div class="d-flex align-items-center justify-content-between small fw-bold" style="color:#4361ee;">
                                     <span><i class="fas fa-clipboard-check me-1"></i> Reportar avance</span>
                                     <i class="fas fa-chevron-right"></i>
@@ -940,23 +1029,33 @@ const ModuloEnsamble = {
         }
     },
 
+    // Panel "Historial de Metas" (pestaña Programación): pendientes de
+    // cualquier día + lo completado HOY -- ver EnsambleService.listar_historial_metas.
+    // No es el archivo completo (eso es "Completadas"), por eso no acota con
+    // slice() acá: el propio backend ya devuelve un conjunto acotado y con sentido.
     listarProgramacion: async function () {
         try {
-            const res = await fetchData('/api/ensamble/programacion');
+            const res = await fetchData('/api/ensamble/historial_metas');
             const container = document.getElementById('prog-lista-container');
             if (!res || !res.success) return;
 
+            if (res.data.length === 0) {
+                container.innerHTML = '<div class="p-3 text-center text-muted small">Sin actividad pendiente ni completada hoy.</div>';
+                return;
+            }
+
             let html = '<div class="p-3">';
-            res.data.slice(0, 6).forEach(p => {
+            res.data.forEach(p => {
+                const completada = p.estado === 'COMPLETADO';
                 const porc = Math.min(100, Math.round((p.cantidad_realizada / p.cantidad_objetivo) * 100));
                 html += `
                     <div class="mb-2 p-2 border-bottom">
-                        <div class="d-flex justify-content-between small">
-                            <span>${p.id_codigo}</span>
+                        <div class="d-flex justify-content-between align-items-center small">
+                            <span>${p.id_codigo}${completada ? ' <span class="badge rounded-pill ms-1" style="background:#e3f3e8;color:#1f7a44;font-weight:600;">✓ Completada hoy</span>' : ''}</span>
                             <span>${p.cantidad_realizada}/${p.cantidad_objetivo}</span>
                         </div>
                         <div class="progress" style="height: 3px;">
-                            <div class="progress-bar" style="width: ${porc}%"></div>
+                            <div class="progress-bar ${completada ? 'bg-success' : ''}" style="width: ${porc}%"></div>
                         </div>
                     </div>
                 `;
@@ -973,6 +1072,26 @@ const ModuloEnsamble = {
         if (!idCodigo || !cantidad || !fecha) return mostrarNotificacion('Faltan datos', 'error');
 
         try {
+            // Si ya existe una meta COMPLETADA para este producto+fecha, el
+            // backend crea una meta nueva independiente en vez de reabrir la
+            // completada -- se avisa para que el usuario no piense que está
+            // editando la meta ya cumplida.
+            const existentes = await fetchData('/api/ensamble/programacion');
+            const yaCompletada = existentes?.success && existentes.data.some(
+                p => p.id_codigo === idCodigo && p.fecha_programada === fecha && p.estado === 'COMPLETADO'
+            );
+            if (yaCompletada) {
+                const confirmacion = await Swal.fire({
+                    icon: 'warning',
+                    title: 'Ya hay una meta completada',
+                    text: `${idCodigo} ya tiene una meta COMPLETADA para el ${fecha}. Se creará una meta nueva e independiente (no se modifica la ya cumplida). ¿Continuar?`,
+                    showCancelButton: true,
+                    confirmButtonText: 'Sí, crear meta nueva',
+                    cancelButtonText: 'Cancelar'
+                });
+                if (!confirmacion.isConfirmed) return;
+            }
+
             mostrarLoading(true);
             const res = await fetch('/api/ensamble/programacion', {
                 method: 'POST',

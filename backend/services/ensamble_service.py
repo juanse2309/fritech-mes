@@ -6,8 +6,9 @@ import json
 import logging
 import uuid
 from datetime import datetime
+from sqlalchemy import or_
 from backend.core.sql_database import db
-from backend.models.sql_models import Ensamble, OperacionLog, PncEnsamble, ProgramacionEnsamble, Producto
+from backend.models.sql_models import ChecklistEnsamble, Ensamble, OperacionLog, PncEnsamble, ProgramacionEnsamble, Producto
 from backend.services.audit_service import AuditService, OwnershipMismatchException
 from backend.services.bom_service import calcular_descuentos_ensamble
 from backend.services.stock_service import StockService
@@ -15,6 +16,28 @@ from backend.utils.formatters import normalizar_codigo, preservar_o_normalizar_p
 from backend.utils.time_utils import get_colombia_time
 
 logger = logging.getLogger(__name__)
+
+# Procesos de planta del checklist de Ensamble, en el orden en que se
+# muestran/reportan. "ensamble" va primero: es el único proceso que SIEMPRE
+# aplica (este módulo existe para él); los otros 6 son adicionales y pueden
+# marcarse NO_APLICA en productos que no los requieren.
+PROCESOS_CHECKLIST = [
+    'ensamble', 'rayada_carcaza', 'rayada_interno',
+    'pintura', 'horno1', 'cerrada', 'horno2',
+]
+ESTADOS_CHECKLIST_VALIDOS = {'PENDIENTE', 'HECHO', 'NO_APLICA'}
+
+
+def _checklist_default():
+    """Checklist en blanco: los 7 procesos en PENDIENTE."""
+    return {proc: 'PENDIENTE' for proc in PROCESOS_CHECKLIST}
+
+
+def _checklist_a_dict(row):
+    """Serializa una fila de ChecklistEnsamble (o None) a dict {proceso: estado}."""
+    if not row:
+        return _checklist_default()
+    return {proc: getattr(row, f'{proc}_estado') or 'PENDIENTE' for proc in PROCESOS_CHECKLIST}
 
 
 class BomNoDisponibleException(Exception):
@@ -60,8 +83,17 @@ class EnsambleService:
     def crear_o_actualizar_programacion(data):
         """
         Crea o actualiza (UPSERT) una meta de programación de ensamble. Ante
-        conflicto en uq_programacion_ensamble (fecha_programada + id_codigo +
-        op_numero) actualiza cantidad_objetivo y estado.
+        conflicto en uq_programacion_ensamble_activa (fecha_programada +
+        id_codigo + op_numero, solo entre metas no completadas) actualiza
+        cantidad_objetivo y estado.
+
+        El índice único es parcial (WHERE estado <> 'COMPLETADO') a propósito:
+        si la única fila existente con esa clave ya está COMPLETADA, este
+        INSERT no encuentra conflicto y crea una fila nueva (con su propio
+        id_prog) en vez de reabrir la completada. Reabrir la fila completada
+        arrastraría su cantidad_realizada vieja, porque esa columna se
+        recalcula en reportar_multi sumando producción por id_prog -- ver
+        migrate_programacion_ensamble_unique_activa.py.
         """
         if not data:
             raise ValueError('No data provided')
@@ -88,6 +120,7 @@ class EnsambleService:
 
         stmt = stmt.on_conflict_do_update(
             index_elements=['fecha_programada', 'id_codigo', text("COALESCE(op_numero, '')")],
+            index_where=text("estado <> 'COMPLETADO'"),
             set_={
                 'cantidad_objetivo': stmt.excluded.cantidad_objetivo,
                 'estado': stmt.excluded.estado
@@ -151,10 +184,19 @@ class EnsambleService:
 
     @staticmethod
     def listar_tareas_pendientes():
-        """Lista programaciones no completadas con el cálculo de cantidad faltante."""
+        """Lista programaciones no completadas con el cálculo de cantidad faltante
+        y su checklist de procesos (PENDIENTE por defecto si aún no se ha reportado)."""
         tareas = ProgramacionEnsamble.query.filter(
             ProgramacionEnsamble.estado != 'COMPLETADO'
         ).order_by(ProgramacionEnsamble.fecha_programada.asc()).all()
+
+        ids_prog = [t.id_prog for t in tareas]
+        checklists_por_id_prog = {}
+        if ids_prog:
+            filas_checklist = ChecklistEnsamble.query.filter(
+                ChecklistEnsamble.id_prog.in_(ids_prog)
+            ).all()
+            checklists_por_id_prog = {row.id_prog: _checklist_a_dict(row) for row in filas_checklist}
 
         resultado = []
         for t in tareas:
@@ -166,9 +208,42 @@ class EnsambleService:
                 'cantidad_realizada': t.cantidad_realizada,
                 'faltante': faltante,
                 'fecha_programada': t.fecha_programada.strftime('%Y-%m-%d') if t.fecha_programada else '',
-                'estado': t.estado
+                'estado': t.estado,
+                'checklist': checklists_por_id_prog.get(t.id_prog, _checklist_default())
             })
         return resultado
+
+    @staticmethod
+    def listar_historial_metas():
+        """
+        Panel "Historial de Metas" (pestaña Programación): todo lo aún no
+        completado -- sin importar el día, para que algo pendiente de ayer
+        se siga viendo hoy -- más lo que se completó HOY, como confirmación
+        rápida de cierre sin tener que abrir el archivo completo de
+        "Completadas". Lo completado de hace más de un día ya no aparece
+        aquí; eso es justamente lo que evita que este panel crezca sin
+        límite con años de historial (a diferencia de GET /programacion,
+        que sigue trayendo todo para el modal de "Completadas").
+        """
+        hoy = get_colombia_time().date()
+        schedules = ProgramacionEnsamble.query.filter(
+            or_(
+                ProgramacionEnsamble.estado != 'COMPLETADO',
+                ProgramacionEnsamble.fecha_programada == hoy
+            )
+        ).order_by(
+            ProgramacionEnsamble.estado.desc(),
+            ProgramacionEnsamble.fecha_programada.asc()
+        ).limit(12).all()
+
+        return [{
+            'id_prog': s.id_prog,
+            'id_codigo': s.id_codigo,
+            'cantidad_objetivo': s.cantidad_objetivo,
+            'cantidad_realizada': s.cantidad_realizada,
+            'fecha_programada': s.fecha_programada.strftime('%Y-%m-%d') if s.fecha_programada else '',
+            'estado': s.estado
+        } for s in schedules]
 
     @staticmethod
     def iniciar(data):
@@ -646,6 +721,27 @@ class EnsambleService:
                         prog.estado = 'COMPLETADO'
                     elif prog.estado == 'PENDIENTE':
                         prog.estado = 'EN_PROCESO'
+
+            # --- Checklist de procesos (mismo commit, sin eje propio) ---
+            # Independiente de cantidad_realizada/estado de arriba: ese es el
+            # eje de unidades (reportes parciales), este es el eje de qué
+            # procesos de planta se marcaron para esta meta. Se guarda tal
+            # como lo dejó el operario en pantalla -- ningún proceso se
+            # fuerza a HECHO ni a NO_APLICA del lado del servidor.
+            checklist_payload = payload_completo.get('checklist')
+            if id_prog and isinstance(checklist_payload, dict):
+                fila_checklist = ChecklistEnsamble.query.filter_by(id_prog=id_prog).first()
+                if not fila_checklist:
+                    fila_checklist = ChecklistEnsamble(id_prog=id_prog)
+                    db.session.add(fila_checklist)
+
+                for proceso in PROCESOS_CHECKLIST:
+                    estado_proceso = checklist_payload.get(proceso)
+                    if estado_proceso in ESTADOS_CHECKLIST_VALIDOS:
+                        setattr(fila_checklist, f'{proceso}_estado', estado_proceso)
+
+                fila_checklist.actualizado_en = datetime.now()
+                fila_checklist.actualizado_por = responsable
 
             # --- Único commit atómico de todo el flujo ---
             db.session.commit()

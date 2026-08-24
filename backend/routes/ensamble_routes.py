@@ -42,6 +42,18 @@ def listar_programacion():
         logger.error(f"Error al listar programación ensamble: {e}")
         return api_error(str(e), status_code=500)
 
+@ensamble_bp.route('/api/ensamble/historial_metas', methods=['GET'])
+@require_role(ROLES_ENSAMBLE)
+def historial_metas():
+    """Controlador puro: delega en EnsambleService el panel "Historial de Metas"
+    (pendientes de cualquier día + completadas hoy, ver EnsambleService.listar_historial_metas)."""
+    try:
+        resultado = EnsambleService.listar_historial_metas()
+        return api_success(data=resultado)
+    except Exception as e:
+        logger.error(f"Error al listar historial de metas ensamble: {e}")
+        return api_error(str(e), status_code=500)
+
 @ensamble_bp.route('/api/ensamble/session_active', methods=['GET'])
 @require_role(ROLES_ENSAMBLE)
 def get_active_ensamble_session():
