@@ -15,6 +15,11 @@
 -- el repositorio (dashboard_repository.py) NO usa esta vista (no tiene
 -- granularidad diaria) y cae al camino en vivo sobre db_ventas para no romper
 -- el filtro parcial de mes.
+-- NOT ILIKE FRIPARTS: mismo criterio de exclusion que mv_dashboard_ventas_analitica
+-- (fuente de Backorder/Top/Peores). Sin esto, pedidos/ventas facturados bajo un
+-- nombre que contiene 'FRIPARTS' se contaban en el comparativo Pedidos vs Ventas
+-- pero quedaban invisibles para el Backorder, generando una brecha entre ambos
+-- paneles que nunca podia reconciliar.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_rendimiento_mensual AS
 SELECT
     EXTRACT(YEAR FROM fecha)::INTEGER AS ano,
@@ -25,6 +30,7 @@ SELECT
     SUM(CASE WHEN clasificacion ILIKE '%pedido%' THEN COALESCE(cantidad, 0) ELSE 0 END) AS pedidos_unidades
 FROM db_ventas
 WHERE fecha IS NOT NULL
+  AND UPPER(TRIM(nombres)) NOT ILIKE '%FRIPARTS%'
 GROUP BY 1, 2;
 
 -- Obligatorio para poder usar REFRESH MATERIALIZED VIEW CONCURRENTLY.

@@ -251,8 +251,37 @@ class VentasRepository:
             return {"productos": [], "clientes": []}
 
     @staticmethod
-    def get_backorder_detalle_por_cliente(cliente_nombre, start_date=None, end_date=None):
-        """Retorna el detalle de productos pendientes para un cliente específico con impacto financiero."""
+    def get_backorder_detalle_por_cliente(cliente_nombre, start_date=None, end_date=None, exact=False):
+        """
+        Retorna el detalle de productos pendientes para un cliente específico con impacto financiero.
+
+        exact=False (default): match difuso (ILIKE '%cliente%' + resolución de alias
+        bidireccional). Lo usa el asistente de IA (asistente_tools._tool_backorder_cliente),
+        donde el usuario puede escribir un nombre parcial o mal escrito y se necesita
+        tolerancia para encontrar algo.
+
+        exact=True: match EXACTO contra la MISMA expresión de resolución de nombre que
+        usa el listado de Incumplimiento del dashboard
+        (dashboard_repository._get_admin_dashboard_metrics_sql_impl: alias resuelto por
+        igualdad + hardcode de DISTRIBUJES). La usa el modal del dashboard
+        (/api/admin/backorder/detalle), que siempre recibe el nombre YA resuelto que el
+        listado mostró en pantalla.
+        BUGFIX: antes ambos caminos (listado y modal) usaban ILIKE '%cliente%' de forma
+        independiente; para un nombre corto/genérico (ej. 'CHOHO') el modal podía
+        capturar y sumar OTRO cliente real cuyo nombre o alias simplemente contenía esa
+        subcadena, mostrando un total distinto al de la fila en la que el usuario hizo
+        click. Con exact=True, modal y listado quedan garantizados a coincidir.
+
+        BUGFIX 'impacto': antes este método valoraba el dinero pendiente con el costo
+        de producción (MAX(costo_total) de db_costos), mientras que el listado
+        (dashboard_repository) lo valora con el precio promedio de venta
+        (MAX(precio_promedio) de db_ventas, que viene directo de World Office). Para
+        el mismo cliente y las mismas unidades pendientes daban cifras completamente
+        distintas (confirmado con CHOHO COLOMBIA SAS: $24.5M vs $3.1M). Decisión de
+        negocio: db_ventas/WO es la fuente primordial, así que el modal ahora usa la
+        MISMA fórmula que el listado -- (pedidos - ventas) * precio_promedio -- para
+        que ambos paneles siempre muestren el mismo número de dinero.
+        """
 
         def _sql_cast_num(col):
             # Columna ya NUMERIC nativo: COALESCE directo evita el bug de perder
@@ -260,20 +289,28 @@ class VentasRepository:
             return f"COALESCE({col}, 0)"
 
         filt = ""
-        params = {"cliente": f"%{cliente_nombre}%"}
+        if exact:
+            params = {"cliente": str(cliente_nombre or "").strip().upper()}
+        else:
+            params = {"cliente": f"%{cliente_nombre}%"}
         if start_date and end_date:
             filt = "AND fecha BETWEEN :sd AND :ed"
             params["sd"] = start_date
             params["ed"] = end_date
 
-        sql = text(f"""
-            WITH totals AS (
-                SELECT
-                    b.productos as full_desc,
-                    TRIM(split_part(REPLACE(b.productos::TEXT, 'FR-', ''), ' ', 1)) as ref_final,
-                    SUM(CASE WHEN b.clasificacion ILIKE '%pedido%' THEN {_sql_cast_num('b.cantidad')} ELSE 0 END) as p_qty,
-                    SUM(CASE WHEN b.clasificacion ILIKE '%venta%' THEN {_sql_cast_num('b.cantidad')} ELSE 0 END) as v_qty
-                FROM db_ventas b
+        if exact:
+            join_clause = """
+                LEFT JOIN db_cliente_equivalencias e
+                    ON UPPER(TRIM(b.nombres)) = UPPER(TRIM(e.alias))
+            """
+            where_cliente = """
+                WHERE UPPER(TRIM(
+                    CASE WHEN UPPER(TRIM(b.nombres)) ILIKE '%DISTRIBUJES%'
+                         THEN 'FELIPE DUARTE MORENO' ELSE COALESCE(e.nombre_canonical, b.nombres) END
+                )) = :cliente
+            """
+        else:
+            join_clause = """
                 -- BUGFIX defensivo: el OR/ILIKE fuzzy de abajo podia matchear MAS DE UN
                 -- alias para el mismo b.nombres (fan-out de join, mismo patron confirmado
                 -- en get_desglose_mensual_ventas -- ver nota ahi), duplicando filas de
@@ -289,18 +326,29 @@ class VentasRepository:
                     ORDER BY (UPPER(TRIM(b.nombres)) = UPPER(TRIM(e.alias))) DESC, LENGTH(e.alias) DESC
                     LIMIT 1
                 ) e ON true
+            """
+            where_cliente = """
                 WHERE (
                     b.nombres ILIKE :cliente
                     OR (CASE WHEN UPPER(TRIM(b.nombres)) ILIKE '%DISTRIBUJES%'
                         THEN 'FELIPE DUARTE MORENO' ELSE COALESCE(e.nombre_canonical, b.nombres) END) ILIKE :cliente
-                ) {filt.replace('fecha', 'b.fecha')}
+                )
+            """
+
+        sql = text(f"""
+            WITH totals AS (
+                SELECT
+                    b.productos as full_desc,
+                    TRIM(split_part(REPLACE(b.productos::TEXT, 'FR-', ''), ' ', 1)) as ref_final,
+                    SUM(CASE WHEN b.clasificacion ILIKE '%pedido%' THEN {_sql_cast_num('b.cantidad')} ELSE 0 END) as p_qty,
+                    SUM(CASE WHEN b.clasificacion ILIKE '%venta%' THEN {_sql_cast_num('b.cantidad')} ELSE 0 END) as v_qty,
+                    MAX({_sql_cast_num('b.precio_promedio')}) as avg_price
+                FROM db_ventas b
+                {join_clause}
+                {where_cliente}
+                {filt.replace('fecha', 'b.fecha')}
                 AND UPPER(TRIM(b.nombres)) NOT ILIKE '%FRIPARTS%'
                 GROUP BY b.productos
-            ),
-            unique_costs AS (
-                SELECT referencia, MAX({_sql_cast_num('costo_total')}) as cost
-                FROM db_costos
-                GROUP BY referencia
             )
             SELECT
                 t.full_desc,
@@ -308,9 +356,8 @@ class VentasRepository:
                 t.p_qty,
                 t.v_qty,
                 (t.p_qty - t.v_qty) as diff_qty,
-                COALESCE(c.cost, 0) as unit_cost
+                COALESCE(t.avg_price, 0) as avg_price
             FROM totals t
-            LEFT JOIN unique_costs c ON t.ref_final = c.referencia
             WHERE (t.p_qty - t.v_qty) > 0
             ORDER BY (t.p_qty - t.v_qty) DESC
         """)
@@ -321,23 +368,28 @@ class VentasRepository:
         except Exception as e_join:
             logger.warning(f"[VentasRepository.get_backorder_detalle_por_cliente JOIN fallback]: {e_join}")
             rollback_seguro()
+            if exact:
+                where_cliente_fb = """
+                    WHERE UPPER(TRIM(CASE WHEN UPPER(TRIM(nombres)) ILIKE '%DISTRIBUJES%'
+                        THEN 'FELIPE DUARTE MORENO' ELSE nombres END)) = :cliente
+                """
+            else:
+                where_cliente_fb = """
+                    WHERE (CASE WHEN UPPER(TRIM(nombres)) ILIKE '%DISTRIBUJES%'
+                        THEN 'FELIPE DUARTE MORENO' ELSE nombres END) ILIKE :cliente
+                """
             sql_fallback = text(f"""
                 WITH totals AS (
                     SELECT
                         productos as full_desc,
                         TRIM(split_part(REPLACE(productos::TEXT, 'FR-', ''), ' ', 1)) as ref_final,
                         SUM(CASE WHEN clasificacion ILIKE '%pedido%' THEN {_sql_cast_num('cantidad')} ELSE 0 END) as p_qty,
-                        SUM(CASE WHEN clasificacion ILIKE '%venta%' THEN {_sql_cast_num('cantidad')} ELSE 0 END) as v_qty
+                        SUM(CASE WHEN clasificacion ILIKE '%venta%' THEN {_sql_cast_num('cantidad')} ELSE 0 END) as v_qty,
+                        MAX({_sql_cast_num('precio_promedio')}) as avg_price
                     FROM db_ventas
-                    WHERE (CASE WHEN UPPER(TRIM(nombres)) ILIKE '%DISTRIBUJES%'
-                        THEN 'FELIPE DUARTE MORENO' ELSE nombres END) ILIKE :cliente {filt}
+                    {where_cliente_fb} {filt}
                         AND UPPER(TRIM(nombres)) NOT ILIKE '%FRIPARTS%'
                     GROUP BY productos
-                ),
-                unique_costs AS (
-                    SELECT referencia, MAX({_sql_cast_num('costo_total')}) as cost
-                    FROM db_costos
-                    GROUP BY referencia
                 )
                 SELECT
                     t.full_desc,
@@ -345,9 +397,8 @@ class VentasRepository:
                     t.p_qty,
                     t.v_qty,
                     (t.p_qty - t.v_qty) as diff_qty,
-                    COALESCE(c.cost, 0) as unit_cost
+                    COALESCE(t.avg_price, 0) as avg_price
                 FROM totals t
-                LEFT JOIN unique_costs c ON t.ref_final = c.referencia
                 WHERE (t.p_qty - t.v_qty) > 0
                 ORDER BY (t.p_qty - t.v_qty) DESC
             """)
@@ -361,14 +412,16 @@ class VentasRepository:
             detalle = []
             for r in results:
                 diff = _num(r[4])
-                cost = _num(r[5])
+                avg_price = _num(r[5])
                 detalle.append({
                     "descripcion": r[0],
                     "referencia": r[1],
                     "pedidos": _num(r[2]),
                     "ventas": _num(r[3]),
                     "pendiente": diff,
-                    "impacto": diff * cost
+                    # Misma fórmula que el listado (dashboard_repository): precio
+                    # promedio de venta de db_ventas/WO, no costo de producción.
+                    "impacto": diff * avg_price
                 })
             return detalle
         except Exception as e:

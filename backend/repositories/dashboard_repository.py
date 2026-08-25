@@ -557,7 +557,18 @@ class DashboardRepository:
                     sd_prev = sd.replace(year=sd.year - 1)
                     ed_prev = ed.replace(year=ed.year - 1)
 
-                    filt = " WHERE (fecha BETWEEN :start AND :end) OR (fecha BETWEEN :start_prev AND :end_prev)"
+                    # NOT ILIKE FRIPARTS: mismo criterio de exclusion que
+                    # mv_dashboard_ventas_analitica / Backorder (ver
+                    # _get_admin_dashboard_metrics_sql_impl y create_mv_dashboard_ventas_analitica.sql).
+                    # Sin esto, pedidos/ventas facturados bajo un nombre que contiene
+                    # 'FRIPARTS' se contaban aqui pero quedaban invisibles para el
+                    # Backorder, generando una brecha entre "Pedidos - Ventas" del
+                    # tacometro/rendimiento mensual y el total de Backorder que nunca
+                    # podia reconciliar (confirmado: brecha de ~$127M en produccion).
+                    filt = (
+                        " WHERE ((fecha BETWEEN :start AND :end) OR (fecha BETWEEN :start_prev AND :end_prev))"
+                        " AND UPPER(TRIM(nombres)) NOT ILIKE '%FRIPARTS%'"
+                    )
                     params = {
                         "start": start_date,
                         "end": end_date,
@@ -795,8 +806,11 @@ class DashboardRepository:
                         ON ud.ref_despacho = {_sql_ref_desde_producto('v.producto')}
                     WHERE (v.pedidos_qty - v.ventas_qty) > 0
                     ORDER BY diff_money DESC
-                    LIMIT 50
                 """
+                # Sin LIMIT: back_rows debe traer el universo completo de backorder para
+                # que los totales/consolidado por cliente (mas abajo) sean el numero real,
+                # no un subconteo. El recorte a "top N" para mostrar en pantalla se hace
+                # en Python sobre backorder_list, despues de calcular los totales.
                 back_rows = db.session.execute(text(sql_inc_mv)).fetchall()
             except Exception as e:
                 rollback_seguro()
@@ -844,7 +858,6 @@ class DashboardRepository:
                         ON ud.ref_despacho = {_sql_ref_desde_producto('t.producto')}
                     WHERE (COALESCE(t.p_qty, 0) - COALESCE(t.v_qty, 0)) > 0
                     ORDER BY diff_money DESC
-                    LIMIT 50
                 """
                 back_rows = db.session.execute(text(sql_inc), params).fetchall()
             except Exception as e_join:
@@ -880,14 +893,18 @@ class DashboardRepository:
                             ON ud.ref_despacho = {_sql_ref_desde_producto('t.producto')}
                         WHERE (COALESCE(t.p_qty, 0) - COALESCE(t.v_qty, 0)) > 0
                         ORDER BY diff_money DESC
-                        LIMIT 50
                     """
                     back_rows = db.session.execute(text(sql_inc_fallback), params).fetchall()
                 except Exception as e_fb:
                     rollback_seguro()
                     logger.error(f"[DashboardRepository.get_admin_dashboard_metrics_sql - backorder fallback error]: {e_fb}")
 
-        # Mapeo de resultados de Backorder
+        # Mapeo de resultados de Backorder. back_rows trae el universo COMPLETO
+        # (ya sin LIMIT en SQL) para que los totales de más abajo sean el número
+        # real; inc_unidades/inc_dinero solo alimentan un top-N por dinero en el
+        # frontend, así que se recortan después junto con backorder_list para no
+        # inflar el payload de /api/admin/dashboard con miles de filas que nadie
+        # renderiza fila por fila.
         inc_unidades = []
         inc_dinero = []
         backorder_list = []
@@ -934,20 +951,32 @@ class DashboardRepository:
             rollback_seguro()
             logger.error(f"[DashboardRepository.get_admin_dashboard_metrics_sql - mensual]: {e}")
 
+        # Consolidado por cliente y resumen global: SIEMPRE sobre backorder_list
+        # completo (sin el LIMIT que traía back_rows antes). BUGFIX: con el LIMIT 50
+        # aplicado en SQL, tanto el consolidado por cliente como resumen_unidades
+        # solo sumaban las 50 combinaciones (cliente, producto) con mayor diff_money
+        # a nivel GLOBAL -- un cliente con muchos pendientes pequeños podía no
+        # aparecer, o aparecer con un total parcial, y la cifra jamás reconciliaba
+        # con "Pedidos - Ventas" del panel mensual.
+        from collections import defaultdict
+        consolidado_map = defaultdict(lambda: {"unidades_fallidas": 0.0, "dinero_perdido": 0.0})
+        for item in backorder_list:
+            acc = consolidado_map[item["cliente"]]
+            acc["unidades_fallidas"] += item["pendiente_qty"]
+            acc["dinero_perdido"] += item["pendiente_money"]
+
         return {
             "mensual": mensual_list,
             "top_productos": [{"producto": str(r['producto'] or 'Sin Producto').strip(), "ventas_dinero": _num(r['total_dinero']), "ventas_unidades": _num(r['total_unidades'])} for r in top_d],
             "peores_productos": [{"producto": str(r['producto'] or 'Sin Producto').strip(), "ventas_dinero": _num(r['total_dinero']), "ventas_unidades": _num(r['total_unidades'])} for r in peor_d],
-            "backorder": backorder_list,
+            # Top 50 por dinero_perdido, SOLO para el listado en pantalla -- los
+            # totales de arriba ya se calcularon sobre el universo completo.
+            "backorder": backorder_list[:50],
             "incumplimiento_consolidado": [
-                {
-                    "cliente": cli,
-                    "unidades_fallidas": sum(item["pendiente_qty"] for item in backorder_list if item["cliente"] == cli),
-                    "dinero_perdido": sum(item["pendiente_money"] for item in backorder_list if item["cliente"] == cli)
-                } for cli in sorted(list(set(item["cliente"] for item in backorder_list)))
+                {"cliente": cli, **vals} for cli, vals in sorted(consolidado_map.items())
             ],
-            "incumplimiento_dinero": inc_dinero,
-            "incumplimiento_unidades": inc_unidades,
+            "incumplimiento_dinero": inc_dinero[:50],
+            "incumplimiento_unidades": inc_unidades[:50],
             "resumen_unidades": sum(item["pendiente_qty"] for item in backorder_list),
             "resumen_dinero": scrap_perdida_dinero
         }

@@ -50,24 +50,7 @@ def get_admin_dashboard_data():
     # --- SQL NATIVE DATA FETCHING ---
     try:
         metrics = DashboardRepository.get_admin_dashboard_metrics_sql(start_date_str, end_date_str)
-        
-        # Consolidación final por cliente para panel gerencial (calculado en backend sobre resultados SQL)
-        from collections import defaultdict
-        consolidado_map = defaultdict(lambda: {"unidades": 0, "dinero": 0})
-        
-        for item in metrics["incumplimiento_unidades"]:
-            consolidado_map[item["cliente"]]["unidades"] += item["unidades_fallidas"]
-        for item in metrics["incumplimiento_dinero"]:
-            consolidado_map[item["cliente"]]["dinero"] += item["dinero_perdido"]
-            
-        inc_consolidado = []
-        for cli, vals in consolidado_map.items():
-            inc_consolidado.append({
-                "cliente": cli,
-                "unidades_fallidas": vals["unidades"],
-                "dinero_perdido": vals["dinero"]
-            })
-        
+
         response_data = {
             "success": True,
             "status": "success",
@@ -102,12 +85,20 @@ def get_backorder_detalle():
         
         if not cliente_raw:
             return jsonify({"success": False, "message": "El parámetro 'cliente' es obligatorio"}), 400
-            
-        from backend.services.dashboard_service import DashboardService
-        cliente = DashboardService.normalizar_cliente_alias(cliente_raw)
-        
+
+        # exact=True: el 'cliente' que llega aquí es el nombre YA resuelto que el
+        # listado de Incumplimiento le mostró al usuario (mismo valor devuelto por
+        # incumplimiento_consolidado). BUGFIX: antes se re-normalizaba con
+        # normalizar_cliente_alias (ILIKE difuso bidireccional) y la consulta de
+        # detalle volvía a matchear por ILIKE '%cliente%' -- para un nombre corto
+        # (ej. 'CHOHO') eso podía capturar/agrupar otro cliente real distinto cuyo
+        # nombre o alias simplemente contenía esa subcadena, mostrando en el modal
+        # una suma distinta a la fila en la que el usuario hizo click. Con match
+        # exacto sobre la MISMA expresión de resolución de nombre que usa el
+        # listado (dashboard_repository._get_admin_dashboard_metrics_sql_impl),
+        # modal y listado quedan garantizados a coincidir para cualquier cliente.
         from backend.repositories.ventas_repository import VentasRepository
-        detalle = VentasRepository.get_backorder_detalle_por_cliente(cliente, start, end)
+        detalle = VentasRepository.get_backorder_detalle_por_cliente(cliente_raw, start, end, exact=True)
         
         return jsonify({
             "success": True,
