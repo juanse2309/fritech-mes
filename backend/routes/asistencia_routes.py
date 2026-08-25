@@ -43,7 +43,7 @@ def seguro_formatear_fecha(valor, formato='%d/%m/%Y %H:%M'):
 
 @asistencia_bp.route('/colaboradores', methods=['GET'])
 @asistencia_bp.route('/personal_a_cargo', methods=['GET'])
-@require_role(ROL_ADMINS + ROL_JEFES + ['AUXILIAR INVENTARIO'])
+@require_role(ROL_ADMINS + ROL_JEFES + ['AUXILIAR INVENTARIO', 'JEFE AUXILIAR INVENTARIO'])
 def obtener_colaboradores():
     """Obtiene lista de colaboradores filtrada por Áreas de Responsabilidad. Incluye al Jefe."""
     user, role = obtener_identidad_segura(request)
@@ -176,7 +176,7 @@ def obtener_colaboradores():
 
 @asistencia_bp.route('/guardar', methods=['POST'])
 @asistencia_bp.route('/registrar_masivo', methods=['POST'])
-@require_role(ROL_ADMINS + ROL_JEFES)
+@require_role(ROL_ADMINS + ROL_JEFES + ['JEFE AUXILIAR INVENTARIO'])
 def guardar_asistencia():
     """Guarda los registros de asistencia masivos en PostgreSQL recalculando horas server-side."""
     user, role = obtener_identidad_segura(request)
@@ -270,7 +270,7 @@ def guardar_asistencia():
         return jsonify({'status': 'error', 'success': False, 'message': 'No fue posible guardar los registros de asistencia.'}), 500
 
 @asistencia_bp.route('/guardar_ausencia', methods=['POST'])
-@require_role(ROL_ADMINS + ROL_JEFES)
+@require_role(ROL_ADMINS + ROL_JEFES + ['JEFE AUXILIAR INVENTARIO'])
 def guardar_ausencia():
     """Guarda un registro de ausencia en SQL."""
     user_name, user_role = obtener_identidad_segura(request)
@@ -534,7 +534,7 @@ def ejecutar_corte():
 
 
 @asistencia_bp.route('/editar/<int:id>', methods=['PUT'])
-@require_role(ROL_ADMINS + ROL_JEFES)
+@require_role(ROL_ADMINS + ROL_JEFES + ['JEFE AUXILIAR INVENTARIO'])
 def editar_asistencia(id):
     """Edita un registro existente de asistencia aplicando auditoría."""
     user, role = obtener_identidad_segura(request)
