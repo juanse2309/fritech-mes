@@ -71,7 +71,7 @@ const AuthModule = {
         'COMERCIAL FRIMETALS': ['metals-dashboard', 'metals-pedidos', 'pedidos', 'almacen', 'comercial-historico'],
         'COMERCIAL': ['almacen', 'pedidos', 'comercial-historico', 'cartera'],
         'JEFE ALMACEN': ['inventario', 'inyeccion', 'facturacion', 'almacen', 'pedidos', 'asistencia'],
-        'JEFE ALISTAMIENTO': ['inventario', 'inyeccion', 'facturacion', 'almacen', 'pedidos', 'asistencia'],
+        'JEFE ALISTAMIENTO': ['inventario', 'inyeccion', 'ensamble', 'facturacion', 'almacen', 'pedidos', 'asistencia'],
         'AUXILIAR INVENTARIO': ['inventario', 'inyeccion', 'pulido', 'ensamble', 'pnc', 'historial', 'asistencia'],
         'JEFE INYECCION': ['dashboard', 'inyeccion', 'simulador', 'mezcla', 'asistencia'],
         'INYECCION': ['dashboard', 'inyeccion', 'mezcla', 'asistencia'],
