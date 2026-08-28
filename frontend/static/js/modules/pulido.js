@@ -1270,6 +1270,56 @@ const ModuloPulido = {
                 return;
             }
 
+            // Blindaje AM/PM: en celulares con formato 12h, el picker nativo
+            // de hora puede precargar AM/PM según la hora del día en que se
+            // ABRE el campo (no según el turno real que se está reportando).
+            // Esto produce horas fuera de la jornada de planta o duraciones
+            // absurdas. Se avisa (sin bloquear del todo) para que la
+            // operaria confirme o corrija antes de guardar.
+            //
+            // Ventana válida (confirmada con planta): jornada 07:00-17:00, y
+            // las extras llegan como máximo de 06:00 a 18:00. Por eso 06:00 y
+            // 18:00 EXACTOS son válidos y no deben disparar el aviso.
+            const MIN_JORNADA = 6 * 60;    // 06:00
+            const MAX_JORNADA = 18 * 60;   // 18:00
+            const [hiH, hiM] = horaInicio.split(':').map(Number);
+            const [hfH, hfM] = horaFin.split(':').map(Number);
+            const iniMin = hiH * 60 + hiM;
+            const finMin = hfH * 60 + hfM;
+            const duracionMin = finMin - iniMin;
+            const avisosHorario = [];
+
+            if (iniMin < MIN_JORNADA || iniMin > MAX_JORNADA) {
+                avisosHorario.push(`La Hora de Inicio (${horaInicio}) está fuera de la jornada de planta (máximo 6:00 a.m. - 6:00 p.m. contando extras).`);
+            }
+            if (finMin < MIN_JORNADA || finMin > MAX_JORNADA) {
+                avisosHorario.push(`La Hora de Fin (${horaFin}) está fuera de la jornada de planta (máximo 6:00 a.m. - 6:00 p.m. contando extras).`);
+            }
+            if (duracionMin > 480) {
+                avisosHorario.push(`El turno dura ${Math.floor(duracionMin / 60)}h ${duracionMin % 60}min, más de las 8 horas de una jornada normal.`);
+            }
+
+            if (avisosHorario.length > 0) {
+                const listaAvisos = avisosHorario.map(a => `<li style="text-align:left; margin-bottom:6px;">${a}</li>`).join('');
+                const confirmacionHorario = await Swal.fire({
+                    title: '⚠️ Verifica la Hora',
+                    html: `
+                        <ul style="padding-left:20px; margin-bottom:10px;">${listaAvisos}</ul>
+                        <p style="text-align:left; font-size:0.85em; color:#666;">
+                            Si tu celular marcó AM/PM automáticamente al abrir el campo de hora, revísalo antes de continuar.
+                        </p>
+                    `,
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonText: 'Los datos son correctos, continuar',
+                    cancelButtonText: 'Corregir hora',
+                    confirmButtonColor: '#f59e0b'
+                });
+                if (!confirmacionHorario.isConfirmed) {
+                    return;
+                }
+            }
+
             // Validar existencia de inputs críticos
             const responsableInput = document.getElementById('responsable-pulido-input');
             const buscadorProd = document.getElementById('buscador-productos');
@@ -1412,8 +1462,10 @@ const ModuloPulido = {
             // nunca sobrescribe reportes previos que sigan pendientes de envío.
             this._agregarOActualizarReporteFallido(data);
 
-            const isServerError = error.message.includes('HTTP');
-            const errorMsg = isServerError ? error.message : 'No se pudo contactar al servidor tras varios intentos.';
+            const isServerError = typeof error.status === 'number' || error.message.includes('HTTP');
+            // error.body.error trae el motivo real que mandó el backend (ej. duración de
+            // turno inválida) -- sin esto solo se veía "HTTP 400" y no daba pista de qué corregir.
+            const errorMsg = isServerError ? (error.body?.error || error.message) : 'No se pudo contactar al servidor tras varios intentos.';
 
             Swal.fire({
                 title: isServerError ? 'Error del Servidor' : 'Fallo de Conexión',

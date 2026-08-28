@@ -29,7 +29,16 @@ const apiClient = {
                 headers: headers,
                 body: JSON.stringify(data)
             });
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            if (!response.ok) {
+                // El body de error (code, mensaje, campos extra de api_error) se
+                // adjunta al Error -- sin esto, un caller no puede distinguir un
+                // bloqueo de negocio (ej. PULIDO_FECHA_BLOQUEADA) de un 500 genérico,
+                // ni mostrar el mensaje real que mandó el backend.
+                const err = new Error(`HTTP ${response.status}`);
+                err.status = response.status;
+                err.body = await response.json().catch(() => null);
+                throw err;
+            }
             return await response.json();
         } catch (error) {
             console.error(`[API POST] ${endpoint}:`, error);
