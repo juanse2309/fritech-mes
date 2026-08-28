@@ -121,7 +121,7 @@ function forzarActualizacionFritech(segundosEspera) {
 // compara la versión del backend activo (RENDER_GIT_COMMIT, ver
 // /api/version) contra la que tenía el navegador al cargar la página.
 (function verificarVersionApp() {
-    const INTERVALO_MS = 3 * 60 * 1000; // 3 minutos
+    const INTERVALO_MS = 60 * 1000; // 1 minuto -- /api/version es una lectura en memoria, costo despreciable
     let versionInicial = null;
 
     async function obtenerVersion() {
