@@ -474,11 +474,17 @@ class VentasRepository:
             return 0
 
         try:
+            # Se usa unnest(array) en lugar de NOT IN (:lista...) con expanding=True.
+            # Con expanding, SQLAlchemy genera un parámetro por documento; con 1500+
+            # documentos eso produce un query gigantesco que agota la RAM del worker
+            # en Render (OOM kill silencioso). unnest pasa UN solo array como parámetro.
             sql = text("""
                 DELETE FROM cartera_wo
-                WHERE documento NOT IN :documentos_vigentes
-            """).bindparams(db.bindparam('documentos_vigentes', expanding=True))
-            resultado = db.session.execute(sql, {"documentos_vigentes": documentos_vigentes})
+                WHERE documento NOT IN (
+                    SELECT unnest(cast(:documentos AS text[]))
+                )
+            """)
+            resultado = db.session.execute(sql, {"documentos": documentos_vigentes})
             db.session.commit()
             return resultado.rowcount
         except Exception as e:
