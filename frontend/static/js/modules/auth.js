@@ -61,23 +61,23 @@ const AuthModule = {
 
     // Matriz de Permisos por Rol (Modelo RBAC Estricto basado en Departamentos)
     permissions: {
-        'ADMINISTRACION': ['dashboard', 'inventario', 'inyeccion', 'simulador', 'pulido', 'ensamble', 'pnc', 'facturacion', 'mezcla', 'historial', 'reportes', 'pedidos', 'almacen', 'admin-clientes', 'asistencia', 'nomina', 'gerencia', 'notificaciones', 'comercial-historico', 'cartera', 'auditoria-op', 'metals-dashboard', 'metals-produccion', 'metals-pedidos', 'metals-torno', 'metals-laser', 'metals-soldadura', 'metals-marcadora', 'metals-taladro', 'metals-dobladora', 'metals-pintura', 'metals-zincado', 'metals-horno', 'metals-pulido-m'],
-        'ADMINISTRADOR': ['dashboard', 'inventario', 'inyeccion', 'simulador', 'pulido', 'ensamble', 'pnc', 'facturacion', 'mezcla', 'historial', 'reportes', 'pedidos', 'almacen', 'admin-clientes', 'asistencia', 'nomina', 'gerencia', 'notificaciones', 'comercial-historico', 'cartera', 'auditoria-op', 'metals-dashboard', 'metals-produccion', 'metals-pedidos', 'metals-torno', 'metals-laser', 'metals-soldadura', 'metals-marcadora', 'metals-taladro', 'metals-dobladora', 'metals-pintura', 'metals-zincado', 'metals-horno', 'metals-pulido-m'],
-        'ADMIN': ['dashboard', 'inventario', 'inyeccion', 'simulador', 'pulido', 'ensamble', 'pnc', 'facturacion', 'mezcla', 'historial', 'reportes', 'pedidos', 'almacen', 'admin-clientes', 'asistencia', 'nomina', 'gerencia', 'notificaciones', 'comercial-historico', 'cartera', 'auditoria-op', 'metals-dashboard', 'metals-produccion', 'metals-pedidos', 'metals-torno', 'metals-laser', 'metals-soldadura', 'metals-marcadora', 'metals-taladro', 'metals-dobladora', 'metals-pintura', 'metals-zincado', 'metals-horno', 'metals-pulido-m'],
-        'GERENCIA': ['dashboard', 'inventario', 'inyeccion', 'simulador', 'pulido', 'ensamble', 'pnc', 'facturacion', 'mezcla', 'historial', 'reportes', 'pedidos', 'almacen', 'admin-clientes', 'asistencia', 'nomina', 'gerencia', 'notificaciones', 'comercial-historico', 'cartera', 'auditoria-op', 'metals-dashboard', 'metals-produccion', 'metals-pedidos'],
+        'ADMINISTRACION': ['dashboard', 'inventario', 'inyeccion', 'simulador', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc', 'facturacion', 'mezcla', 'historial', 'reportes', 'pedidos', 'almacen', 'admin-clientes', 'asistencia', 'nomina', 'gerencia', 'notificaciones', 'comercial-historico', 'cartera', 'auditoria-op', 'metals-dashboard', 'metals-produccion', 'metals-pedidos', 'metals-torno', 'metals-laser', 'metals-soldadura', 'metals-marcadora', 'metals-taladro', 'metals-dobladora', 'metals-pintura', 'metals-zincado', 'metals-horno', 'metals-pulido-m'],
+        'ADMINISTRADOR': ['dashboard', 'inventario', 'inyeccion', 'simulador', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc', 'facturacion', 'mezcla', 'historial', 'reportes', 'pedidos', 'almacen', 'admin-clientes', 'asistencia', 'nomina', 'gerencia', 'notificaciones', 'comercial-historico', 'cartera', 'auditoria-op', 'metals-dashboard', 'metals-produccion', 'metals-pedidos', 'metals-torno', 'metals-laser', 'metals-soldadura', 'metals-marcadora', 'metals-taladro', 'metals-dobladora', 'metals-pintura', 'metals-zincado', 'metals-horno', 'metals-pulido-m'],
+        'ADMIN': ['dashboard', 'inventario', 'inyeccion', 'simulador', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc', 'facturacion', 'mezcla', 'historial', 'reportes', 'pedidos', 'almacen', 'admin-clientes', 'asistencia', 'nomina', 'gerencia', 'notificaciones', 'comercial-historico', 'cartera', 'auditoria-op', 'metals-dashboard', 'metals-produccion', 'metals-pedidos', 'metals-torno', 'metals-laser', 'metals-soldadura', 'metals-marcadora', 'metals-taladro', 'metals-dobladora', 'metals-pintura', 'metals-zincado', 'metals-horno', 'metals-pulido-m'],
+        'GERENCIA': ['dashboard', 'inventario', 'inyeccion', 'simulador', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc', 'facturacion', 'mezcla', 'historial', 'reportes', 'pedidos', 'almacen', 'admin-clientes', 'asistencia', 'nomina', 'gerencia', 'notificaciones', 'comercial-historico', 'cartera', 'auditoria-op', 'metals-dashboard', 'metals-produccion', 'metals-pedidos'],
         // === FRIMETALS ROLES (Phase 2 Multi-Tenant) ===
         'STAFF FRIMETALS': ['metals-dashboard', 'metals-produccion', 'metals-pedidos', 'metals-torno', 'metals-laser', 'metals-soldadura', 'metals-marcadora', 'metals-taladro', 'metals-dobladora', 'metals-pintura', 'metals-zincado', 'metals-horno', 'metals-pulido-m', 'pedidos', 'almacen', 'asistencia'],
-        'JEFE DE PLANTA': ['metals-dashboard', 'metals-produccion', 'metals-pedidos', 'metals-torno', 'metals-laser', 'metals-soldadura', 'metals-marcadora', 'metals-taladro', 'metals-dobladora', 'metals-pintura', 'metals-zincado', 'metals-horno', 'metals-pulido-m', 'pedidos', 'almacen', 'asistencia', 'historial', 'inventario'],
+        'JEFE DE PLANTA': ['metals-dashboard', 'metals-produccion', 'metals-pedidos', 'metals-torno', 'metals-laser', 'metals-soldadura', 'metals-marcadora', 'metals-taladro', 'metals-dobladora', 'metals-pintura', 'metals-zincado', 'metals-horno', 'metals-pulido-m', 'pedidos', 'almacen', 'asistencia', 'historial', 'inventario', 'exportacion-wo'],
         'COMERCIAL FRIMETALS': ['metals-dashboard', 'metals-pedidos', 'pedidos', 'almacen', 'comercial-historico'],
         'COMERCIAL': ['almacen', 'pedidos', 'comercial-historico', 'cartera'],
-        'JEFE ALMACEN': ['inventario', 'inyeccion', 'facturacion', 'almacen', 'pedidos', 'asistencia'],
-        'JEFE ALISTAMIENTO': ['inventario', 'inyeccion', 'ensamble', 'facturacion', 'almacen', 'pedidos', 'asistencia'],
-        'AUXILIAR INVENTARIO': ['inventario', 'inyeccion', 'pulido', 'ensamble', 'pnc', 'historial', 'asistencia'],
-        'JEFE INYECCION': ['dashboard', 'inyeccion', 'simulador', 'mezcla', 'asistencia'],
+        'JEFE ALMACEN': ['inventario', 'inyeccion', 'facturacion', 'almacen', 'pedidos', 'asistencia', 'exportacion-wo'],
+        'JEFE ALISTAMIENTO': ['inventario', 'inyeccion', 'ensamble', 'empaque', 'facturacion', 'almacen', 'pedidos', 'asistencia', 'exportacion-wo'],
+        'AUXILIAR INVENTARIO': ['inventario', 'inyeccion', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc', 'historial', 'asistencia'],
+        'JEFE INYECCION': ['dashboard', 'inyeccion', 'simulador', 'mezcla', 'asistencia', 'exportacion-wo'],
         'INYECCION': ['dashboard', 'inyeccion', 'mezcla', 'asistencia'],
-        'JEFE PULIDO': ['dashboard', 'pulido', 'historial', 'asistencia'],
+        'JEFE PULIDO': ['dashboard', 'pulido', 'historial', 'asistencia', 'exportacion-wo'],
         'PULIDO': ['dashboard', 'pulido', 'historial', 'asistencia'],
-        'ALISTAMIENTO': ['almacen', 'asistencia'],
+        'ALISTAMIENTO': ['almacen', 'empaque', 'asistencia'],
         'ENSAMBLE': ['inyeccion', 'ensamble', 'asistencia'],
         'CLIENTE': ['portal-cliente'],
         'METALS_PROD': ['metals-dashboard', 'metals-produccion', 'metals-torno', 'metals-laser', 'metals-soldadura', 'metals-marcadora', 'metals-taladro', 'metals-dobladora', 'metals-pintura', 'metals-zincado', 'metals-horno', 'metals-pulido-m'],
@@ -783,7 +783,7 @@ const AuthModule = {
             allowedPages = allowedPages.filter(p => !p.startsWith('metals-'));
         } else if (division === 'FRIMETALS') {
             let forbiddenInMetals = [
-                'dashboard', 'inyeccion', 'pulido', 'ensamble', 'pnc',
+                'dashboard', 'inyeccion', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc',
                 'facturacion', 'mezcla', 'reportes', 'auditoria-op',
                 'admin-clientes', 'portal-cliente'
             ];
@@ -894,7 +894,7 @@ const AuthModule = {
             // Incluimos TODO lo que no sea compartido o exclusivo de Metales
             // pedidos y almacen son COMPARTIDOS (los usan STAFF/COMERCIAL FRIMETALS)
             let forbiddenInMetals = [
-                'dashboard', 'inyeccion', 'pulido', 'ensamble', 'pnc',
+                'dashboard', 'inyeccion', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc',
                 'facturacion', 'mezcla', 'reportes', 'auditoria-op',
                 'admin-clientes', 'portal-cliente'
             ];

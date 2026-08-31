@@ -503,7 +503,7 @@ window.ModuloDashboard = (function () {
                         // }
                     }
                     renderChartPulidoRanking(data.rankings?.pulido_profundo || {});
-                    renderTablaPulido(data.rankings?.pulido_profundo || {});
+                    renderTablaPulido(data.rankings?.pulido_profundo || {}, data.rankings?.pulido_evolucion || {});
                 }
             } catch (errPulido) {
                 console.error("⚠️ Error defensivo renderizando Pulido:", errPulido);
@@ -1717,15 +1717,16 @@ window.ModuloDashboard = (function () {
 
 
 
-    function renderTablaPulido(profundo) {
+    function renderTablaPulido(profundo, evolucion) {
         const tbody = document.querySelector('#tabla-leaderboard-pulido tbody');
         if (!tbody) return;
         tbody.innerHTML = '';
+        evolucion = evolucion || {};
 
         // Mostrar TODAS las operadoras
         const operadoras = Object.keys(profundo);
         if (operadoras.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center py-4 text-muted">No hay datos de pulido en este rango.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted">No hay datos de pulido en este rango.</td></tr>';
             return;
         }
 
@@ -1770,6 +1771,20 @@ window.ModuloDashboard = (function () {
 
             const isChecked = selectedOperators.some(s => s.nombre === op);
 
+            // Evolución vs período anterior de igual duración (ver
+            // PulidoService.get_evolucion_operarias). pct null = sin base de
+            // comparación real (la operaria no tuvo actividad en el período
+            // anterior) -- se muestra neutro, no como una caída a -100%.
+            const evolOp = evolucion[op];
+            const pctVol = evolOp?.pct_volumen;
+            let evolHtml = '<span class="text-muted small">—</span>';
+            if (pctVol !== null && pctVol !== undefined) {
+                const subiendo = pctVol >= 0;
+                const evolColor = subiendo ? 'success' : 'danger';
+                const evolIcon = subiendo ? 'fa-arrow-up' : 'fa-arrow-down';
+                evolHtml = `<span class="fw-bold text-${evolColor}"><i class="fas ${evolIcon} me-1"></i>${Math.abs(pctVol)}%</span>`;
+            }
+
             const tr = document.createElement('tr');
             tr.style.cursor = 'pointer';
             tr.onclick = (e) => {
@@ -1804,6 +1819,7 @@ window.ModuloDashboard = (function () {
                         <span class="fw-bold text-${ylColor}" style="min-width: 40px;">${calidadYield}%</span>
                     </div>
                 </td>
+                <td class="text-center">${evolHtml}</td>
             `;
             tbody.appendChild(tr);
         });

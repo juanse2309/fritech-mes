@@ -16,6 +16,51 @@ window.ModuloMes = {
         return ['INYECCION', 'ENSAMBLE', 'ADMIN'].some(rolePart => userRole.includes(rolePart));
     },
 
+    // Botón "editar OP" del modal de iniciar trabajo (reunión 2026-08-25):
+    // la OP ya viene automática desde la programación, pero un admin debe
+    // poder corregirla (programación vieja sin OP, OP creada a mano en WO).
+    esAdmin: function () {
+        if (typeof AuthModule === 'undefined' || !AuthModule.currentUser) return false;
+        const userRole = (AuthModule.currentUser.rol || AuthModule.currentUser.role || '').toUpperCase();
+        return userRole.includes('ADMIN') || userRole.includes('GERENCIA');
+    },
+
+    /**
+     * Cajita visible con la OP asignada (pedido del usuario 2026-08-28: la OP
+     * ya se generaba sola pero no se veía en ningún lado). Se muestra igual en
+     * el montaje en cola y en el lote activo.
+     *
+     * 'SIN_OP' es el placeholder que devuelve el backend para programaciones
+     * viejas anteriores al numerador automático -- se trata como "sin OP" y no
+     * se pinta la cajita, para no mostrar una etiqueta que no significa nada.
+     */
+    badgeOP: function (op) {
+        const valor = String(op || '').trim();
+        if (!valor || valor === 'SIN_OP' || valor === 'SIN OP') return '';
+        return `<div class="mb-2">
+            <span class="badge d-inline-flex align-items-center gap-1"
+                  style="background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;font-size:.7rem;font-weight:700;">
+                <i class="fas fa-file-invoice"></i> OP ${valor}
+            </span>
+        </div>`;
+    },
+
+    // Catálogo real de códigos de molde para el datalist del campo "Molde"
+    // (pedido del usuario 2026-08-28, ver GET /api/programacion/moldes).
+    // Se carga una sola vez al iniciar el módulo -- 314 códigos, no cambia
+    // mientras la página está abierta.
+    cargarMoldesDisponibles: async function () {
+        const datalist = document.getElementById('mes-prog-moldes-datalist');
+        if (!datalist) return;
+        try {
+            const res = await fetchData('/api/programacion/moldes');
+            const moldes = res?.moldes || [];
+            datalist.innerHTML = moldes.map(m => `<option value="${m}">`).join('');
+        } catch (e) {
+            console.warn('[MES] No se pudo cargar el catálogo de moldes:', e);
+        }
+    },
+
     init: async function () {
         console.log('🚀 [MES] Inicializando Módulo de Control de Producción...');
 
@@ -30,6 +75,7 @@ window.ModuloMes = {
         this.configurarEventos();
         await this.cargarDatos();
         this.initAutocomplete();
+        this.cargarMoldesDisponibles();
 
         // Inicializar fecha de programación (visual)
         const fechaProg = document.getElementById('mes-prog-fecha');
@@ -180,6 +226,7 @@ window.ModuloMes = {
                 productosActivosHTML = `
                     <div class="mb-3 p-2" style="border: 1px solid #93c5fd; border-radius: 8px; background: #eff6ff;">
                         <div class="fw-bold mb-2 text-primary" style="font-size:.8rem">Lote Activo (Molde: ${activo.molde || capacidadMolde})</div>
+                        ${this.badgeOP(activo.orden_produccion)}
                         ${skuList}
                         <button class="btn btn-warning btn-sm fw-bold w-100 mt-2"
                             ${canOperate ? '' : 'disabled title="Sin permisos para operar"'}
@@ -213,13 +260,15 @@ window.ModuloMes = {
                         </div>
                     `).join('');
 
+                    const opMontaje = itemsMolde[0].orden_produccion || '';
                     productosColaHTML += `
                         <div class="mb-3 p-2" style="border: 1px dashed #cbd5e1; border-radius: 8px; background: #f8fafc;">
                             <div class="fw-bold mb-2 text-dark" style="font-size:.8rem">Montaje (Molde ${moldeKey})</div>
+                            ${this.badgeOP(opMontaje)}
                             ${skuList}
                             <button class="btn btn-success btn-sm fw-bold w-100 mt-2"
                                 ${canOperate ? '' : 'disabled title="Sin permisos para operar"'}
-                                onclick="ModuloMes.clickIniciarDesdeCard('${primerId}', '${m.nombre}')">
+                                onclick="ModuloMes.clickIniciarDesdeCard('${primerId}', '${m.nombre}', '${opMontaje}')">
                                 <i class="fas fa-play me-1"></i> Iniciar Montaje
                             </button>
                         </div>
@@ -286,12 +335,19 @@ window.ModuloMes = {
     /**
      * Iniciar trabajo desde el botón de la tarjeta de máquina.
      */
-    clickIniciarDesdeCard: async function (idProg, maquinaNombre) {
+    clickIniciarDesdeCard: async function (idProg, maquinaNombre, opHeredada) {
         if (!this.canOperarMaquina()) {
             Swal.fire('Acceso Denegado', 'No tienes permisos para iniciar producción.', 'error');
             return;
         }
         if (!idProg) return;
+
+        // OP automática (reunión 2026-08-25): llega ya asignada desde la
+        // programación de la tarde anterior. Si es una programación vieja
+        // (creada antes de este cambio) opHeredada viene vacía y se sigue
+        // pidiendo a mano, igual que antes.
+        const opAutomatica = (opHeredada || '').trim();
+        const puedeEditarOP = this.esAdmin();
 
         // Lógica de operario por máquina
         const _getDefaultResp = (maq) => {
@@ -320,7 +376,14 @@ window.ModuloMes = {
                 <div id="swal-prueba-alert" class="badge bg-warning text-dark w-100 mb-3 py-2 fs-6 border border-warning" style="display: none; background-color: #ffc107!important;"><i class="fas fa-vial me-1"></i> MODO DE PRUEBA - NO AFECTA INVENTARIO</div>
                 <div class="mb-3 text-start">
                     <label for="swal-op-wo" class="form-label fw-bold small text-uppercase text-muted">Orden de Producción (OP) de World Office</label>
-                    <input type="text" id="swal-op-wo" class="form-control" placeholder="Ej: OP-1025">
+                    <input type="text" id="swal-op-wo" class="form-control ${opAutomatica ? 'bg-light' : ''}"
+                           value="${opAutomatica}"
+                           ${opAutomatica && !puedeEditarOP ? 'readonly' : ''}
+                           placeholder="${opAutomatica ? '' : 'Ej: OP-1025'}">
+                    ${opAutomatica
+                        ? `<small class="text-muted"><i class="fas fa-check-circle text-success me-1"></i>Asignada automáticamente al programar.${puedeEditarOP ? ' Como administrador puedes corregirla si hace falta.' : ''}</small>`
+                        : `<small class="text-muted">Esta programación no tiene OP automática (creada antes del cambio) -- indícala manualmente.</small>`
+                    }
                 </div>
                 <div class="mb-3 text-start">
                     <label for="swal-responsable-iniciar" class="form-label fw-bold small text-uppercase text-muted">Operario / Responsable</label>
@@ -339,14 +402,14 @@ window.ModuloMes = {
             didOpen: () => {
                 const opInput = document.getElementById('swal-op-wo');
                 const alertDiv = document.getElementById('swal-prueba-alert');
-                opInput.addEventListener('input', (e) => {
-                    const val = e.target.value.toUpperCase();
-                    if (val.includes('9999') || val.includes('PRUEBA')) {
-                        alertDiv.style.display = 'block';
-                    } else {
-                        alertDiv.style.display = 'none';
-                    }
-                });
+                const checkPrueba = (val) => {
+                    alertDiv.style.display = val.toUpperCase().includes('9999') || val.toUpperCase().includes('PRUEBA')
+                        ? 'block' : 'none';
+                };
+                opInput.addEventListener('input', (e) => checkPrueba(e.target.value));
+                // Chequeo inicial: el valor puede llegar pre-cargado (OP
+                // automática) sin disparar el evento 'input'.
+                checkPrueba(opInput.value);
             },
             preConfirm: () => {
                 const op = document.getElementById('swal-op-wo').value;
@@ -707,6 +770,38 @@ window.ModuloMes = {
         if (btnAddProd) {
             btnAddProd.addEventListener('click', () => this.agregarProductoATemp());
         }
+
+        // El "+" y la lista de "Productos en este Montaje" quedan ocultos
+        // hasta completar Molde y Cavidades (pedido del usuario 2026-08-27):
+        // no tiene sentido armar la lista antes de saber con qué molde va a
+        // correr el montaje. Ver actualizarVisibilidadAgregar.
+        const moldeInput = document.getElementById('mes-prog-molde');
+        const cavInputListener = document.getElementById('mes-prog-cavidades');
+        if (moldeInput) moldeInput.addEventListener('input', () => this.actualizarVisibilidadAgregar());
+        if (cavInputListener) cavInputListener.addEventListener('input', () => this.actualizarVisibilidadAgregar());
+        this.actualizarVisibilidadAgregar();
+    },
+
+    actualizarVisibilidadAgregar: function () {
+        const molde = document.getElementById('mes-prog-molde');
+        const cav = document.getElementById('mes-prog-cavidades');
+        const btnAdd = document.getElementById('btn-mes-add-prod-list');
+        const listaMontaje = document.getElementById('mes-prog-montaje-lista');
+
+        // Molde ya no es una capacidad numérica (ver quitarProductoATemp/Fase
+        // molde-texto, 2026-08-28): es un código real de catálogo, y no todos
+        // empiezan con dígito (ej. "D" -- confirmado en rel_producto_molde).
+        // parseFloat(molde.value) > 0 dejaba el "+" oculto para siempre en esos
+        // casos porque parseFloat("D") es NaN -- solo hace falta que no esté vacío.
+        const camposListos = !!(molde && molde.value.trim())
+            && !!(cav && cav.value && parseFloat(cav.value) > 0);
+        // La lista, una vez que ya tiene productos, no se vuelve a esconder
+        // aunque el usuario borre Molde/Cavidades por accidente -- perdería
+        // de vista lo que ya añadió, no solo la posibilidad de añadir más.
+        const yaHayProductos = (this.tempProductList || []).length > 0;
+
+        if (btnAdd) btnAdd.style.display = camposListos ? '' : 'none';
+        if (listaMontaje) listaMontaje.style.display = (camposListos || yaHayProductos) ? '' : 'none';
     },
 
     filtrarProductos: function (query) {
@@ -782,6 +877,7 @@ window.ModuloMes = {
         this.filtrarProductos(''); // Limpiar sugerencias
 
         this.renderTempList();
+        this.actualizarVisibilidadAgregar();
         console.log('➕ [MES] Producto añadido a lote:', codigo);
 
         // Feedback visual en el input
@@ -792,6 +888,7 @@ window.ModuloMes = {
     quitarProductoATemp: function (codigo) {
         this.tempProductList = this.tempProductList.filter(p => p.codigo !== codigo);
         this.renderTempList();
+        this.actualizarVisibilidadAgregar();
     },
 
     renderTempList: function () {
@@ -861,25 +958,30 @@ window.ModuloMes = {
                 try {
                     const checkRes = await fetchData(`/api/produccion/verificar_demanda/${p.codigo_sistema || p.id_codigo || codigo}`);
                     if (checkRes && checkRes.success) {
-                        const { unidades_pedidas_b2b, stock_actual_disponible, stock_terminado, stock_bodega } = checkRes.data;
-                        // Diseño UX/UI: Cuadrícula limpia de 3 Indicadores Clave
+                        const { unidades_pedidas_b2b, stock_terminado, stock_por_pulir, empacado_hoy, alistado_pendiente_despacho } = checkRes.data;
+                        // P. Terminado, Por Pulir y Empacado Hoy por separado (pedido
+                        // de la jefa 2026-08-31): antes solo se veía P. Terminado.
+                        // Disponible sigue siendo SOLO sobre P. Terminado (lo que ya
+                        // se puede facturar hoy) -- Por Pulir y Empacado Hoy son
+                        // contexto de lo que viene en camino / ya se armó, no se
+                        // suman porque Por Pulir todavía puede salir con PNC.
                         const disponible_calc = stock_terminado - unidades_pedidas_b2b;
-                        
+
+                        const stat = (label, valor, conBorde) => `
+                            <div class="col-6 col-md ${conBorde ? 'border-end' : ''}">
+                                <div class="text-muted fw-bold mb-1" style="font-size: 0.65rem; text-transform: uppercase;">${label}</div>
+                                <div class="fs-5 fw-bold text-dark">${valor}</div>
+                            </div>`;
+
                         alertDemandHTML = `
                             <div class="mt-3 p-3 shadow-sm" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;">
                                 <div class="row text-center g-2" style="font-size: 0.8rem;">
-                                    <div class="col-4 border-end">
-                                        <div class="text-muted fw-bold mb-1" style="font-size: 0.75rem; text-transform: uppercase;">P. Terminado</div>
-                                        <div class="fs-5 fw-bold text-dark">${stock_terminado}</div>
-                                    </div>
-                                    <div class="col-4 border-end">
-                                        <div class="text-muted fw-bold mb-1" style="font-size: 0.75rem; text-transform: uppercase;">Demanda Activa</div>
-                                        <div class="fs-5 fw-bold text-dark">${unidades_pedidas_b2b}</div>
-                                    </div>
-                                    <div class="col-4">
-                                        <div class="text-muted fw-bold mb-1" style="font-size: 0.75rem; text-transform: uppercase;">Disponible</div>
-                                        <div class="fs-5 fw-bold text-dark">${disponible_calc}</div>
-                                    </div>
+                                    ${stat('P. Terminado', stock_terminado, true)}
+                                    ${stat('Por Pulir', stock_por_pulir, true)}
+                                    ${stat('Empacado Hoy', empacado_hoy, true)}
+                                    ${stat('Alistado (s/despacho)', alistado_pendiente_despacho, true)}
+                                    ${stat('Demanda Activa', unidades_pedidas_b2b, true)}
+                                    ${stat('Disponible', disponible_calc, false)}
                                 </div>
                             </div>
                         `;
@@ -918,6 +1020,12 @@ window.ModuloMes = {
                         setTimeout(() => cavInput.classList.remove('is-valid'), 2000);
                     }
                 }
+
+                // Obligatorio tras autocompletar: asignar .value por código NO
+                // dispara el evento 'input', así que los listeners de
+                // configurarEventos no se enteran y el botón "+" se quedaría
+                // oculto para siempre aunque Molde/Cavidades ya estén llenos.
+                this.actualizarVisibilidadAgregar();
             } else {
                 throw new Error("Producto no encontrado");
             }
@@ -1176,19 +1284,13 @@ window.ModuloMes = {
         }
 
         const fecha = document.getElementById('mes-prog-fecha').value;
-        const molde = document.getElementById('mes-prog-molde').value;
-
-        const totalCav = productosParaEnviar.reduce((sum, p) => sum + p.cavidades, 0);
-        const moldeCapacidad = parseInt(document.getElementById('mes-prog-molde').value) || 0;
-
-        if (totalCav !== moldeCapacidad) {
-            Swal.fire({
-                icon: 'error',
-                title: 'Error de Cavidades (Regla del Rompecabezas)',
-                text: `El montaje suma ${totalCav} cavidades pero el molde es de ${moldeCapacidad}. Debe coincidir exactamente.`
-            });
-            return;
-        }
+        // Código real del molde físico (ej. '5002A'), no una capacidad que
+        // deba coincidir con la suma de cavidades -- esa regla se eliminó
+        // 2026-08-28: ahora la tercera persona del equipo de programación
+        // elige el molde según disponibilidad real (arreglo, cavidad dañada,
+        // etc.), no según que la aritmética cuadre. Ver selector con
+        // datalist en el HTML y cargarMoldesDisponibles().
+        const molde = document.getElementById('mes-prog-molde').value.trim();
 
         // --- NUEVO: Crucial Check de Demanda B2B (Fase 2) ---
         // Verificar demanda de cada producto para lanzar Alerta de Desperdicio si tienen stock y 0 pedidos
@@ -1297,15 +1399,22 @@ window.ModuloMes = {
                 // devolviendo 'message' en la raíz; '/api/programacion/guardar' ya
                 // lo anida en 'data'. Se prueban ambas rutas sin tocar el legacy.
                 // TODO: Remover fallback cuando el backend migre 100%.
-                Swal.fire(
-                    '¡Programado!',
-                    res.data?.message || res.message || 'Programación diaria guardada correctamente.',
-                    'success'
-                );
+                // orden_produccion: la OP que OpNumeradorService ya asignó sola al
+                // programar (pedido del usuario 2026-08-27: mostrar cuál quedó).
+                const opAsignada = res.data?.orden_produccion || res.orden_produccion || '';
+                const mensajeBase = res.data?.message || res.message || 'Programación diaria guardada correctamente.';
+                Swal.fire({
+                    icon: 'success',
+                    title: '¡Programado!',
+                    html: opAsignada
+                        ? `${mensajeBase}<div class="mt-3"><span class="badge bg-primary fs-6">OP asignada: ${opAsignada}</span></div>`
+                        : mensajeBase
+                });
 
                 this.tempProductList = [];
                 this.renderTempList();
                 document.getElementById('form-mes-programar').reset();
+                this.actualizarVisibilidadAgregar();
                 if (window.FormHelpers) window.FormHelpers.limpiarPersistencia('form-mes-programar');
                 // Refrescar tanto la tabla de cola como las tarjetas de máquinas
                 await this.actualizarColaProgramacion();

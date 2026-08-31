@@ -6,10 +6,10 @@ import tempfile
 from backend.core.responses import api_success, api_error
 from backend.core import task_runner
 from backend.utils.auth_middleware import require_role, ROL_ADMINS, _obtener_usuario_activo
-from backend.models.sql_models import db, ProduccionPulido, PncInyeccion, PncPulido, PncEnsamble, BujeRevuelto, Producto, TrazabilidadLote
+from backend.models.sql_models import db, ProduccionPulido, PncInyeccion, PncPulido, PncEnsamble, BujeRevuelto, Producto, TrazabilidadLote, PulidoOverride
 from backend.utils.formatters import normalizar_codigo, preservar_o_normalizar_prefijo, normalizar_codigo_sin_prefijo
 from backend.services.audit_service import AuditService, OwnershipMismatchException, TurnoInvalidoException
-from backend.services.pulido_service import PulidoService
+from backend.services.pulido_service import PulidoService, FechaPulidoInvalidaException, CantidadExcedeInyectadoException
 from backend.services.pausas_service import PausasService
 from backend.utils.time_utils import get_colombia_time
 import uuid
@@ -21,13 +21,59 @@ logger = logging.getLogger(__name__)
 pulido_bp = Blueprint('pulido_bp', __name__)
 
 ROLES_PULIDO = ROL_ADMINS + ['JEFE PULIDO', 'PULIDO', 'JEFE AUXILIAR INVENTARIO']
+# Panel de admin (ver/pausar/reanudar sesiones de TODAS las operarias, plan
+# 2026-08-31) -- deliberadamente MÁS estrecho que ROLES_PULIDO: ver y tocar
+# la sesión de otra persona es un privilegio de supervisión, no algo que
+# cualquiera con acceso normal a Pulido deba poder hacer.
+ROLES_ADMIN_PULIDO = ROL_ADMINS + ['JEFE PULIDO']
 
-def _ejecutar_persistencia_pulido(registro, data, responsable, ahora):
+
+def _es_prueba_pulido(orden_produccion, id_pulido):
+    """Sandbox de pruebas (9999/PRUEBA): ver es_prueba más abajo -- factorizado
+    para poder evaluarlo también contra el estado ANTERIOR de un registro al
+    revertir su efecto en inventario (ver _ejecutar_persistencia_pulido)."""
+    return (
+        '9999' in str(orden_produccion or '').upper() or 'PRUEBA' in str(orden_produccion or '').upper()
+        or '9999' in str(id_pulido or '').upper() or 'PRUEBA' in str(id_pulido or '').upper()
+    )
+
+
+def _ejecutar_persistencia_pulido(registro, data, responsable, ahora,
+                                   forzar_bloqueo=False, motivo_forzado=None, autorizado_por=None):
     """
     Función privada auxiliar para encapsular la persistencia y la lógica de negocio
     compleja del módulo de pulido. Mantiene la ruta compacta (< 50 líneas).
+
+    forzar_bloqueo/motivo_forzado/autorizado_por: bypass de los bloqueos duros
+    de fecha y cantidad (plan 2026-08-28) -- el guard de que solo un ADMIN
+    puede forzar vive en la ruta (registrar_pulido), no aquí. Cuando se
+    fuerza y algún bloqueo SÍ se habría disparado, queda una fila en
+    PulidoOverride (el "reporte para restar puntos" que pidió la jefa).
     """
     id_pulido = data.get('id_pulido')
+
+    # Snapshot del efecto en inventario YA APLICADO por este registro, ANTES
+    # de sobreescribir sus campos -- necesario para revertirlo abajo. Sin
+    # esto, editar un reporte ya guardado (o que la tablet lo reenvíe por un
+    # reintento de red) vuelve a descontar por_pulir y a sumar p_terminado
+    # una segunda vez para la MISMA producción física (hallazgo 2026-08-27,
+    # el "flujo directo" no era idempotente: solo Inyección tenía el guard
+    # `estado == 'CERRADO'`, Pulido nunca lo tuvo).
+    efecto_anterior = None
+    if registro:
+        rev_anterior = sum(
+            float(r.cantidad or 0) for r in
+            db.session.query(BujeRevuelto).filter_by(id_pulido=registro.id_pulido).all()
+        )
+        efecto_anterior = {
+            'codigo': registro.codigo,
+            'buenas': float(registro.cantidad_real or 0),
+            'total': (
+                float(registro.cantidad_real or 0) + float(registro.pnc_inyeccion or 0)
+                + float(registro.pnc_pulido or 0) + rev_anterior
+            ),
+            'es_prueba': _es_prueba_pulido(registro.orden_produccion, registro.id_pulido),
+        }
 
     if not registro:
         # Si no existe (o fue borrado de la DB), crear uno nuevo para evitar Error 500
@@ -62,6 +108,30 @@ def _ejecutar_persistencia_pulido(registro, data, responsable, ahora):
     total_reportado = registro.cantidad_real + registro.pnc_inyeccion + registro.pnc_pulido
     if registro.cantidad_recibida < total_reportado:
         logger.warning(f" [VALIDATION] Inconsistencia en {registro.id_pulido}: Total {registro.cantidad_recibida} < Suma {total_reportado}")
+
+    # ── Bloqueos duros (plan 2026-08-28): fecha same-day + cantidad <= inyectado ──
+    # Se evalúan SIN forzar primero para saber si el forzado realmente saltó
+    # algo (y así no dejar filas de override "fantasma" cuando forzar_bloqueo
+    # viene en true pero nada se habría bloqueado). Si no se fuerza, la
+    # excepción sube tal cual y _ejecutar_persistencia_pulido no persiste nada
+    # (todavía no hubo commit).
+    overrides_aplicados = []
+    try:
+        PulidoService.validar_bloqueo_fecha(registro.fecha, forzado=False)
+    except FechaPulidoInvalidaException as exc_fecha:
+        if not forzar_bloqueo:
+            raise
+        overrides_aplicados.append(('FECHA', str(exc_fecha)))
+
+    try:
+        PulidoService.validar_saldo_op(
+            registro.orden_produccion, registro.codigo, total_reportado,
+            id_pulido_actual=registro.id_pulido, forzado=False
+        )
+    except CantidadExcedeInyectadoException as exc_cant:
+        if not forzar_bloqueo:
+            raise
+        overrides_aplicados.append(('CANTIDAD', str(exc_cant)))
 
     # Manejo de Horas y Cálculos de Tiempo
     if data.get('hora_inicio'):
@@ -289,11 +359,45 @@ def _ejecutar_persistencia_pulido(registro, data, responsable, ahora):
         rev_total = sum(float(r.get('cantidad', 0)) for r in revueltos_list)
         total_descuento_por_pulir = buenas + pnc_total + rev_total
 
-        es_prueba = '9999' in str(registro.orden_produccion).upper() or 'PRUEBA' in str(registro.orden_produccion).upper() or '9999' in str(registro.id_pulido).upper() or 'PRUEBA' in str(registro.id_pulido).upper()
-        
+        es_prueba = _es_prueba_pulido(registro.orden_produccion, registro.id_pulido)
+
+        # Revertir el efecto que este MISMO registro ya haya aplicado antes
+        # de aplicar el nuevo -- así una edición o un reenvío queda neto en
+        # el delta real, en vez de descontar por_pulir dos veces (ver
+        # snapshot al inicio de la función). Si el código cambió entre
+        # ediciones, esto también corrige el producto correcto: revierte
+        # sobre el código viejo y aplica sobre el nuevo.
+        if efecto_anterior and not efecto_anterior['es_prueba']:
+            codigo_ant = preservar_o_normalizar_prefijo(efecto_anterior['codigo'])
+            # Match por codigo_sistema O id_codigo (no solo codigo_sistema):
+            # el frontend de Pulido (normalizarCodigo) le quita el prefijo
+            # 'FR-' antes de enviar -- preservar_o_normalizar_prefijo NO se
+            # lo vuelve a poner a propósito (no debe inventar división), así
+            # que un código FR- puro llega aquí como '9308', no 'FR-9308'.
+            # db_productos.codigo_sistema SIEMPRE lleva el prefijo real, pero
+            # id_codigo guarda la referencia tal cual -- sin este OR, CADA
+            # reporte de Pulido de una referencia FR- (la división por
+            # defecto, la mayoría del catálogo) no encontraba el producto y
+            # el descuento de inventario se saltaba en silencio (hallazgo
+            # 2026-08-31, probado en vivo en ambos modos Satélite y PRO).
+            prod_anterior = db.session.query(Producto).filter(
+                (Producto.codigo_sistema == codigo_ant) | (Producto.id_codigo == codigo_ant)
+            ).first()
+            if prod_anterior:
+                prod_anterior.por_pulir = float(prod_anterior.por_pulir or 0) + efecto_anterior['total']
+                p_terminado_revertido = float(prod_anterior.p_terminado or 0) - efecto_anterior['buenas']
+                if p_terminado_revertido < 0:
+                    logger.warning(
+                        f"⚠️ [PULIDO-INVENTARIO] Al editar {registro.id_pulido}, revertir P.Terminado de "
+                        f"{efecto_anterior['codigo']} lo manda a negativo ({p_terminado_revertido}) -- "
+                        f"probablemente ya se consumió aguas abajo (empaque/despacho). Se deja en 0."
+                    )
+                prod_anterior.p_terminado = max(0, p_terminado_revertido)
+
         if not es_prueba and total_descuento_por_pulir > 0:
-            prod_wip = db.session.query(Producto).filter_by(
-                codigo_sistema=preservar_o_normalizar_prefijo(registro.codigo)
+            codigo_actual = preservar_o_normalizar_prefijo(registro.codigo)
+            prod_wip = db.session.query(Producto).filter(
+                (Producto.codigo_sistema == codigo_actual) | (Producto.id_codigo == codigo_actual)
             ).first()
             if prod_wip:
                 # Restar de por_pulir, evitando negativos de forma preventiva
@@ -305,12 +409,27 @@ def _ejecutar_persistencia_pulido(registro, data, responsable, ahora):
     except Exception as err:
         logger.error(f"Error actualizando inventario directo en pulido: {err}")
 
+    for tipo_bloqueo, detalle_bloqueo in overrides_aplicados:
+        db.session.add(PulidoOverride(
+            id_pulido=registro.id_pulido,
+            tipo=tipo_bloqueo,
+            operaria=responsable,
+            autorizado_por=autorizado_por,
+            motivo=motivo_forzado,
+            detalle=detalle_bloqueo,
+        ))
+        logger.warning(
+            f"⚠️ [PULIDO-OVERRIDE] Bloqueo {tipo_bloqueo} de {registro.id_pulido} "
+            f"forzado por {autorizado_por!r} (operaria {responsable!r}). Motivo: {motivo_forzado!r}."
+        )
+
     db.session.commit()
     return {
-        "success": True, 
+        "success": True,
         "message": "Registro de pulido sincronizado (Flujo directo)",
         "id_pulido": registro.id_pulido,
-        "upsert": "UPDATE" if id_pulido and registro.id else "INSERT"
+        "upsert": "UPDATE" if id_pulido and registro.id else "INSERT",
+        "overrides_aplicados": [t for t, _ in overrides_aplicados],
     }
 
 @pulido_bp.route('/api/pulido', methods=['POST'])
@@ -345,9 +464,45 @@ def registrar_pulido():
                 id_pulido=id_pulido, responsable_db=e.responsable_db, responsable_in=e.responsable_in
             )
 
+        # Bloqueos duros de fecha/cantidad (plan 2026-08-28): solo un ADMIN
+        # puede saltarlos, y solo con un motivo -- mismo patrón que
+        # EnsambleService.cerrar_jornada(forzar=...).
+        forzar_bloqueo = bool(data.get('forzar_bloqueo'))
+        motivo_forzado = (data.get('motivo_forzado') or '').strip() or None
+        rol_activo = session.get('role')
+        if forzar_bloqueo:
+            if not any(r in (rol_activo or '').upper() for r in ROL_ADMINS):
+                return api_error(
+                    "Solo un ADMIN puede autorizar el guardado de un reporte de Pulido bloqueado",
+                    status_code=403, code="FORZAR_NO_AUTORIZADO"
+                )
+            if not motivo_forzado:
+                return api_error(
+                    "Forzar el guardado de un reporte bloqueado requiere indicar un motivo",
+                    status_code=400, code="MOTIVO_REQUERIDO"
+                )
+
         # Delegar la persistencia compleja a la función privada
-        res = _ejecutar_persistencia_pulido(registro, data, responsable, ahora)
+        res = _ejecutar_persistencia_pulido(
+            registro, data, responsable, ahora,
+            forzar_bloqueo=forzar_bloqueo, motivo_forzado=motivo_forzado, autorizado_por=usuario_activo,
+        )
         return api_success(data=res, status_code=201)
+
+    except FechaPulidoInvalidaException as e:
+        db.session.rollback()
+        return api_error(
+            e.message, status_code=409, code="PULIDO_FECHA_BLOQUEADA",
+            fecha_reporte=str(e.fecha_reporte), hoy=str(e.hoy)
+        )
+
+    except CantidadExcedeInyectadoException as e:
+        db.session.rollback()
+        return api_error(
+            e.message, status_code=409, code="PULIDO_CANTIDAD_EXCEDE_INYECTADO",
+            orden_produccion=e.op, referencia=e.referencia,
+            inyectado=e.inyectado, ya_reportado=e.ya_reportado, disponible=e.disponible
+        )
 
     except TurnoInvalidoException as e:
         db.session.rollback()
@@ -468,6 +623,26 @@ def get_active_pulido_session():
         return api_success(data={"session": None})
     except Exception as e:
         return api_error(str(e), status_code=500)
+
+
+@pulido_bp.route('/api/pulido/admin/sesiones', methods=['GET'])
+@require_role(ROLES_ADMIN_PULIDO)
+def listar_sesiones_pulido_admin():
+    """
+    Panel de admin (plan 2026-08-31): todas las sesiones de Pulido activas/
+    pausadas de CUALQUIER operaria, para supervisión en tablets compartidas.
+    Pausar/reanudar desde el panel reutilizan /api/pulido/pausar y
+    /api/pulido/reanudar (ya funcionan por id_pulido, sin candado de dueño);
+    corregir un reporte reutiliza el POST /api/pulido normal -- el Ownership
+    Guard ya deja pasar a roles admin/jefe preservando el responsable
+    original (ver AuditService.resolver_y_validar_propietario).
+    """
+    try:
+        return api_success(data={'sesiones': PulidoService.listar_sesiones_activas()})
+    except Exception as e:
+        logger.error(f"❌ Error listando sesiones de Pulido (admin): {e}")
+        return api_error(str(e), status_code=500)
+
 
 @pulido_bp.route('/api/pulido/tareas_pendientes', methods=['GET'])
 def get_pulido_tareas_pendientes():
@@ -753,7 +928,7 @@ def _generar_excel_pulido_task(task_id, f_inicio, f_fin, operario, id_codigo):
                 id, id_pulido::TEXT as id_pulido, fecha,
                 codigo::TEXT as codigo, responsable::TEXT as responsable,
                 cantidad_real, pnc_inyeccion, pnc_pulido,
-                hora_inicio, hora_fin,
+                hora_inicio, hora_fin, tiempo_total_minutos,
                 orden_produccion::TEXT as orden_produccion,
                 observaciones::TEXT as observaciones,
                 cantidad_recibida
@@ -803,12 +978,19 @@ def _generar_excel_pulido_task(task_id, f_inicio, f_fin, operario, id_codigo):
         )
         zebra_fill = PatternFill(start_color='F2F3F4', end_color='F2F3F4', fill_type='solid')
         pnc_fill = PatternFill(start_color='FADBD8', end_color='FADBD8', fill_type='solid')
+        # Horario fuera de jornada (turno único 07:00-17:00, ver
+        # PulidoService.validar_duracion_turno) -- casi siempre delatan un
+        # AM/PM mal marcado en el picker de "MODO SATÉLITE" (input type=time,
+        # que en celulares con formato 12h puede precargar AM/PM según la
+        # hora del día en que la operaria abre el campo, no según el turno
+        # real que está reportando).
+        horario_sospechoso_fill = PatternFill(start_color='FFF3CD', end_color='FFF3CD', fill_type='solid')
         data_align = Alignment(horizontal='center', vertical='center')
         text_align = Alignment(horizontal='left', vertical='center', wrap_text=True)
 
         # --- CABECERA ---
         columnas = [
-            'Fecha', 'Hora Inicio', 'Hora Fin', 'Operario', 'Referencia',
+            'Fecha', 'Hora Inicio', 'Hora Fin', 'Tiempo Real (min)', 'Operario', 'Referencia',
             'Orden/OP', 'Cant. Recibida', 'Cantidad OK', 'PNC Iny', 'PNC Pul', 'Observaciones'
         ]
         for col_idx, titulo in enumerate(columnas, 1):
@@ -818,20 +1000,35 @@ def _generar_excel_pulido_task(task_id, f_inicio, f_fin, operario, id_codigo):
             cell.alignment = header_align
             cell.border = thin_border
 
+        # Ventana de jornada única de Pulido (07:00-17:00, sin turno
+        # nocturno -- ver PulidoService.validar_duracion_turno). Se deja un
+        # margen razonable para entradas tempranas/salidas con sobretiempo
+        # antes de marcar la fila como sospechosa.
+        from datetime import time as _time
+        VENTANA_INICIO_MIN = _time(6, 0)
+        VENTANA_FIN_MAX = _time(18, 0)
+
         # --- FILAS DE DATOS ---
         for row_idx, r in enumerate(resultados, 2):
             fecha_str = r['fecha'].strftime('%d/%m/%Y') if r['fecha'] else ''
             h_inicio = r['hora_inicio'].strftime('%H:%M') if r['hora_inicio'] else ''
             h_fin = r['hora_fin'].strftime('%H:%M') if r['hora_fin'] else ''
+            tiempo_real_min = round(float(r['tiempo_total_minutos'] or 0), 1)
             cant_recibida = float(r['cantidad_recibida'] or 0)
             cant_ok = int(r['cantidad_real'] or 0)
             pnc_i = int(r['pnc_inyeccion'] or 0)
             pnc_p = int(r['pnc_pulido'] or 0)
 
+            hora_sospechosa = bool(
+                (r['hora_inicio'] and r['hora_inicio'].time() < VENTANA_INICIO_MIN)
+                or (r['hora_fin'] and r['hora_fin'].time() > VENTANA_FIN_MAX)
+            )
+
             fila = [
                 fecha_str,
                 h_inicio,
                 h_fin,
+                tiempo_real_min,
                 str(r['responsable'] or 'SISTEMA'),
                 str(r['codigo'] or ''),
                 str(r['orden_produccion'] or r['id_pulido'] or '-'),
@@ -847,7 +1044,7 @@ def _generar_excel_pulido_task(task_id, f_inicio, f_fin, operario, id_codigo):
                 cell.border = thin_border
 
                 # Alineación: texto a la izquierda, números al centro
-                if col_idx in (4, 5, 6, 11):  # Operario, Referencia, Orden, Observaciones
+                if col_idx in (5, 6, 7, 12):  # Operario, Referencia, Orden, Observaciones
                     cell.alignment = text_align
                 else:
                     cell.alignment = data_align
@@ -857,16 +1054,24 @@ def _generar_excel_pulido_task(task_id, f_inicio, f_fin, operario, id_codigo):
                 for col_idx in range(1, len(columnas) + 1):
                     ws.cell(row=row_idx, column=col_idx).fill = zebra_fill
 
+            # Fuera de jornada (probable AM/PM mal marcado en MODO SATÉLITE):
+            # resalta Hora Inicio y Hora Fin para que salte a la vista sin
+            # tener que revisar turno por turno a mano.
+            if hora_sospechosa:
+                for col_idx in (2, 3):
+                    ws.cell(row=row_idx, column=col_idx).fill = horario_sospechoso_fill
+                    ws.cell(row=row_idx, column=col_idx).font = Font(bold=True, color='7A5B00')
+
             # Alerta PNC (fondo rojo claro si > 0)
             if pnc_i > 0:
-                ws.cell(row=row_idx, column=9).fill = pnc_fill
-                ws.cell(row=row_idx, column=9).font = Font(bold=True, color='C0392B')
-            if pnc_p > 0:
                 ws.cell(row=row_idx, column=10).fill = pnc_fill
                 ws.cell(row=row_idx, column=10).font = Font(bold=True, color='C0392B')
+            if pnc_p > 0:
+                ws.cell(row=row_idx, column=11).fill = pnc_fill
+                ws.cell(row=row_idx, column=11).font = Font(bold=True, color='C0392B')
 
         # --- AUTO-AJUSTE DE ANCHOS ---
-        anchos = [12, 11, 11, 22, 18, 18, 14, 13, 9, 9, 40]
+        anchos = [12, 11, 11, 15, 22, 18, 18, 14, 13, 9, 9, 40]
         for i, w in enumerate(anchos, 1):
             ws.column_dimensions[get_column_letter(i)].width = w
 
@@ -974,6 +1179,19 @@ def get_lotes_activos():
 
     except Exception as e:
         logger.error(f'❌ [Lotes Activos] Error: {e}')
+        return api_error(str(e), status_code=500)
+
+
+@pulido_bp.route('/api/pulido/saldo_por_op', methods=['GET'])
+@require_role(ROLES_PULIDO)
+def get_saldo_por_op():
+    """Fase 7 (plan OP->WO): saldo real de 'por pulir' por OP+referencia --
+    inyectado - pulido, solo OP con trazabilidad real (excluye 'SIN OP' y
+    todo lo anterior al corte). Lógica en PulidoService.get_saldo_por_op."""
+    try:
+        return api_success(data={'saldo': PulidoService.get_saldo_por_op()})
+    except Exception as e:
+        logger.error(f'❌ [Saldo por OP] Error: {e}')
         return api_error(str(e), status_code=500)
 
 

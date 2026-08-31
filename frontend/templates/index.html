@@ -463,6 +463,10 @@
             </li>
             <li class="menu-item" data-page="ensamble"> <a href="#"><i
                         class="fas fa-puzzle-piece"></i><span>Ensamble</span></a> </li>
+            <li class="menu-item" data-page="empaque"> <a href="#"><i
+                        class="fas fa-box-open"></i><span>Empaque</span></a> </li>
+            <li class="menu-item" data-page="exportacion-wo"> <a href="#"><i
+                        class="fas fa-file-export"></i><span>Exportar a WO</span></a> </li>
             <li class="menu-item" data-page="pnc"> <a href="#"><i
                         class="fas fa-exclamation-triangle"></i><span>PNC</span></a> </li>
             <li class="menu-item" data-page="facturacion"> <a href="#"><i
@@ -1533,13 +1537,18 @@
                                                     <th style="width: 5%;" class="text-center"><i
                                                             class="fas fa-check-square"></i></th>
                                                     <th style="width: 30%;">Responsable</th>
-                                                    <th class="text-center" style="width: 30%;">Unidades Totales</th>
-                                                    <th style="width: 30%;">Calidad (Yield)</th>
+                                                    <th class="text-center" style="width: 25%;">Unidades Totales</th>
+                                                    <th style="width: 25%;">Calidad (Yield)</th>
+                                                    <th class="text-center" style="width: 15%;">
+                                                        Evolución
+                                                        <i class="fas fa-info-circle ms-1 fs-6 text-muted" data-bs-toggle="tooltip"
+                                                            title="Cambio en volumen (piezas OK) frente al período anterior de igual duración."></i>
+                                                    </th>
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 <tr>
-                                                    <td colspan="5" class="text-center py-5 text-muted">
+                                                    <td colspan="6" class="text-center py-5 text-muted">
                                                         <div class="spinner-border spinner-border-sm text-primary me-2"
                                                             role="status"></div> Cargando datos en vivo de Pulido...
                                                     </td>
@@ -1746,6 +1755,10 @@
                     <h1><i class="fas fa-industry"></i> Control de Producción (MES)</h1>
                     <p class="subtitle">Gestión de Programación, Operación y Calidad</p>
                 </div>
+                <button class="btn btn-outline-secondary btn-sm shadow-sm ms-auto"
+                    onclick="InyeccionTour.iniciar()" title="Ver tutorial de este módulo">
+                    <i class="fas fa-circle-question dashboard-help-icon"></i>
+                </button>
             </header>
 
             <div class="container-fluid py-4">
@@ -1797,26 +1810,40 @@
                                                 <input type="date" id="mes-prog-fecha"
                                                     class="form-control border-0 bg-light">
                                             </div>
-                                            <div class="mb-3">
+                                            <div class="mb-3" style="position: relative;">
+                                                <!-- position:relative es el ancla que necesita
+                                                     .autocomplete-suggestions (position:absolute,
+                                                     top:100%) para pegarse justo debajo del input.
+                                                     #preview-producto se sacó de aquí adentro a
+                                                     propósito: top:100% se calcula sobre la altura
+                                                     TOTAL de este contenedor, así que si el banner
+                                                     "Producto Válido" (con contenido real, no vacío)
+                                                     seguía siendo hijo de este mismo div, la sugerencia
+                                                     terminaba renderizando cientos de px más abajo del
+                                                     input -- debajo del banner entero, no debajo del
+                                                     campo. Mismo patrón que .form-group ya usa para
+                                                     los buscadores de Pulido, que no tienen este
+                                                     problema porque no envuelven ningún contenido extra. -->
                                                 <label class="form-label small fw-bold">Producto</label>
-                                                <div class="input-group">
-                                                    <input type="text" id="mes-prog-producto"
-                                                        class="form-control border-0 bg-light"
-                                                        placeholder="Buscar código...">
-                                                    <button type="button"
-                                                        class="btn btn-outline-primary border-0 bg-light"
-                                                        id="btn-mes-add-prod-list"><i class="fas fa-plus"></i></button>
-                                                </div>
+                                                <input type="text" id="mes-prog-producto"
+                                                    class="form-control border-0 bg-light"
+                                                    placeholder="Buscar código...">
                                                 <div id="mes-prog-prod-suggestions" class="autocomplete-suggestions">
                                                 </div>
-                                                <div id="preview-producto" class="mt-2"></div>
                                             </div>
+                                            <div id="preview-producto" class="mb-3"></div>
                                             <div class="row mb-3">
                                                 <div class="col-8">
                                                     <label class="form-label small fw-bold">Molde</label>
-                                                    <input type="number" id="mes-prog-molde"
+                                                    <!-- Código real de molde (ej. '5002A'), no una capacidad
+                                                         numérica -- ver ModuloMes.cargarMoldesDisponibles().
+                                                         list+datalist reutiliza el autocompletar nativo del
+                                                         navegador, igual que el datalist de responsables del
+                                                         modal de Iniciar Trabajo. -->
+                                                    <input type="text" id="mes-prog-molde" list="mes-prog-moldes-datalist"
                                                         class="form-control border-0 bg-light"
-                                                        placeholder="Capacidad molde..." min="1">
+                                                        placeholder="Código de molde..." autocomplete="off">
+                                                    <datalist id="mes-prog-moldes-datalist"></datalist>
                                                 </div>
                                                 <div class="col-4">
                                                     <label class="form-label small fw-bold">Cavidades</label>
@@ -1825,8 +1852,28 @@
                                                 </div>
                                             </div>
 
-                                            <!-- LISTA TEMPORAL -->
+                                            <!-- Botón de agregar: reubicado DESPUÉS de Molde/Cavidades (pedido
+                                                 del usuario 2026-08-28) -- antes vivía pegado al campo Producto,
+                                                 arriba de Molde/Cavidades, así que aparecía activo con el valor
+                                                 por defecto de Cavidades (1) sin que el usuario lo hubiera puesto
+                                                 a propósito, y agregar por error obligaba a borrar de la lista y
+                                                 repetir. El orden visual ahora es el mismo que el de llenado:
+                                                 Producto, Molde, Cavidades, y AHÍ SÍ agregar. Sigue oculto hasta
+                                                 completar Molde y Cavidades -- ver actualizarVisibilidadAgregar
+                                                 en mes_control.js (mismo id, misma lógica, solo cambió de lugar). -->
                                             <div class="mb-3">
+                                                <button type="button" class="btn btn-outline-primary w-100 fw-bold"
+                                                    id="btn-mes-add-prod-list" style="display:none;">
+                                                    <i class="fas fa-plus me-1"></i> Agregar Producto a la Lista
+                                                </button>
+                                            </div>
+
+                                            <!-- LISTA TEMPORAL: oculta hasta completar Molde y Cavidades (el "+"
+                                                 de arriba también) -- pedido del usuario 2026-08-27, para que no
+                                                 se pueda añadir un producto al montaje sin haber definido antes
+                                                 con qué molde/cavidades va a correr. Ver actualizarVisibilidadAgregar
+                                                 en mes_control.js. -->
+                                            <div class="mb-3" id="mes-prog-montaje-lista" style="display:none;">
                                                 <div class="d-flex justify-content-between align-items-center mb-1">
                                                     <label class="form-label small fw-bold mb-0 text-primary">Productos
                                                         en este Montaje</label>
@@ -1835,7 +1882,7 @@
                                                 </div>
                                                 <div class="border rounded bg-white p-2"
                                                     style="max-height: 120px; overflow-y: auto;">
-                                                    <table class="table table-sm table-borderless mb-0"
+                                                    <table class="table table-compact table-sm table-borderless mb-0"
                                                         style="font-size: 0.75rem;">
                                                         <tbody id="mes-prog-temp-list">
                                                             <tr>
@@ -2356,6 +2403,18 @@
                 </div>
 
                 <div class="d-flex align-items-center gap-3">
+                    <!-- Panel de Supervisión (plan 2026-08-31): solo ADMIN/JEFE PULIDO --
+                         ver/pausar/reanudar/corregir sesiones de CUALQUIER operaria,
+                         pensado para cuando varias trabajen en tablets compartidas.
+                         Oculto por defecto -- ModuloPulido.inicializar() lo muestra
+                         según el rol de la sesión activa. -->
+                    <button type="button" id="btn-panel-supervision-pulido" class="btn btn-sm btn-outline-dark rounded-pill"
+                        style="display:none;" onclick="ModuloPulido.abrirPanelSupervision()">
+                        <i class="fas fa-eye me-1"></i> Supervisión
+                    </button>
+                    <span id="badge-auto-refresh-supervision" class="badge rounded-pill text-bg-light border" style="display:none; font-size: 0.65rem;" title="Se refresca solo cada 15s">
+                        <i class="fas fa-sync-alt me-1"></i><span id="badge-auto-refresh-cuenta">15</span>s
+                    </span>
                     <div class="user-chip d-flex align-items-center px-3 py-1 bg-white rounded-pill border shadow-sm">
                         <i class="fas fa-user-circle text-primary me-2" style="font-size: 1rem;"></i>
                         <input type="text" id="responsable-pulido" class="border-0 bg-transparent text-dark fw-bold" placeholder="---" style="font-size: 0.8rem; width: 110px; pointer-events: none;">
@@ -2369,6 +2428,31 @@
                     <input class="form-check-input" type="checkbox" id="toggle-pulido-mode" onchange="ModuloPulido.cambiarModo(this.checked)" checked>
                 </div>
                 <span class="text-primary fw-bold small"><i class="fas fa-microchip me-1"></i> MODO PLANTA (PRO)</span>
+            </div>
+
+            <!-- Panel de Supervisión de Pulido (rediseño 2026-08-31): vista fija de
+                 pantalla completa en vez de modal -- se abre desde el botón
+                 "Supervisión" y cubre el módulo hasta que la admin la cierra.
+                 Tarjetas por operaria con cronómetro en vivo (cliente, 1s) y
+                 refresco automático de datos del servidor cada 15s. -->
+            <div id="panel-supervision-pulido-fijo" style="display:none; position: fixed; inset: 0; z-index: 1050; background: #f8fafc; overflow-y: auto; overflow-x: hidden;">
+                <div class="d-flex justify-content-between align-items-center px-4 py-3 bg-white border-bottom shadow-sm sticky-top">
+                    <h5 class="mb-0 fw-800"><i class="fas fa-eye me-2 text-primary"></i>Supervisión de Pulido en Vivo</h5>
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="badge rounded-pill text-bg-light border" style="font-size: 0.7rem;">
+                            <i class="fas fa-sync-alt me-1"></i>Auto-refresco 15s
+                        </span>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="ModuloPulido.abrirPanelSupervision()" title="Refrescar ahora">
+                            <i class="fas fa-sync-alt"></i>
+                        </button>
+                        <button type="button" class="btn btn-sm btn-dark" onclick="ModuloPulido.cerrarPanelSupervision()">
+                            <i class="fas fa-arrow-left me-1"></i> Volver a Mi Trabajo
+                        </button>
+                    </div>
+                </div>
+                <div id="grid-panel-supervision-pulido" class="p-4 row g-3">
+                    <div class="col-12 text-center text-muted py-5">Cargando...</div>
+                </div>
             </div>
             <div class="form-container mt-3 px-4" style="max-width: 1000px; margin: 0 auto;">
                 
@@ -2391,7 +2475,8 @@
                         </div>
                         <div class="form-group">
                             <label for="orden-produccion-pulido"><i class="fas fa-list-ol"></i> Orden Producción (OP)</label>
-                            <input type="text" id="orden-produccion-pulido" placeholder="OP-XXXX">
+                            <input type="text" id="orden-produccion-pulido" placeholder="OP-XXXX" autocomplete="off">
+                            <div id="pulido-op-suggestions" class="autocomplete-suggestions"></div>
                         </div>
                         <div class="form-group">
                             <label for="lote-pulido"><i class="fas fa-box"></i> Lote</label>
@@ -2771,6 +2856,10 @@
                     <h1><i class="fas fa-puzzle-piece text-primary"></i> Programación y Reporte de Ensamble</h1>
                     <p class="subtitle">Gestión flexible de metas de producción y avances parciales</p>
                 </div>
+                <button class="btn btn-outline-secondary btn-sm shadow-sm ms-auto"
+                    onclick="EnsambleTour.iniciar()" title="Ver tutorial de este módulo">
+                    <i class="fas fa-circle-question dashboard-help-icon"></i>
+                </button>
             </header>
 
             <div class="container-fluid py-4">
@@ -2882,6 +2971,22 @@
                             <label class="form-label small fw-bold text-muted mb-0">Responsable del Reporte</label>
                             <input type="text" id="responsable-display" class="form-control border-0 bg-transparent fw-bold p-0" style="font-size: 1.2rem;" value="{{ session['user_name'] }}" readonly>
                         </div>
+                    </div>
+
+                    <!-- Cierre de jornada (reunión 2026-08-25): marca la OP del día como
+                         lista para que Zoe la descargue al día siguiente. Señal explícita
+                         al final del día, no automática -- ver EnsambleService.cerrar_jornada. -->
+                    <div class="alert alert-light border shadow-sm mb-4 d-flex align-items-center gap-3 py-3 rounded-4">
+                        <div class="bg-success bg-opacity-10 p-3 rounded-circle text-success">
+                            <i class="fas fa-flag-checkered fa-2x"></i>
+                        </div>
+                        <div class="flex-grow-1">
+                            <label class="form-label small fw-bold text-muted mb-0">Cierre de Jornada</label>
+                            <div class="small text-muted">Al terminar de reportar, cierra el día para que se pueda exportar a World Office.</div>
+                        </div>
+                        <button class="btn btn-success fw-bold shadow-sm" id="btn-cerrar-jornada-ensamble">
+                            <i class="fas fa-lock me-2"></i> Cerrar Jornada
+                        </button>
                     </div>
 
                     <!-- Tareas Disponibles -->
@@ -3167,6 +3272,179 @@
                                         <i class="fas fa-save me-2"></i> Registrar Horno
                                     </button>
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- EXPORTACIÓN A WORLD OFFICE (reunión 2026-08-25) -- "vista de Zoe" -->
+        <!-- Página propia y no un tab de ensamble: se descargan los TRES     -->
+        <!-- ámbitos (inyección, ensamble, empaque) y el rol que accede       -->
+        <!-- (ADMIN/JEFES/AUX. INVENTARIO) no es el de ensamble.              -->
+        <!-- ============================================================ -->
+        <div id="exportacion-wo-page" class="page">
+            <header class="top-bar">
+                <button class="btn-icon" id="toggle-sidebar-exportacion-wo">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <div class="page-title">
+                    <h1><i class="fas fa-file-export text-primary"></i> Exportar OP a World Office</h1>
+                    <p class="subtitle">Descarga del archivo plano para subir a WO</p>
+                </div>
+                <button class="btn btn-outline-primary btn-sm shadow-sm ms-auto" id="btn-expwo-refrescar">
+                    <i class="fas fa-sync-alt me-2"></i>Actualizar
+                </button>
+                <button class="btn btn-outline-secondary btn-sm shadow-sm" onclick="ExportacionWoTour.iniciar()"
+                    title="Ver tutorial de este módulo">
+                    <i class="fas fa-circle-question dashboard-help-icon"></i>
+                </button>
+            </header>
+
+            <div class="container-fluid py-4">
+                <div id="expwo-aviso-deshabilitado" class="alert alert-warning d-flex align-items-center gap-2 mb-4" style="display:none!important;">
+                    <i class="fas fa-triangle-exclamation fa-lg"></i>
+                    <div>
+                        <b>La descarga está deshabilitada por ahora.</b>
+                        <div class="small">Se activará cuando se confirmen los últimos datos de la plantilla con World Office. Mientras tanto puedes revisar el contenido con "Vista previa".</div>
+                    </div>
+                </div>
+
+                <div class="card border-0 shadow-sm rounded-4 mb-4">
+                    <div class="card-body p-3">
+                        <div class="row g-3 align-items-end">
+                            <div class="col-md-3">
+                                <label class="form-label small fw-bold text-muted">Desde</label>
+                                <input type="date" id="expwo-desde" class="form-control">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small fw-bold text-muted">Hasta</label>
+                                <input type="date" id="expwo-hasta" class="form-control">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small fw-bold text-muted">Área</label>
+                                <select id="expwo-ambito" class="form-select">
+                                    <option value="">Todas</option>
+                                    <option value="INYECCION">Inyección</option>
+                                    <option value="ENSAMBLE">Ensamble</option>
+                                    <option value="EMPAQUE">Empaque</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small fw-bold text-muted">Formato</label>
+                                <select id="expwo-formato" class="form-select">
+                                    <option value="xlsx">Excel (.xlsx)</option>
+                                    <option value="txt">Texto plano (.txt)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card border-0 shadow-sm rounded-4">
+                    <div class="card-header bg-light py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <h6 class="mb-0 fw-bold"><i class="fas fa-list me-2 text-primary"></i>Órdenes de producción</h6>
+                        <div class="d-flex gap-2 flex-wrap">
+                            <button class="btn btn-sm btn-outline-secondary" id="btn-expwo-preview">
+                                <i class="fas fa-eye me-1"></i> Vista previa
+                            </button>
+                            <button class="btn btn-sm btn-primary fw-bold" id="btn-expwo-descargar">
+                                <i class="fas fa-download me-1"></i> Descargar seleccionadas
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body p-0">
+                        <div id="expwo-listado" class="p-4 text-muted small">Cargando…</div>
+                    </div>
+                </div>
+
+                <div class="card border-0 shadow-sm rounded-4 mt-4" id="expwo-preview-card" style="display:none;">
+                    <div class="card-header bg-light py-3 d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0 fw-bold"><i class="fas fa-table me-2 text-primary"></i>Vista previa del archivo</h6>
+                        <button class="btn btn-sm btn-outline-secondary" id="btn-expwo-cerrar-preview">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    <div class="card-body p-0">
+                        <div id="expwo-preview-contenido" class="p-3"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- EMPAQUE (reunión 2026-08-25): nadie programa, se reporta lo que
+             se armó. La operaria ya sabe qué hacer viendo gestión de pedidos. -->
+        <div id="empaque-page" class="page">
+            <header class="top-bar">
+                <button class="btn-icon" id="toggle-sidebar-empaque">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <div class="page-title">
+                    <h1><i class="fas fa-box-open text-primary"></i> Reporte de Empaque</h1>
+                    <p class="subtitle">Registro de muñecos y kits armados</p>
+                </div>
+                <button class="btn btn-outline-secondary btn-sm shadow-sm ms-auto"
+                    onclick="EmpaqueTour.iniciar()" title="Ver tutorial de este módulo">
+                    <i class="fas fa-circle-question dashboard-help-icon"></i>
+                </button>
+            </header>
+
+            <div class="container-fluid py-4">
+                <div class="row g-4">
+                    <!-- Formulario -->
+                    <div class="col-lg-5">
+                        <div class="card border-0 shadow-lg rounded-4 overflow-hidden">
+                            <div class="card-header bg-dark text-white py-3">
+                                <h5 class="mb-0"><i class="fas fa-plus-circle me-2"></i>Registrar lo armado</h5>
+                            </div>
+                            <div class="card-body p-4">
+                                <div class="mb-3 position-relative">
+                                    <label class="form-label fw-bold"><i class="fas fa-barcode me-1"></i> Referencia</label>
+                                    <input type="text" id="empaque-buscador" class="form-control form-control-lg"
+                                           placeholder="Ej: FR-9408" autocomplete="off">
+                                    <div id="empaque-sugerencias" class="list-group position-absolute w-100 shadow"
+                                         style="z-index:1000; max-height:260px; overflow-y:auto; display:none;"></div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold"><i class="fas fa-cubes me-1"></i> Cantidad armada</label>
+                                    <input type="number" id="empaque-cantidad" class="form-control form-control-lg" min="1" step="1" value="1">
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold"><i class="fas fa-comment me-1"></i> Observaciones <small class="text-muted fw-normal">(opcional)</small></label>
+                                    <textarea id="empaque-observaciones" class="form-control" rows="2"></textarea>
+                                </div>
+
+                                <button class="btn btn-primary btn-lg w-100 fw-bold shadow-sm" id="btn-empaque-reportar">
+                                    <i class="fas fa-check-circle me-2"></i> Registrar Empaque
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Vista previa de descuento + listado del día -->
+                    <div class="col-lg-7">
+                        <div class="card border-0 shadow-sm rounded-4 mb-4" id="empaque-preview-card" style="display:none;">
+                            <div class="card-header bg-light py-3">
+                                <h6 class="mb-0 fw-bold"><i class="fas fa-list-check me-2 text-primary"></i>Materiales que se van a descontar</h6>
+                            </div>
+                            <div class="card-body p-3">
+                                <div id="empaque-preview-contenido"></div>
+                            </div>
+                        </div>
+
+                        <div class="card border-0 shadow-sm rounded-4">
+                            <div class="card-header bg-light py-3 d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0 fw-bold"><i class="fas fa-clock-rotate-left me-2 text-primary"></i>Reportado hoy</h6>
+                                <button class="btn btn-sm btn-outline-secondary" id="btn-empaque-refrescar">
+                                    <i class="fas fa-rotate"></i>
+                                </button>
+                            </div>
+                            <div class="card-body p-0">
+                                <div id="empaque-listado" class="p-3 text-muted small">Sin registros todavía.</div>
                             </div>
                         </div>
                     </div>
@@ -5000,14 +5278,21 @@
     <script src="/static/js/modules/dashboard.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/auditoria_op.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/asistente.js?v={{ RELEASE_VERSION }}"></script>
+    <script src="/static/js/modules/tour_engine.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/dashboard_tour.js?v={{ RELEASE_VERSION }}"></script>
     <script>console.log("✅ dashboard.js cargado");</script>
     <script src="/static/js/modules/inventario.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/inyeccion.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/mes_control.js?v={{ RELEASE_VERSION }}"></script>
+    <script src="/static/js/modules/inyeccion_tour.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/simulador.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/pulido.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/ensamble.js?v={{ RELEASE_VERSION }}"></script>
+    <script src="/static/js/modules/ensamble_tour.js?v={{ RELEASE_VERSION }}"></script>
+    <script src="/static/js/modules/empaque.js?v={{ RELEASE_VERSION }}"></script>
+    <script src="/static/js/modules/empaque_tour.js?v={{ RELEASE_VERSION }}"></script>
+    <script src="/static/js/modules/exportacion_wo.js?v={{ RELEASE_VERSION }}"></script>
+    <script src="/static/js/modules/exportacion_wo_tour.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/subproceso_ensamble_base.js?v={{ RELEASE_VERSION }}" defer></script>
     <script src="/static/js/modules/pintura.js?v={{ RELEASE_VERSION }}" defer></script>
     <script src="/static/js/modules/rayada.js?v={{ RELEASE_VERSION }}" defer></script>

@@ -31,6 +31,31 @@ def obtener_maquinas():
         return jsonify([]), 200
 
 
+@programacion_bp.route('/api/programacion/cavidades/<codigo>', methods=['GET'])
+@require_login
+def obtener_cavidades_referencia(codigo):
+    """Moldes y cavidades disponibles para una referencia, según rel_producto_molde
+    (catálogo real de planta) -- ver docstring del servicio."""
+    try:
+        return jsonify({'success': True, 'moldes': ProgramacionService.obtener_cavidades_referencia(codigo)}), 200
+    except Exception as e:
+        logger.error(f"❌ Error obteniendo cavidades para {codigo!r}: {e}")
+        return jsonify({'success': False, 'moldes': []}), 200
+
+
+@programacion_bp.route('/api/programacion/moldes', methods=['GET'])
+@require_login
+def listar_moldes_disponibles():
+    """Catálogo completo de códigos de molde reales, para el selector con
+    autocompletar del campo "Molde" en Programación -- ver docstring del
+    servicio (ProgramacionService.listar_moldes_disponibles)."""
+    try:
+        return jsonify({'success': True, 'moldes': ProgramacionService.listar_moldes_disponibles()}), 200
+    except Exception as e:
+        logger.error(f"❌ Error listando catálogo de moldes: {e}")
+        return jsonify({'success': False, 'moldes': []}), 200
+
+
 # ====================================================================
 # MES (MANUFACTURING EXECUTION SYSTEM) - AGENDAMIENTO INYECCIÓN
 # ====================================================================
@@ -47,7 +72,9 @@ def mes_programar():
             productos=data.get('productos', []),
             responsable=session.get('user', 'SISTEMA'),
             observaciones=data.get('observaciones', ''),
-            molde_capacidad=int(data.get('molde') or 0),
+            # Texto, no int(): el código real de molde no es numérico -- ver
+            # migrate_molde_texto.py.
+            molde_capacidad=str(data.get('molde') or '').strip() or None,
         )
         return jsonify({'success': True, **resultado}), 200
     except ValueError as e:

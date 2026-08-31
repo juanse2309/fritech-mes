@@ -57,7 +57,10 @@ class ProduccionInyeccion(db.Model):
     maquina         = db.Column(db.String(80),  nullable=True)
     cantidad_real   = db.Column(db.BigInteger,  default=0)
     estado          = db.Column(db.String(50),  nullable=True)
-    molde           = db.Column(db.Integer,     nullable=True)
+    # VARCHAR, no Integer (migrado 2026-08-28, ver migrate_molde_texto.py):
+    # el código real de molde no es numérico -- '5002A', '9304 moneda', etc.,
+    # verificado contra rel_producto_molde (314 códigos distintos reales).
+    molde           = db.Column(db.String(50),  nullable=True)
     cavidades       = db.Column(db.Integer,     default=1) # Columna principal (int4)
     
     # --- Audit Trail 3 Firmas ---
@@ -219,6 +222,28 @@ class PausasPulido(db.Model):
     motivo          = db.Column(db.String(200), nullable=True)
     hora_inicio     = db.Column(db.DateTime,    nullable=True)
     hora_fin        = db.Column(db.DateTime,    nullable=True)
+
+
+class PulidoOverride(db.Model):
+    """
+    Bitácora de bloqueos duros de Pulido (fecha distinta a hoy, o cantidad
+    que excede lo inyectado) saltados por un ADMIN -- plan 2026-08-28. No
+    reemplaza el log del servidor, es la fuente para el reporte que la
+    jefa pidió explícitamente para restar puntos por no llevar la app al
+    día: "avisaran a uno como admin para dejarlas subir y dejar un reporte
+    para restarles puntos".
+    """
+    __tablename__ = 'db_pulido_overrides'
+    __table_args__ = {'extend_existing': True}
+
+    id              = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    id_pulido       = db.Column(db.String(100), index=True, nullable=True)
+    tipo            = db.Column(db.String(20),  nullable=False)  # FECHA / CANTIDAD
+    operaria        = db.Column(db.String(200), nullable=True)
+    autorizado_por  = db.Column(db.String(150), nullable=True)
+    motivo          = db.Column(db.Text,        nullable=True)
+    detalle         = db.Column(db.Text,        nullable=True)
+    creado_en       = db.Column(db.DateTime,    default=get_colombia_time)
 
 
 class RawVentas(db.Model):
@@ -563,7 +588,8 @@ class ProgramacionInyeccion(db.Model):
     maquina         = db.Column(db.String(80))
     cantidad        = db.Column(db.Numeric(18, 2), default=0)
     estado          = db.Column(db.String(50), default='PENDIENTE')
-    molde           = db.Column(db.Integer, nullable=True)
+    # VARCHAR, no Integer -- ver mismo comentario en ProduccionInyeccion.molde.
+    molde           = db.Column(db.String(50), nullable=True)
     cavidades       = db.Column(db.Integer, default=1)
     responsable_planta = db.Column(db.String(150), nullable=True)
     observaciones   = db.Column(db.Text, nullable=True)
@@ -1003,6 +1029,81 @@ class InventarioWO(db.Model):
     codigo_alterno       = db.Column(db.String(100), nullable=True)
     referencia           = db.Column(db.String(100), nullable=True)
     fecha_sincronizacion = db.Column(db.DateTime, nullable=True)
+
+
+class OpGenerada(db.Model):
+    """
+    Numerador de OP: FRITECH asigna el consecutivo (antes lo hacia un humano
+    tecleando en World Office). Reunion 2026-08-25 -- corte 31-ago-2026.
+
+    Grano: una fila por documento OP que se va a subir a WO -- una por
+    maquina/dia en inyeccion, una por dia en ensamble y en empaque (reserva
+    perezosa: nace con el primer reporte del dia, no con la programacion).
+
+    El indice unico parcial uq_op_generada_dia_ambito es lo que hace la
+    reserva IDEMPOTENTE: dos llamados para la misma (fecha, ambito, maquina)
+    devuelven la MISMA fila en vez de crear una segunda. Eso es necesario
+    porque hay dos rutas de programacion de inyeccion escribiendo en la
+    misma tabla (guardar_programacion nueva y crear_programacion legacy), y
+    porque empaque puede reportar varias veces el mismo dia.
+
+    numero_op se compone como f"{prefijo}-{consecutivo}" -- MISMO formato
+    exacto que agente_wo_comercial.py usa al extraer OP reales de WO, o la
+    conciliacion (auditoria_service.py) no cruza.
+
+    La serie de consecutivos es GLOBAL entre los tres ambitos (verificado
+    contra datos reales: EMP-303425, ENS-303787, OP-303904 conviven en el
+    mismo rango sin un solo numero repetido entre prefijos) -- por eso el
+    piso se calcula con un solo MAX, no uno por prefijo.
+    """
+    __tablename__ = 'db_op_generadas'
+    __table_args__ = {'extend_existing': True}
+
+    id                = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    prefijo           = db.Column(db.String(20),  nullable=False, index=True)  # INY / ENS / EMP
+    consecutivo       = db.Column(db.BigInteger,  nullable=False)
+    numero_op         = db.Column(db.String(50),  nullable=False, unique=True, index=True)
+    ambito            = db.Column(db.String(20),  nullable=False, index=True)  # INYECCION / ENSAMBLE / EMPAQUE
+    maquina           = db.Column(db.String(80),  nullable=True)               # NULL salvo INYECCION
+    fecha_produccion  = db.Column(db.Date,        nullable=False, index=True)
+    estado            = db.Column(db.String(20),  nullable=False, default='RESERVADA')
+    # RESERVADA -> LISTA_EXPORTAR -> EXPORTADA -> CONFIRMADA_WO ; lateral: ANULADA, CONFLICTO
+
+    creado_por        = db.Column(db.String(150), nullable=True)
+    creado_en         = db.Column(db.DateTime,    nullable=False, default=datetime.utcnow)
+    exportada_por     = db.Column(db.String(150), nullable=True)
+    exportada_en      = db.Column(db.DateTime,    nullable=True)
+    confirmada_en     = db.Column(db.DateTime,    nullable=True)
+    anulada_motivo    = db.Column(db.Text,        nullable=True)
+
+
+class ProduccionEmpaque(db.Model):
+    """
+    Reporte de Empaque (reunion 2026-08-25): registro simple de "arme este
+    muneco/kit, esta cantidad". A diferencia de Ensamble, aqui NADIE programa
+    -- el trabajo lo dicta el pedido (la operaria ya sabe que hacer viendo
+    gestion de pedidos), asi que deliberadamente no hay cantidad_objetivo ni
+    estado PENDIENTE/COMPLETADO: no hay meta que cumplir, solo un hecho que
+    se registra una vez.
+
+    op_numero se llena con reserva PEREZOSA (ver EmpaqueService.reportar):
+    el primer reporte del dia pide la OP de (hoy, EMPAQUE) y la crea; los
+    siguientes reportes del mismo dia piden lo mismo y reciben la MISMA OP
+    gracias al indice unico parcial de OpGenerada -- asi, al final del dia,
+    todos los reportes quedan bajo una sola OP EMP multi-linea.
+    """
+    __tablename__ = 'db_empaque'
+    __table_args__ = {'extend_existing': True}
+
+    id              = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    id_empaque      = db.Column(db.String(100), unique=True, index=True, nullable=False)
+    fecha           = db.Column(db.Date,        nullable=False, index=True)
+    fecha_registro  = db.Column(db.DateTime,    nullable=False, default=datetime.utcnow)
+    id_codigo       = db.Column(db.String(50),  index=True, nullable=False)  # referencia del muñeco/kit
+    cantidad        = db.Column(db.Integer,     nullable=False)
+    responsable     = db.Column(db.String(150), nullable=True)
+    op_numero       = db.Column(db.String(100), index=True, nullable=True)
+    observaciones   = db.Column(db.Text,        nullable=True)
 
 
 class OpWoStaging(db.Model):

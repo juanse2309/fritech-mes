@@ -12,6 +12,8 @@ sqlalchemy
 psycopg2-binary
 requests
 google-generativeai
+google-api-python-client
+google-auth
 pyjwt
 pywebpush
 flask-limiter

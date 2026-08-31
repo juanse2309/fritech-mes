@@ -8,9 +8,10 @@ import uuid
 from datetime import datetime
 from sqlalchemy import or_
 from backend.core.sql_database import db
-from backend.models.sql_models import ChecklistEnsamble, Ensamble, OperacionLog, PncEnsamble, ProgramacionEnsamble, Producto
+from backend.models.sql_models import ChecklistEnsamble, Ensamble, OperacionLog, PncEnsamble, ProgramacionEnsamble, Producto, OpGenerada
 from backend.services.audit_service import AuditService, OwnershipMismatchException
 from backend.services.bom_service import calcular_descuentos_ensamble
+from backend.services.op_numerador_service import OpNumeradorService
 from backend.services.stock_service import StockService
 from backend.utils.formatters import normalizar_codigo, preservar_o_normalizar_prefijo
 from backend.utils.time_utils import get_colombia_time
@@ -72,6 +73,21 @@ class StockInsuficienteException(Exception):
         super().__init__(self.message)
 
 
+class ChecklistIncompletoException(Exception):
+    """Se lanza al intentar cerrar_jornada con checklists de procesos sin terminar.
+    Cierre de jornada (reunión 2026-08-25): señal explícita, no un cron a una
+    hora fija -- si Albeiro reporta tarde y Zoe ya descargó, el archivo queda
+    desfasado contra WO sin que nadie se entere. forzar=True (solo ROL_ADMINS,
+    validado en la ruta) es la única forma de saltarse esto."""
+    def __init__(self, metas_incompletas):
+        self.metas_incompletas = metas_incompletas
+        self.message = (
+            f"Hay {len(metas_incompletas)} meta(s) con checklist de procesos incompleto. "
+            f"No se puede cerrar la jornada hasta terminarlas (o forzar el cierre como admin)."
+        )
+        super().__init__(self.message)
+
+
 class EnsambleService:
 
     @staticmethod
@@ -112,6 +128,17 @@ class EnsambleService:
         arrastraría su cantidad_realizada vieja, porque esa columna se
         recalcula en reportar_multi sumando producción por id_prog -- ver
         migrate_programacion_ensamble_unique_activa.py.
+
+        OP automática (reunión 2026-08-25): si el payload no trae op_numero,
+        se reserva vía OpNumeradorService.obtener_o_reservar('ENSAMBLE',
+        fecha_prog) -- SIN máquina, por diseño: la reserva es por día, así
+        que TODO lo que programen Daniel/Nathalia para el mismo día cae bajo
+        la MISMA OP (una OP diaria multi-línea, como se acordó). Verificado
+        contra la base real 2026-08-25: cero filas activas con op_numero NULL
+        en este momento, así que no hay riesgo de que este cambio choque con
+        una fila vieja y duplique -- si el tablero llegara a tener algo
+        pendiente sin OP al momento de desplegar esto, hay que vaciarlo antes
+        (ver riesgo documentado en el plan).
         """
         if not data:
             raise ValueError('No data provided')
@@ -125,13 +152,48 @@ class EnsambleService:
 
         fecha_prog = datetime.strptime(fecha_str, '%Y-%m-%d').date()
 
+        # Retrofit de metas viejas sin OP (hallazgo 2026-08-31, día de
+        # lanzamiento): el índice único de este UPSERT incluye
+        # COALESCE(op_numero, '') -- una fila existente con op_numero NULL
+        # tiene clave distinta de cualquier intento nuevo (que siempre trae
+        # un op_numero recién reservado), así que NUNCA colisionan. El
+        # comentario original de esta función asumía "cero filas pendientes
+        # sin OP al momento de desplegar" como precondición para que el
+        # UPSERT normal fuera seguro -- si esa precondición deja de ser
+        # cierta (como pasó hoy: 4 metas reales de antes de esta feature
+        # seguían con op_numero NULL), el UPSERT de abajo no actualiza la
+        # fila vieja, crea una fila DUPLICADA con el mismo id_codigo/fecha,
+        # dejando dos metas activas para lo mismo -- una sin OP acumulando
+        # el avance real reportado, y otra con OP nueva que nunca se mueve.
+        # Este bloque cierra el hueco de raíz: si ya existe una meta PENDIENTE/
+        # EN_PROCESO para (fecha, id_codigo) sin OP, se le asigna el número
+        # en la MISMA fila en vez de intentar un insert que sea siempre
+        # divergente.
+        op_numero = data.get('op_numero')
+        if not op_numero:
+            existente_sin_op = db.session.query(ProgramacionEnsamble).filter(
+                ProgramacionEnsamble.fecha_programada == fecha_prog,
+                ProgramacionEnsamble.id_codigo == id_codigo,
+                ProgramacionEnsamble.op_numero.is_(None),
+                ProgramacionEnsamble.estado != 'COMPLETADO',
+            ).first()
+            if existente_sin_op:
+                op_generada = OpNumeradorService.obtener_o_reservar('ENSAMBLE', fecha_prog)
+                existente_sin_op.op_numero = op_generada.numero_op
+                existente_sin_op.cantidad_objetivo = cantidad_objetivo
+                db.session.commit()
+                return {'id_prog': existente_sin_op.id_prog, 'op_numero': existente_sin_op.op_numero}
+
+            op_generada = OpNumeradorService.obtener_o_reservar('ENSAMBLE', fecha_prog)
+            op_numero = op_generada.numero_op
+
         from sqlalchemy.dialects.postgresql import insert
         from sqlalchemy import text
 
         stmt = insert(ProgramacionEnsamble).values(
             id_codigo=id_codigo,
             cantidad_objetivo=cantidad_objetivo,
-            op_numero=data.get('op_numero'),
+            op_numero=op_numero,
             fecha_programada=fecha_prog,
             estado='PENDIENTE'
         )
@@ -148,11 +210,130 @@ class EnsambleService:
         try:
             res = db.session.execute(stmt).fetchone()
             db.session.commit()
-            return {'id_prog': res[0] if res else None}
+            return {'id_prog': res[0] if res else None, 'op_numero': op_numero}
         except Exception as e:
             db.session.rollback()
             logger.error(f"Error al crear/actualizar programación ensamble: {e}")
             raise
+
+    @staticmethod
+    def cerrar_jornada(fecha_str, usuario, forzar=False, motivo=None):
+        """
+        Cierre de jornada de ensamble (reunión 2026-08-25): marca la OP del
+        día como LISTA_EXPORTAR para que la vista de Zoe pueda descargarla al
+        día siguiente. Es un acto explícito, no un cron a una hora fija --
+        ver ChecklistIncompletoException.
+
+        Rechaza el cierre si queda alguna meta de ese día con el checklist de
+        procesos incompleto (mismo predicado que ya usan listar_tareas_pendientes
+        / listar_historial_metas -- SIN filtrar por estado de unidades, porque
+        una meta completada en cantidad puede seguir con procesos pendientes,
+        son ejes independientes). forzar=True lo salta -- el guard de que solo
+        ROL_ADMINS puede forzar vive en la ruta, no aquí; este método solo
+        exige que venga un motivo cuando se fuerza, para que quede auditado.
+
+        Puede lanzar ValueError (fecha inválida, sin OP reservada ese día,
+        o forzar sin motivo) o ChecklistIncompletoException.
+        """
+        if not fecha_str:
+            raise ValueError('fecha es obligatoria')
+
+        try:
+            fecha = datetime.strptime(fecha_str, '%Y-%m-%d').date()
+        except ValueError:
+            raise ValueError(f"Formato de fecha inválido: {fecha_str!r}. Usar YYYY-MM-DD")
+
+        if forzar and not (motivo or '').strip():
+            raise ValueError('Cerrar la jornada de forma forzada requiere indicar un motivo')
+
+        metas_incompletas = ProgramacionEnsamble.query.outerjoin(
+            ChecklistEnsamble, ChecklistEnsamble.id_prog == ProgramacionEnsamble.id_prog
+        ).filter(
+            ProgramacionEnsamble.fecha_programada == fecha,
+            _condicion_checklist_incompleto()
+        ).all()
+
+        if metas_incompletas and not forzar:
+            raise ChecklistIncompletoException([
+                {'id_prog': t.id_prog, 'id_codigo': t.id_codigo, 'estado': t.estado}
+                for t in metas_incompletas
+            ])
+
+        op = db.session.query(OpGenerada).filter(
+            OpGenerada.ambito == 'ENSAMBLE',
+            OpGenerada.fecha_produccion == fecha,
+            OpGenerada.estado != 'ANULADA'
+        ).first()
+
+        if not op:
+            raise ValueError(f"No hay ninguna OP de ensamble reservada para {fecha} -- no se programó nada ese día")
+
+        op.estado = 'LISTA_EXPORTAR'
+        db.session.commit()
+
+        if forzar:
+            logger.warning(
+                f"[CIERRE JORNADA] {op.numero_op} cerrada de forma FORZADA por {usuario!r}. "
+                f"Motivo: {motivo!r}. Metas con checklist incompleto: {len(metas_incompletas)}."
+            )
+        else:
+            logger.info(f"[CIERRE JORNADA] {op.numero_op} cerrada por {usuario!r}.")
+
+        return {
+            'numero_op': op.numero_op,
+            'estado': op.estado,
+            'forzado': forzar,
+            'metas_con_checklist_incompleto': len(metas_incompletas)
+        }
+
+    @staticmethod
+    def cerrar_jornada_automatica(fecha_str=None, usuario='SISTEMA (auto 22:00)'):
+        """
+        Red de seguridad (plan 2026-08-28): si a las 22:00 la OP de ensamble
+        del día sigue en RESERVADA porque el responsable olvidó darle al
+        botón manual, se cierra sola -- pero SOLO si el checklist de
+        procesos YA está completo. Si sigue con procesos de verdad
+        pendientes, NO se fuerza: eso taparía trabajo sin terminar, justo lo
+        que ChecklistIncompletoException existe para evitar. Ese caso queda
+        para revisión manual/admin al día siguiente, no se silencia.
+
+        Deliberadamente NO toca la OP si su estado ya NO es RESERVADA
+        (Albeiro ya la cerró él mismo, o Zoe ya la exportó): cerrar_jornada()
+        sobreescribe el estado sin comparar el actual, así que llamarlo
+        sobre una OP ya EXPORTADA/CONFIRMADA_WO la regresaría a
+        LISTA_EXPORTAR -- un downgrade de estado real, no un no-op.
+
+        Pensada para un proceso programado externo (Tarea Programada de
+        Windows en planta, mismo patrón que agente_wo_cartera.py) -- ver
+        POST/GET /api/ensamble/cerrar_jornada_auto, protegido con SYNC_TOKEN.
+        """
+        fecha = datetime.strptime(fecha_str, '%Y-%m-%d').date() if fecha_str else get_colombia_time().date()
+
+        op = db.session.query(OpGenerada).filter(
+            OpGenerada.ambito == 'ENSAMBLE',
+            OpGenerada.fecha_produccion == fecha,
+            OpGenerada.estado != 'ANULADA'
+        ).first()
+
+        if not op:
+            return {'accion': 'SIN_OP', 'numero_op': None, 'fecha': str(fecha)}
+
+        if op.estado != 'RESERVADA':
+            return {'accion': 'SIN_CAMBIOS', 'numero_op': op.numero_op, 'estado_actual': op.estado}
+
+        try:
+            resultado = EnsambleService.cerrar_jornada(fecha_str=fecha.strftime('%Y-%m-%d'), usuario=usuario, forzar=False)
+            logger.info(f"[CIERRE AUTO 22:00] {resultado['numero_op']} cerrada automáticamente (checklist ya estaba completo).")
+            return {'accion': 'CERRADA_AUTO', **resultado}
+        except ChecklistIncompletoException as e:
+            logger.warning(
+                f"[CIERRE AUTO 22:00] {op.numero_op} sigue con checklist incompleto "
+                f"({len(e.metas_incompletas)} meta(s)) -- NO se fuerza. Queda para revisión manual."
+            )
+            return {
+                'accion': 'CHECKLIST_INCOMPLETO', 'numero_op': op.numero_op,
+                'metas_incompletas': e.metas_incompletas,
+            }
 
     @staticmethod
     def obtener_bom_con_stock(id_codigo):
@@ -284,6 +465,10 @@ class EnsambleService:
             'cantidad_realizada': s.cantidad_realizada,
             'fecha_programada': s.fecha_programada.strftime('%Y-%m-%d') if s.fecha_programada else '',
             'estado': s.estado,
+            # La OP que asignó el numerador al programar -- se expone para
+            # mostrarla en el panel de metas (pedido del usuario 2026-08-28:
+            # la OP se generaba sola pero no se veía en ningún lado).
+            'op_numero': s.op_numero,
             'checklist': checklists_por_id_prog.get(s.id_prog, _checklist_default())
         } for s in schedules]
 

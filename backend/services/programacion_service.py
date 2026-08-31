@@ -3,7 +3,8 @@ import uuid
 from datetime import datetime, date
 from sqlalchemy import text
 from backend.models.sql_models import db, Maquina, ProgramacionInyeccion, ProduccionInyeccion
-from backend.utils.formatters import resolver_operario
+from backend.services.op_numerador_service import OpNumeradorService
+from backend.utils.formatters import resolver_operario, normalizar_codigo
 from backend.utils.time_utils import get_colombia_time
 
 logger = logging.getLogger(__name__)
@@ -67,11 +68,83 @@ class ProgramacionService:
         return nombres
 
     @staticmethod
+    def obtener_cavidades_referencia(codigo):
+        """
+        Requisito de la reunión 2026-08-25: al programar, mostrar cuántas
+        cavidades tiene disponibles una referencia para que el Jefe de Planta
+        sepa qué poner sin adivinar.
+
+        Fuente: rel_producto_molde (350 filas reales, verificado 2026-08-25) --
+        NO db_moldes.cavidades_max, que hoy está VACÍA en producción (0 filas).
+
+        ACTUALIZACIÓN 2026-08-28: ProgramacionInyeccion.molde dejó de ser una
+        capacidad numérica que se digitaba y se comparaba contra la suma de
+        cavidades del montaje (esa regla se eliminó). Ahora es el código real
+        de molde físico (mismo alfabeto que codigo_molde aquí, ej. '5002A'),
+        elegido por la persona del equipo que conoce el estado de los moldes
+        (cuál está en arreglo, qué cavidad está dañada) -- ver también
+        listar_moldes_disponibles(), que expone el catálogo completo para el
+        selector del formulario.
+
+        Devuelve una lista porque una referencia puede fabricarse en más de un
+        molde (combo/moneda alternativa, ver tipo_vinculo).
+        """
+        codigo_norm = normalizar_codigo(codigo)
+        if not codigo_norm:
+            return []
+
+        rows = db.session.execute(text("""
+            SELECT codigo_molde, cavidades, tipo_vinculo
+            FROM rel_producto_molde
+            WHERE codigo_referencia = :c AND activo = true
+            ORDER BY codigo_molde
+        """), {'c': codigo_norm}).mappings().all()
+
+        return [
+            {
+                'codigo_molde': r['codigo_molde'],
+                'cavidades': r['cavidades'],
+                'tipo_vinculo': r['tipo_vinculo'],
+            }
+            for r in rows
+        ]
+
+    @staticmethod
+    def listar_moldes_disponibles():
+        """
+        Catálogo de portamoldes reales (17 letras, A-P más Ñ), para el
+        selector con autocompletar del campo "Molde" en Programación --
+        reemplaza el campo de texto libre que antes se comparaba contra la
+        suma de cavidades del montaje.
+
+        CORRECCIÓN 2026-08-31: esta función apuntaba antes a
+        rel_producto_molde.codigo_molde (314 códigos), pero esa tabla lista
+        referencias de producto/molde-die, no lo que Oscar (el operario que
+        llena este campo) llama "molde" en planta -- una letra simple del
+        portamolde físico (confirmado por el usuario: "es una simple letra
+        'N' por ejemplo"). La fuente correcta es db_portamoldes.codigo, que
+        sí son esas 17 letras reales.
+        """
+        rows = db.session.execute(text("""
+            SELECT codigo
+            FROM db_portamoldes
+            WHERE activo = true
+            ORDER BY codigo
+        """)).scalars().all()
+        return list(rows)
+
+    @staticmethod
     def crear_programacion(maquina, fecha_str, productos, responsable, observaciones, molde_capacidad):
         """
         Fase 1: el Jefe de Planta 'pone en cola' uno o varios productos para una
         máquina. Hace UPSERT por (fecha, maquina, codigo_sistema, molde) — si ya
         existe la fila, actualiza cavidades/observaciones/estado en vez de duplicar.
+
+        OP automática (reunión 2026-08-25): ruta legacy paralela a
+        InyeccionService.guardar_programacion, misma tabla. Como la reserva de
+        OpNumeradorService es idempotente por (fecha, ambito, maquina), ambas
+        rutas convergen en la MISMA OP sin coordinarse entre sí -- no hace
+        falta unificarlas.
         """
         try:
             if fecha_str:
@@ -85,6 +158,10 @@ class ProgramacionService:
             if not productos:
                 raise ValueError('No se enviaron productos para programar')
 
+            op_generada = OpNumeradorService.obtener_o_reservar(
+                'INYECCION', fecha_obj, maquina, usuario=responsable
+            )
+
             ids_creados = []
             for p in productos:
                 cod_sistema = str(p.get('codigo')).strip()
@@ -94,7 +171,7 @@ class ProgramacionService:
                     ProgramacionInyeccion.fecha == fecha_obj,
                     ProgramacionInyeccion.maquina == maquina,
                     ProgramacionInyeccion.codigo_sistema == cod_sistema,
-                    db.func.coalesce(ProgramacionInyeccion.molde, 0) == (molde_capacidad if molde_capacidad is not None else 0)
+                    db.func.coalesce(ProgramacionInyeccion.molde, '') == (molde_capacidad or '')
                 ).first()
 
                 if existente:
@@ -104,6 +181,11 @@ class ProgramacionService:
                     existente.estado = 'PROGRAMADO'
                     if 'cantidad' in p:
                         existente.cantidad = float(p.get('cantidad', 0))
+                    # Solo si sigue vacía -- ver mismo comentario en
+                    # InyeccionService.guardar_programacion: si la máquina ya
+                    # arrancó, reprogramar aquí no debe pisar la OP real.
+                    if not existente.op_world_office:
+                        existente.op_world_office = op_generada.numero_op
                     db.session.flush()
                     ids_creados.append(existente.id)
                 else:
@@ -115,7 +197,8 @@ class ProgramacionService:
                         cavidades=cav_val,
                         responsable_planta=responsable,
                         observaciones=observaciones,
-                        estado='PROGRAMADO'
+                        estado='PROGRAMADO',
+                        op_world_office=op_generada.numero_op
                     )
                     if 'cantidad' in p:
                         nueva_prog.cantidad = float(p.get('cantidad', 0))
@@ -124,7 +207,7 @@ class ProgramacionService:
                     ids_creados.append(nueva_prog.id)
 
             db.session.commit()
-            return {'ids_programacion': ids_creados, 'count': len(productos)}
+            return {'ids_programacion': ids_creados, 'count': len(productos), 'orden_produccion': op_generada.numero_op}
         except Exception as e:
             db.session.rollback()
             if not isinstance(e, ValueError):
@@ -222,6 +305,7 @@ class ProgramacionService:
                     'hora_inicio': primer.fecha_inicia.strftime('%H:%M') if primer.fecha_inicia else '',
                     'producto': ", ".join([str(r.id_codigo or '') for r in activos_maq]),
                     'cavidades': sum([int(r.cavidades or 0) for r in activos_maq]),
+                    'orden_produccion': primer.orden_produccion,
                     'productos_activos': [
                         {
                             'id_inyeccion': r.id_inyeccion,
@@ -240,7 +324,8 @@ class ProgramacionService:
                     'codigo_sistema': r.codigo_sistema,
                     'molde': r.molde,
                     'cavidades': r.cavidades,
-                    'cantidad': float(r.cantidad or 0)
+                    'cantidad': float(r.cantidad or 0),
+                    'orden_produccion': r.op_world_office
                 }
                 for r in programaciones if (r.maquina or '').upper() == maquina_upper
             ]
@@ -317,7 +402,8 @@ class ProgramacionService:
                 'molde': str(primer.molde or ''),
                 'cavidades': total_cavidades,
                 'inicio': primer.fecha_inicia.strftime('%H:%M') if primer.fecha_inicia else '',
-                'teorica': 0
+                'teorica': 0,
+                'orden_produccion': primer.orden_produccion
             }
 
         primer_programado = db.session.query(ProgramacionInyeccion).filter(
@@ -342,7 +428,8 @@ class ProgramacionService:
                 'id_programacion': primer_programado.id,
                 'producto': codigos_concatenados,
                 'molde': str(primer_programado.molde or ''),
-                'cavidades': total_cavidades
+                'cavidades': total_cavidades,
+                'orden_produccion': primer_programado.op_world_office
             }
 
         return {'estado': 'LIBRE'}

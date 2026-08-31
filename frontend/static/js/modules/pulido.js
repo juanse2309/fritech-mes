@@ -93,7 +93,8 @@ const ModuloPulido = {
         this.cargarCacheUI();
         await this.verificarTrabajoActivo(); // Rehidratar desde SQL
         this.cargarEstadoLocal(); // Fallback/Sync local
-        
+        this._actualizarVisibilidadPanelSupervision();
+
         // Verificación de reportes pendientes por fallo de red previo
         this.verificarReportesPendientes();
 
@@ -116,6 +117,7 @@ const ModuloPulido = {
             this.timerInterval = null;
             this.cargarCacheUI();
             this.verificarTrabajoActivo().then(() => this.cargarEstadoLocal());
+            this._actualizarVisibilidadPanelSupervision();
         };
         document.addEventListener('user-ready', onUserReady);
     },
@@ -340,6 +342,19 @@ const ModuloPulido = {
             }
         });
 
+        // Tablet compartida (hallazgo 2026-08-31): si una operaria escribe su
+        // nombre en Responsable sin pasar por un logout/login completo de la
+        // app, nada volvía a preguntarle al servidor "¿esta persona tiene una
+        // sesión activa?" -- la UI se quedaba mostrando lo último que había
+        // en pantalla (posiblemente el cronómetro/trabajo de quien usó la
+        // tablet antes). verificarTrabajoActivo()/cargarEstadoLocal() ya
+        // traían el blindaje correcto por operario, solo faltaba dispararlos
+        // en este momento.
+        const respInputCompartida = document.getElementById('responsable-pulido-input');
+        if (respInputCompartida) {
+            respInputCompartida.addEventListener('change', () => this.revisarCambioDeOperario());
+        }
+
         this.validarBotonInicioPro();
         this.renderCola();
     },
@@ -400,6 +415,7 @@ const ModuloPulido = {
                 // BLINDAJE hora_inicio nula: No arrancar cronómetro sin hora válida
                 if (!session.hora_inicio_dt) {
                     console.log('🚫 [Pulido] Sesión activa sin hora_inicio — ignorando.');
+                    if (!idEspecifico && this.sesionActiva) this.limpiarSesionLocal();
                     return;
                 }
 
@@ -444,7 +460,19 @@ const ModuloPulido = {
                 this.timerInterval = setInterval(() => this.actualizarTimer(), 1000);
             } else {
                 console.log(`🧹 [Pulido] No hay trabajos activos específicos para '${resp}' en DB.`);
-                if (!idEspecifico) this.limpiarGhostState(resp);
+                // BLINDAJE tablet compartida (hallazgo 2026-08-31): el servidor
+                // es la fuente de verdad -- si dice que ESTE operario no tiene
+                // sesión activa, cualquier estado "activo"/"pausado" que siga
+                // en memoria es necesariamente de OTRO operario que usó la
+                // tablet antes. Debe limpiarse siempre, no solo cuando existe
+                // una key vieja en localStorage: de lo contrario los botones
+                // Pausar/Reanudar seguían apuntando al sessionId de la
+                // persona anterior y una operaria podía pausar/reanudar sin
+                // saberlo la sesión real de otra.
+                if (!idEspecifico) {
+                    if (this.sesionActiva) this.limpiarSesionLocal();
+                    this.limpiarGhostState(resp);
+                }
             }
         } catch (e) {
             console.error("Error recuperando sesión SQL:", e);
@@ -571,15 +599,32 @@ const ModuloPulido = {
         }
     },
 
+    // Tablet compartida: se llama cada vez que el campo Responsable termina
+    // de cambiar (blur tras escribir, o al elegir una sugerencia). Si el
+    // nombre normalizado es distinto del último revisado, corta cualquier
+    // cronómetro en memoria (podría ser de OTRA operaria) y vuelve a
+    // preguntarle al servidor por la sesión real de la persona nueva --
+    // verificarTrabajoActivo() puebla su sesión si existe, o
+    // limpiarGhostState() la deja en blanco si no.
+    _ultimoOperarioRevisado: null,
+    revisarCambioDeOperario: async function () {
+        const nombreActual = (document.getElementById('responsable-pulido-input')?.value || '').trim().toUpperCase();
+        if (!nombreActual || nombreActual === this._ultimoOperarioRevisado) return;
+        this._ultimoOperarioRevisado = nombreActual;
+
+        if (this.timerInterval) clearInterval(this.timerInterval);
+        this.timerInterval = null;
+
+        this.cargarCacheUI();
+        await this.verificarTrabajoActivo();
+        this.cargarEstadoLocal();
+    },
+
     limpiarGhostState: function(operario) {
         const key = this.getStateKey();
         if (localStorage.getItem(key)) {
             console.warn(`[Pulido] Eliminando Ghost State detectado para: ${operario}`);
             localStorage.removeItem(key);
-            // Si la UI estaba activa por un error de flujo previo, resetearla
-            if (this.sesionActiva) {
-                this.limpiarSesionLocal();
-            }
         }
     },
 
@@ -970,7 +1015,27 @@ const ModuloPulido = {
         document.getElementById('pulido-active-msg').style.display = 'none';
         document.getElementById('pulido-main-timer').innerText = '00:00:00';
         document.getElementById('btn-iniciar-pulido').disabled = true;
-        
+
+        // Resets de botones/labels heredados de la sesión anterior (tablet
+        // compartida): sin esto el botón seguía diciendo "Reanudar" y el ID
+        // de sesión de la persona anterior quedaba visible, aunque el
+        // estado interno ya estuviera limpio -- confuso y podía llevar a
+        // la siguiente operaria a tocar un botón que ya no le pertenece.
+        const btnPausa = document.getElementById('btn-pausar-pulido');
+        if (btnPausa) {
+            btnPausa.innerHTML = '<i class="fas fa-pause me-2"></i> Pausar';
+            btnPausa.className = 'btn btn-warning btn-lg p-3 shadow';
+            btnPausa.disabled = true;
+        }
+        const btnTerminar = document.getElementById('btn-terminar-pulido');
+        if (btnTerminar) btnTerminar.disabled = true;
+        const btnCambiarRef = document.getElementById('btn-cambiar-ref-pulido');
+        if (btnCambiarRef) btnCambiarRef.style.display = 'none';
+        const pausaMsg = document.getElementById('pulido-pausa-msg');
+        if (pausaMsg) pausaMsg.style.display = 'none';
+        const sessionIdDisplay = document.getElementById('pulido-session-id-display');
+        if (sessionIdDisplay) sessionIdDisplay.innerText = '---';
+
         // Limpiar campos para nueva entrada
         document.getElementById('buscador-productos').value = '';
         document.getElementById('orden-produccion-pulido').value = '';
@@ -1458,6 +1523,16 @@ const ModuloPulido = {
         } catch (error) {
             console.error("Error crítico al guardar:", error);
 
+            // Bloqueos duros de Pulido (plan 2026-08-28): fecha distinta a hoy, o
+            // cantidad que excede lo inyectado. NO son fallos de red -- reintentar
+            // en la cola local solo repetiría el mismo rechazo para siempre, así
+            // que se manejan aparte y con return explícito.
+            const codigoBloqueo = error.body?.code;
+            if (codigoBloqueo === 'PULIDO_FECHA_BLOQUEADA' || codigoBloqueo === 'PULIDO_CANTIDAD_EXCEDE_INYECTADO') {
+                await this._manejarBloqueoPulido(codigoBloqueo, error.body, data);
+                return;
+            }
+
             // Persistencia Local (LocalStorage) ante fallos — se AGREGA a la cola,
             // nunca sobrescribe reportes previos que sigan pendientes de envío.
             this._agregarOActualizarReporteFallido(data);
@@ -1487,6 +1562,314 @@ const ModuloPulido = {
                 }
             });
         }
+    },
+
+    // ──────────────────────────────────────────────────────────────────
+    // BLOQUEOS DUROS (plan 2026-08-28): fecha same-day + cantidad <=
+    // inyectado. Solo un ADMIN puede saltarlos, y solo con un motivo --
+    // ver PulidoOverride/pulido_routes.registrar_pulido en el backend.
+    // ──────────────────────────────────────────────────────────────────
+    _esAdminActivo: function () {
+        const rol = (window.AuthModule?.currentUser?.rol || '').toUpperCase();
+        return ['ADMIN', 'ADMINISTRACION', 'ADMINISTRADOR', 'GERENCIA'].includes(rol);
+    },
+
+    // ──────────────────────────────────────────────────────────────────
+    // PANEL DE SUPERVISIÓN (plan 2026-08-31): ver/pausar/reanudar/corregir
+    // sesiones de TODAS las operarias, pensado para cuando varias trabajen
+    // en tablets compartidas y alguien necesite mirar/arreglar desde su
+    // propio usuario sin tener que ir físicamente a esa tablet. Pausar y
+    // reanudar reutilizan /api/pulido/pausar y /api/pulido/reanudar (ya
+    // funcionan por id_pulido, sin candado de dueño); corregir reutiliza el
+    // POST /api/pulido normal -- el Ownership Guard del backend ya deja
+    // pasar a roles admin/jefe preservando el responsable original, así
+    // que el reporte sigue apareciendo como de la operaria real, no del
+    // admin que lo corrigió.
+    // ──────────────────────────────────────────────────────────────────
+    _puedeVerPanelSupervision: function () {
+        const rol = (window.AuthModule?.currentUser?.rol || '').toUpperCase();
+        return ['ADMIN', 'ADMINISTRACION', 'ADMINISTRADOR', 'GERENCIA', 'JEFE PULIDO'].includes(rol);
+    },
+
+    _actualizarVisibilidadPanelSupervision: function () {
+        const btn = document.getElementById('btn-panel-supervision-pulido');
+        if (btn) btn.style.display = this._puedeVerPanelSupervision() ? '' : 'none';
+    },
+
+    _sesionesSupervision: [],
+    _tarjetasEnEdicionSupervision: new Set(),
+    _intervalRefrescoSupervision: null,
+    _intervalTimerSupervision: null,
+
+    abrirPanelSupervision: async function () {
+        if (!this._puedeVerPanelSupervision()) return;
+
+        const panel = document.getElementById('panel-supervision-pulido-fijo');
+        if (panel) panel.style.display = 'block';
+
+        await this._cargarSesionesSupervision();
+
+        // Auto-refresco de datos del servidor cada 15s (se salta el fetch,
+        // sin detener el intervalo, mientras haya una tarjeta en edición
+        // para no pisarle a la admin lo que está escribiendo) + cronómetro
+        // en vivo por segundo, calculado en el cliente sin llamar al server.
+        if (this._intervalRefrescoSupervision) clearInterval(this._intervalRefrescoSupervision);
+        this._intervalRefrescoSupervision = setInterval(() => {
+            if (this._tarjetasEnEdicionSupervision.size === 0) {
+                this._cargarSesionesSupervision();
+            }
+        }, 15000);
+
+        if (this._intervalTimerSupervision) clearInterval(this._intervalTimerSupervision);
+        this._intervalTimerSupervision = setInterval(() => this._tickTimersSupervision(), 1000);
+    },
+
+    cerrarPanelSupervision: function () {
+        const panel = document.getElementById('panel-supervision-pulido-fijo');
+        if (panel) panel.style.display = 'none';
+        if (this._intervalRefrescoSupervision) clearInterval(this._intervalRefrescoSupervision);
+        if (this._intervalTimerSupervision) clearInterval(this._intervalTimerSupervision);
+        this._intervalRefrescoSupervision = null;
+        this._intervalTimerSupervision = null;
+        this._tarjetasEnEdicionSupervision.clear();
+    },
+
+    _cargarSesionesSupervision: async function () {
+        const grid = document.getElementById('grid-panel-supervision-pulido');
+        const esPrimeraCarga = this._sesionesSupervision.length === 0;
+        if (grid && esPrimeraCarga) {
+            grid.innerHTML = '<div class="col-12 text-center text-muted py-5"><i class="fas fa-spinner fa-spin me-2"></i>Cargando...</div>';
+        }
+        try {
+            const res = await window.apiClient.get('/pulido/admin/sesiones');
+            this._sesionesSupervision = res?.data?.sesiones || [];
+            this._renderGridSupervision();
+        } catch (error) {
+            console.error('[Pulido][Supervisión] Error cargando sesiones:', error);
+            if (grid) grid.innerHTML = `<div class="col-12 text-center text-danger py-5">No se pudo cargar: ${error.body?.error || error.message}</div>`;
+        }
+    },
+
+    _renderGridSupervision: function () {
+        const grid = document.getElementById('grid-panel-supervision-pulido');
+        if (!grid) return;
+
+        if (this._sesionesSupervision.length === 0) {
+            grid.innerHTML = '<div class="col-12 text-center text-muted py-5">No hay sesiones activas ni pausadas ahora mismo.</div>';
+            return;
+        }
+
+        const colorMap = { TRABAJANDO: 'success', EN_PROCESO: 'success', PAUSADO: 'warning', PAUSADO_COLA: 'secondary' };
+
+        grid.innerHTML = this._sesionesSupervision.map((s) => {
+            // Si esta tarjeta está en edición, no se regenera -- se preserva
+            // el nodo existente (con lo que la admin ya escribió) tal cual.
+            if (this._tarjetasEnEdicionSupervision.has(s.id_pulido)) {
+                const existente = document.getElementById(`card-sup-${s.id_pulido}`);
+                if (existente) return existente.outerHTML;
+            }
+
+            const color = colorMap[s.estado] || 'secondary';
+            const enPausa = s.estado === 'PAUSADO' || s.estado === 'PAUSADO_COLA';
+            const btnPausarReanudar = enPausa
+                ? `<button class="btn btn-sm btn-success flex-fill" onclick="ModuloPulido._accionPausarReanudarAdmin('${s.id_pulido}', false)"><i class="fas fa-play me-1"></i>Reanudar</button>`
+                : `<button class="btn btn-sm btn-warning flex-fill" onclick="ModuloPulido._accionPausarReanudarAdmin('${s.id_pulido}', true)"><i class="fas fa-pause me-1"></i>Pausar</button>`;
+
+            return `
+                <div class="col-12 col-md-6 col-lg-4" id="card-sup-${s.id_pulido}" data-estado="${s.estado}" data-hora-inicio="${s.hora_inicio_dt || ''}" data-hora-pausa="${s.hora_pausa_dt || ''}" data-pausa-acumulada="${s.tiempo_pausa_acumulado || 0}">
+                    <div class="card shadow-sm h-100 border-${color} border-2">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start mb-2">
+                                <div>
+                                    <div class="fw-800">${s.responsable || '—'}</div>
+                                    <small class="text-muted">${s.codigo || '—'} · Lote ${s.lote || '—'}</small>
+                                </div>
+                                <span class="badge bg-${color}">${s.estado}</span>
+                            </div>
+                            <div class="text-center my-2 py-2" style="background:#f8fafc; border-radius:10px;">
+                                <div class="fs-3 fw-900 font-monospace" id="timer-sup-${s.id_pulido}">--:--:--</div>
+                                <small class="text-muted">OP: ${s.orden_produccion || 'SIN OP'}</small>
+                            </div>
+                            <div class="d-flex gap-2 mb-2">
+                                ${btnPausarReanudar}
+                                <button class="btn btn-sm btn-outline-primary flex-fill" onclick="ModuloPulido._toggleEdicionSupervision('${s.id_pulido}')"><i class="fas fa-pen me-1"></i>Corregir</button>
+                            </div>
+                            <div id="edit-sup-${s.id_pulido}" style="display:none;" class="border-top pt-2 mt-1">
+                                <div class="row g-2">
+                                    <div class="col-6">
+                                        <label class="small fw-bold mb-0">Buenas</label>
+                                        <input type="number" class="form-control form-control-sm" id="edit-cant-${s.id_pulido}" value="${s.cantidad_real}">
+                                    </div>
+                                    <div class="col-3">
+                                        <label class="small fw-bold mb-0">PNC Iny</label>
+                                        <input type="number" class="form-control form-control-sm" id="edit-pnciny-${s.id_pulido}" value="${s.pnc_inyeccion}">
+                                    </div>
+                                    <div class="col-3">
+                                        <label class="small fw-bold mb-0">PNC Pul</label>
+                                        <input type="number" class="form-control form-control-sm" id="edit-pncpul-${s.id_pulido}" value="${s.pnc_pulido}">
+                                    </div>
+                                </div>
+                                <label class="small fw-bold mb-0 mt-2 d-block">Motivo (obligatorio, queda en Observaciones)</label>
+                                <textarea class="form-control form-control-sm" id="edit-motivo-${s.id_pulido}" rows="2" placeholder="Ej: la operaria digitó mal la cantidad"></textarea>
+                                <div class="d-flex gap-2 mt-2">
+                                    <button class="btn btn-sm btn-success flex-fill" onclick="ModuloPulido._guardarEdicionSupervision('${s.id_pulido}')"><i class="fas fa-check me-1"></i>Guardar</button>
+                                    <button class="btn btn-sm btn-secondary flex-fill" onclick="ModuloPulido._toggleEdicionSupervision('${s.id_pulido}')">Cancelar</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
+        }).join('');
+
+        this._tickTimersSupervision();
+    },
+
+    // Cronómetro de las tarjetas: se recalcula del lado del cliente cada
+    // segundo a partir de los datos crudos (hora_inicio/hora_pausa/pausa
+    // acumulada) guardados como data-* en cada tarjeta -- mismo cálculo que
+    // ya usa el cronómetro principal de la operaria (actualizarTimer), para
+    // no reinventar la lógica de pausas acumuladas.
+    _tickTimersSupervision: function () {
+        const panel = document.getElementById('panel-supervision-pulido-fijo');
+        if (!panel || panel.style.display === 'none') return;
+
+        document.querySelectorAll('#grid-panel-supervision-pulido [id^="card-sup-"]').forEach(card => {
+            const idPulido = card.id.replace('card-sup-', '');
+            const timerEl = document.getElementById(`timer-sup-${idPulido}`);
+            if (!timerEl) return;
+
+            const estado = card.dataset.estado;
+            const horaInicio = card.dataset.horaInicio ? new Date(card.dataset.horaInicio) : null;
+            const pausaAcumuladaMs = (parseInt(card.dataset.pausaAcumulada, 10) || 0) * 1000;
+
+            if (!horaInicio || isNaN(horaInicio.getTime())) {
+                timerEl.innerText = '--:--:--';
+                return;
+            }
+
+            let diffMs;
+            if (estado === 'PAUSADO' || estado === 'PAUSADO_COLA') {
+                const horaPausa = card.dataset.horaPausa ? new Date(card.dataset.horaPausa) : new Date();
+                diffMs = horaPausa - horaInicio - pausaAcumuladaMs;
+            } else {
+                diffMs = new Date() - horaInicio - pausaAcumuladaMs;
+            }
+
+            const safeDiff = Math.max(0, diffMs);
+            const hrs = String(Math.floor(safeDiff / 3600000)).padStart(2, '0');
+            const mins = String(Math.floor((safeDiff % 3600000) / 60000)).padStart(2, '0');
+            const secs = String(Math.floor((safeDiff % 60000) / 1000)).padStart(2, '0');
+            timerEl.innerText = `${hrs}:${mins}:${secs}`;
+        });
+    },
+
+    _toggleEdicionSupervision: function (idPulido) {
+        const bloque = document.getElementById(`edit-sup-${idPulido}`);
+        if (!bloque) return;
+        const abriendo = bloque.style.display === 'none';
+        bloque.style.display = abriendo ? 'block' : 'none';
+        if (abriendo) {
+            this._tarjetasEnEdicionSupervision.add(idPulido);
+        } else {
+            this._tarjetasEnEdicionSupervision.delete(idPulido);
+        }
+    },
+
+    _accionPausarReanudarAdmin: async function (id_pulido, pausar) {
+        try {
+            const endpoint = pausar ? '/pulido/pausar' : '/pulido/reanudar';
+            await window.apiClient.post(endpoint, { id_pulido });
+            await this._cargarSesionesSupervision();
+        } catch (error) {
+            Swal.fire('Error', error.body?.error || 'No se pudo actualizar la sesión.', 'error');
+        }
+    },
+
+    _guardarEdicionSupervision: async function (idPulido) {
+        const s = this._sesionesSupervision.find(x => x.id_pulido === idPulido);
+        if (!s) return;
+
+        const motivo = document.getElementById(`edit-motivo-${idPulido}`)?.value.trim();
+        if (!motivo) {
+            Swal.fire('Falta el motivo', 'El motivo es obligatorio -- queda registrado para auditoría.', 'warning');
+            return;
+        }
+
+        const cantidad_real = document.getElementById(`edit-cant-${idPulido}`)?.value;
+        const pnc_inyeccion = document.getElementById(`edit-pnciny-${idPulido}`)?.value;
+        const pnc_pulido = document.getElementById(`edit-pncpul-${idPulido}`)?.value;
+
+        // Payload completo: se preservan todos los campos que la operaria ya
+        // tenía (código, OP, lote, fecha, estado) y solo se cambian los que
+        // el admin editó -- mandar el 'estado' explícito es obligatorio: si
+        // se omite, el backend por defecto lo pone en FINALIZADO (ver
+        // _ejecutar_persistencia_pulido), lo que cerraría de golpe una
+        // sesión que sigue TRABAJANDO/PAUSADA sin que nadie lo pidiera.
+        const nuevaObs = `${s.observaciones || ''}\n[CORRECCIÓN ADMIN ${new Date().toLocaleString('es-CO')}]: ${motivo}`.trim();
+        const payload = {
+            id_pulido: s.id_pulido,
+            fecha_inicio: s.fecha,
+            codigo_producto: s.codigo,
+            orden_produccion: s.orden_produccion,
+            lote: s.lote,
+            estado: s.estado,
+            cantidad_real,
+            pnc_inyeccion,
+            pnc_pulido,
+            cantidad_recibida: s.cantidad_recibida,
+            criterio_pnc_inyeccion: s.criterio_pnc_inyeccion,
+            criterio_pnc_pulido: s.criterio_pnc_pulido,
+            almacen_destino: s.almacen_destino,
+            observaciones: nuevaObs,
+        };
+
+        try {
+            const resultado = await window.apiClient.post('/pulido', payload);
+            if (resultado.success) {
+                this._tarjetasEnEdicionSupervision.delete(idPulido);
+                await this._cargarSesionesSupervision();
+                Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Corrección guardada', showConfirmButton: false, timer: 1800 });
+            } else {
+                throw new Error(resultado.error || 'Error desconocido');
+            }
+        } catch (error) {
+            Swal.fire('Error', error.body?.error || error.message || 'No se pudo guardar la corrección.', 'error');
+        }
+    },
+
+    _manejarBloqueoPulido: async function (codigo, body, data) {
+        Swal.close();
+        const mensaje = body?.error || 'El reporte fue bloqueado por una regla de negocio.';
+
+        if (!this._esAdminActivo()) {
+            await Swal.fire({
+                title: '🔒 Reporte bloqueado',
+                html: `<p>${mensaje}</p><p style="margin-top:10px; font-size:0.9em; color:#666;">Si el lote es real, pide a un ADMIN que lo autorice desde su sesión.</p>`,
+                icon: 'warning',
+                confirmButtonText: 'Entendido',
+                confirmButtonColor: '#f59e0b'
+            });
+            // No se encola localmente: reintentar solo repetiría el mismo bloqueo.
+            return;
+        }
+
+        const { value: motivo } = await Swal.fire({
+            title: '🔒 Reporte bloqueado',
+            html: `<p>${mensaje}</p><p style="margin-top:10px; font-size:0.9em; color:#666;">Como ADMIN puedes autorizar este reporte igual. Queda registrado con tu usuario y el motivo para el reporte de seguimiento.</p>`,
+            icon: 'warning',
+            input: 'text',
+            inputLabel: 'Motivo de la excepción (obligatorio)',
+            inputPlaceholder: 'Ej: lote atrasado, se confirmó con planta',
+            showCancelButton: true,
+            confirmButtonText: 'Autorizar y guardar',
+            cancelButtonText: 'Cancelar',
+            confirmButtonColor: '#dc3545',
+            inputValidator: (val) => !val?.trim() ? 'El motivo es obligatorio para autorizar' : undefined
+        });
+
+        if (!motivo) return;
+
+        await this.enviarAServidor({ ...data, forzar_bloqueo: true, motivo_forzado: motivo.trim() });
     },
 
     terminarCiclo: function() {
@@ -1548,7 +1931,7 @@ const ModuloPulido = {
             // Responsables
             const resp = await fetch('/api/obtener_responsables').then(r => r.json());
             this.responsablesData = resp || [];
-            
+
             // Productos (Usa AppState si existe, sino fetch)
             if (window.AppState?.sharedData?.productos?.length > 0) {
                 this.productosData = window.AppState.sharedData.productos;
@@ -1557,6 +1940,37 @@ const ModuloPulido = {
                 this.productosData = prods?.items || prods?.productos || [];
             }
         } catch (e) { console.error("Error maestros:", e); }
+
+        // Saldo pendiente por OP+referencia (plan 2026-08-28, Fase 7): fuente
+        // del buscador de OP -- se filtra aquí a saldo>0 porque una OP ya
+        // completa no le sirve a la operaria para elegir dónde reportar.
+        try {
+            const res = await window.apiClient.get('/pulido/saldo_por_op');
+            const saldo = res?.data?.saldo || [];
+            this.saldoPorOpData = saldo.filter(r => (r.saldo || 0) > 0);
+        } catch (e) {
+            console.warn('[Pulido] No se pudo cargar el saldo por OP:', e);
+            this.saldoPorOpData = [];
+        }
+    },
+
+    // Mismo criterio que sql_normalizar_codigo_fr en el backend: un código
+    // puramente numérico se compara con prefijo 'FR-', el resto se deja tal
+    // cual -- así "9708" escrito en Referencia encuentra el saldo guardado
+    // como "FR-9708" sin que la operaria tenga que escribir el prefijo.
+    _normalizarReferenciaFR: function (c) {
+        const v = String(c || '').trim().toUpperCase();
+        return /^[0-9]+$/.test(v) ? `FR-${v}` : v;
+    },
+
+    _sugerirOpConSaldo: function (queryOp) {
+        const refInput = document.getElementById('buscador-productos')?.value || '';
+        const refNorm = this._normalizarReferenciaFR(refInput);
+        const q = String(queryOp || '').trim().toUpperCase();
+        return (this.saldoPorOpData || [])
+            .filter(r => r.referencia === refNorm && (!q || String(r.orden_produccion).toUpperCase().includes(q)))
+            .sort((a, b) => b.saldo - a.saldo)
+            .slice(0, 8);
     },
 
     initAutocompletes: function () {
@@ -1576,6 +1990,7 @@ const ModuloPulido = {
                     localStorage.setItem(this.getLastResponsableKey(), val);
                     suggestionsResp.classList.remove('active');
                     inputResp.dispatchEvent(new Event('input'));
+                    this.revisarCambioDeOperario();
                 });
             });
         }
@@ -1602,9 +2017,36 @@ const ModuloPulido = {
             });
         }
 
-        // Click outside suggestions
+        // Buscador de OP con saldo pendiente (plan 2026-08-28, Fase 7-8): sugiere
+        // solo las OP de la referencia ya escrita que todavía tienen saldo por
+        // pulir -- el campo sigue siendo texto libre, esto es una ayuda, no un
+        // candado. Si la OP no aparece (backlog viejo, sin trazabilidad), la
+        // operaria la escribe igual y el bloqueo duro ni se entera (ver
+        // PulidoService.es_op_reconocida).
+        const inputOP = document.getElementById('orden-produccion-pulido');
+        const suggestionsOP = document.getElementById('pulido-op-suggestions');
+        if (inputOP && suggestionsOP) {
+            const mostrarSugerenciasOP = () => {
+                const resultados = this._sugerirOpConSaldo(inputOP.value);
+                this.renderSuggestions(suggestionsOP, resultados, (r) => {
+                    inputOP.value = r.orden_produccion;
+                    suggestionsOP.classList.remove('active');
+                });
+            };
+            inputOP.addEventListener('focus', mostrarSugerenciasOP);
+            inputOP.addEventListener('input', mostrarSugerenciasOP);
+        }
+
+        // Click outside suggestions. El campo OP abre su lista en 'focus' (no
+        // en 'input', como los otros dos) -- el mismo click que dispara el
+        // foco burbujea hasta aquí un instante después y, sin este guard,
+        // esta misma función la cerraba de inmediato (el target del click es
+        // el input, no un descendiente de .autocomplete-suggestions).
         document.addEventListener('click', (e) => {
-            if (!e.target.closest('.autocomplete-suggestions')) {
+            const esInputConSugerencias = e.target.matches(
+                '#responsable-pulido-input, #buscador-productos, #orden-produccion-pulido'
+            );
+            if (!esInputConSugerencias && !e.target.closest('.autocomplete-suggestions')) {
                 document.querySelectorAll('.autocomplete-suggestions').forEach(el => el.classList.remove('active'));
             }
         });
@@ -1614,9 +2056,18 @@ const ModuloPulido = {
         if (items.length === 0) { container.classList.remove('active'); return; }
         container.innerHTML = items.map(item => {
             const isProd = typeof item === 'object' && item.codigo_sistema;
+            const isOP = typeof item === 'object' && item.orden_produccion !== undefined;
             const val = isProd ? item.codigo_sistema : (item.nombre || item);
             const desc = item.descripcion ? `<br><small class="text-muted" style="font-size: 0.75rem;">${item.descripcion}</small>` : '';
-            
+
+            if (isOP) {
+                return `
+                    <div class="suggestion-item p-2 border-bottom" style="cursor:pointer;">
+                        <span class="fw-bold text-dark">${item.orden_produccion}</span>
+                        <span class="text-muted" style="font-size:0.8em; margin-left:8px;">saldo pendiente: ${item.saldo}</span>
+                    </div>`;
+            }
+
             if (isProd) {
                 let imgSrc = item.imagen || '';
                 if (imgSrc && !imgSrc.startsWith('/') && !imgSrc.startsWith('http') && !imgSrc.startsWith('data:')) {

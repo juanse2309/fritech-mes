@@ -34,13 +34,40 @@ class StockService:
         Ajusta RELATIVAMENTE (delta) una columna de stock de db_productos.
         No hace commit — usa flush() para componerse con el resto de la
         transacción del caller. Devuelve (True, detalle_dict) o (False, mensaje_error).
+
+        Resolución del código (CORREGIDO 2026-08-25): se busca PRIMERO el
+        código tal como llegó, y solo si no existe se reintenta con el
+        prefijo pelado por normalizar_codigo(). Antes se pelaba siempre, lo
+        que causaba dos fallos verificados contra datos reales:
+
+          1. Productos cuyo código vive CON prefijo en ambas columnas
+             ('SP-15', 'TR-3/8*10', 'BSL-026') no se encontraban nunca --
+             'SP-15' se pelaba a '15', que no existe. El descuento se perdía
+             en silencio (el caller solo recibía un dict con 'error' que
+             varios no revisaban).
+          2. Peor: descuento CRUZADO entre productos distintos. La ficha
+             pide 'PL-HR-XLD' (PLATINA PARA HERRADURA GIGANTE DELANTERA) y,
+             al pelarse a 'HR-XLD', el stock salía de 'HERRADURA GIGANTE
+             DELANTERA' -- otro producto. Igual con 'PL-HR-XLT'.
+
+        Pelar sigue como respaldo porque los bujes sí viven como
+        codigo_sistema='FR-9302' / id_codigo='9302', y hay casos ('PL-6000')
+        que solo existen pelados.
         """
         try:
-            codigo_norm = normalizar_codigo(codigo_sistema)
+            cod_directo = str(codigo_sistema).strip().upper() if codigo_sistema else ''
             producto = Producto.query.filter(
-                (Producto.codigo_sistema == codigo_norm) |
-                (Producto.id_codigo == codigo_norm)
-            ).first()
+                (Producto.codigo_sistema == cod_directo) |
+                (Producto.id_codigo == cod_directo)
+            ).first() if cod_directo else None
+
+            codigo_norm = cod_directo
+            if not producto:
+                codigo_norm = normalizar_codigo(codigo_sistema)
+                producto = Producto.query.filter(
+                    (Producto.codigo_sistema == codigo_norm) |
+                    (Producto.id_codigo == codigo_norm)
+                ).first()
 
             if not producto:
                 return False, f"Producto {codigo_norm} no encontrado en SQL"

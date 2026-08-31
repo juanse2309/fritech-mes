@@ -2,14 +2,41 @@ import os
 import uuid
 import json
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from backend.models.sql_models import db, ProduccionInyeccion, PncInyeccion, PncPulido, ProgramacionInyeccion, DistribucionOpPedidos, Producto, TrazabilidadLote, Pedido
+from backend.models.sql_models import db, ProduccionInyeccion, PncInyeccion, PncPulido, ProgramacionInyeccion, DistribucionOpPedidos, Producto, TrazabilidadLote, Pedido, ProduccionEmpaque
 from backend.services.audit_service import AuditService, OwnershipMismatchException, ValidadorRequeridoException, TurnoInvalidoException
+from backend.services.op_numerador_service import OpNumeradorService
 from backend.utils.time_utils import get_colombia_time
+from backend.utils.formatters import sql_normalizar_codigo_fr
 
 logger = logging.getLogger(__name__)
+
+# Ventana de reenvío para registrar_directa (ver docstring del método): un
+# reintento de red o un doble toque no debería tardar más que esto en llegar
+# de nuevo al servidor. Lo bastante corto para no confundir dos reportes
+# legítimos y distintos del mismo producto en la misma máquina.
+SEGUNDOS_VENTANA_DUPLICADO = 20
+
+# Estados de db_pedidos.estado que representan un pedido AÚN NO despachado
+# por completo (hallazgo 2026-08-31, revisando por qué "Demanda Activa" no
+# reflejaba un pedido real): la lista anterior ('PENDIENTE', 'ABIERTO',
+# 'Alistamiento', 'ALISTADO') no corresponde a los valores reales que usa el
+# flujo de Gestión de Pedidos -- verificado contra la base real, los estados
+# que de verdad existen son estos. Solo 'DESPACHADO' es terminal (excluido).
+ESTADOS_PEDIDO_ACTIVO = ['EN ALISTAMIENTO', 'LISTO PARA DESPACHO', 'DESPACHADO PARCIAL', 'DESPACHO PARCIAL', 'EXPORTADO_WO']
+
+
+def _normalizar_codigo_fr_python(referencia: str) -> str:
+    """
+    Equivalente en Python de sql_normalizar_codigo_fr, para el lado del bind
+    param (ver PulidoService._normalizar_referencia_bind -- mismo criterio,
+    duplicado aquí para no acoplar los dos servicios): un código puramente
+    numérico se compara con prefijo 'FR-', el resto se deja tal cual.
+    """
+    ref = str(referencia or '').strip().upper()
+    return f"FR-{ref}" if ref.isdigit() else ref
 
 
 class LoteInyeccionNoEncontradoException(Exception):
@@ -234,7 +261,10 @@ class InyeccionService:
 
         registro.cantidad_real = cant_real
         registro.cavidades     = num_cavidades
-        registro.molde         = to_int(item.get('molde') or 0)
+        # Texto, no to_int(): el código real de molde no es numérico
+        # ('5002A', '9304 moneda') -- to_int() lo habría corrompido a 0 en
+        # silencio, sin error. Ver migrate_molde_texto.py.
+        registro.molde         = str(item.get('molde') or '').strip() or None
 
         disparos = to_float(item.get('cant_contador') or item.get('disparos') or 0)
         registro.cant_contador      = to_int(disparos)
@@ -427,10 +457,26 @@ class InyeccionService:
                 ))
 
     @staticmethod
-    def _generar_pdf_lote(turno, items):
+    def _generar_y_subir_pdf_lote(turno, items):
         """
-        Genera el PDF del lote y lo deja en disco local (subida a Drive deshabilitada).
-        Resiliente a errores de cuota/permisos: nunca debe tumbar el registro del lote.
+        Genera el PDF del lote y lo sube a Drive (reunión 2026-08-25).
+
+        Reemplaza a la versión anterior (_generar_pdf_lote), que generaba el
+        archivo, tenía la subida deshabilitada por comentario explícito, y lo
+        BORRABA en el finally -- reportando éxito de un archivo que ya no
+        existía en ningún lado. Ahora:
+          - Solo se borra el local si la subida a Drive fue exitosa.
+          - El estado devuelto es real: 'subido' / 'generado_no_subido' / 'fallido'.
+          - Se llama desde validar_lote (no desde registrar_lote): antes de
+            validar, cantidad_real/pnc_total no están auditados, así que un
+            PDF generado en ese punto reportaría cifras provisionales.
+
+        Resiliente a propósito: el llamador la invoca DESPUÉS del commit de
+        la validación, fuera de esa transacción -- un fallo aquí (Drive caído,
+        cuota, credenciales) nunca debe deshacer una validación ya confirmada.
+
+        Retorna dict: {'status': 'subido'|'generado_no_subido'|'fallido',
+                        'url': str|None, 'error': str|None}
         """
         local_file = None
         try:
@@ -440,40 +486,91 @@ class InyeccionService:
             fecha_raw = str(turno.get('fecha_inicio') or datetime.now().strftime('%Y-%m-%d'))
             fecha_clean = fecha_raw.split(' ')[0].replace('/', '-')
             op = str(turno.get('orden_produccion') or 'S-OP').replace(" ", "-")
-            tmp_filename = f"{fecha_clean}_{op}_{maquina}.pdf".replace(" ", "_")
+            nombre_archivo = f"{fecha_clean}_{op}_{maquina}.pdf".replace(" ", "_")
 
             import re
-            tmp_filename = re.sub(r'[\\/*?:"<>|]', "", tmp_filename)
+            nombre_archivo = re.sub(r'[\\/*?:"<>|]', "", nombre_archivo)
             tmp_path = os.path.join(os.getcwd(), "temp_reports")
             if not os.path.exists(tmp_path):
                 os.makedirs(tmp_path)
 
-            local_file = os.path.join(tmp_path, tmp_filename)
+            local_file = os.path.join(tmp_path, nombre_archivo)
 
-            success = PDFGenerator.generar_reporte_inyeccion_lote(turno, items, local_file)
-            if not success:
-                return False, "Error al generar el archivo PDF localmente."
+            if not PDFGenerator.generar_reporte_inyeccion_lote(turno, items, local_file):
+                return {'status': 'fallido', 'url': None, 'error': 'No se pudo generar el archivo PDF'}
 
-            logger.debug(f" ✅ PDF generado localmente: {tmp_filename}. (Subida a Drive deshabilitada)")
-            return True, None
+            logger.debug(f" ✅ PDF generado localmente: {nombre_archivo}")
+
+            try:
+                from backend.services.drive_service import DriveService
+                url = DriveService.subir_archivo(local_file, nombre_archivo)
+                os.remove(local_file)  # ya está a salvo en Drive
+                logger.info(f" ✅ PDF subido a Drive: {nombre_archivo} -> {url}")
+                return {'status': 'subido', 'url': url, 'error': None}
+            except Exception as e_drive:
+                # No se borra: el archivo queda en disco (efímero en Render,
+                # pero al menos no se pierde antes de saber si se pudo subir).
+                logger.error(f" ⚠️ PDF generado pero NO subido a Drive ({nombre_archivo}): {e_drive}")
+                return {'status': 'generado_no_subido', 'url': None, 'error': str(e_drive)}
 
         except Exception as e:
-            logger.error(f" ❌ ERROR CRÍTICO en proceso PDF/Drive: {str(e)}")
-            return False, str(e)
-        finally:
+            logger.error(f" ❌ ERROR CRÍTICO generando el PDF de validación: {e}")
             if local_file and os.path.exists(local_file):
                 try:
                     os.remove(local_file)
                 except Exception:
                     pass
+            return {'status': 'fallido', 'url': None, 'error': str(e)}
+
+    @staticmethod
+    def _construir_turno_items_para_pdf(registros_iny):
+        """
+        Arma (turno, items) para PDFGenerator.generar_reporte_inyeccion_lote
+        a partir de los registros YA CERRADOS de ProduccionInyeccion (post-
+        validación) -- no del payload crudo, que en validar_lote solo trae el
+        desglose de PNC, no el lote completo.
+
+        Mapeo de 'buenas' (cantidad neta): PDFGenerator calcula
+        buenas = cantidad_real - pnc cuando no se le da manual_buenas. Como
+        reg.cantidad_real YA es el neto (pnc se trackea aparte en
+        reg.pnc_total), hay que pasarlo como manual_buenas explícito -- si no,
+        el PDF restaría el PNC dos veces.
+        """
+        primero = registros_iny[0]
+        turno = {
+            'maquina': primero.maquina,
+            'fecha_inicio': primero.fecha_inicia.strftime('%Y-%m-%d') if primero.fecha_inicia else '',
+            'orden_produccion': primero.orden_produccion,
+            'responsable': primero.responsable,
+            'hora_inicio': primero.hora_inicio or '',
+            'hora_termina': datetime.now().strftime('%H:%M'),
+            'entrada_manual': float(primero.entrada or 0),
+            'salida_manual': float(primero.salida or 0),
+            'observaciones': primero.observaciones or '',
+            'almacen_destino': primero.almacen_destino or '',
+        }
+        items = [{
+            'codigo_producto': r.id_codigo,
+            'no_cavidades': r.cavidades,
+            'disparos': r.cant_contador,
+            'cantidad_real': r.cantidad_real,
+            'manual_buenas': r.cantidad_real,  # ver docstring: evita restar PNC dos veces
+            'pnc': r.pnc_total,
+            'peso_bujes': r.peso_bujes,
+            'observaciones': r.observaciones,
+        } for r in registros_iny]
+        return turno, items
 
     @staticmethod
     def registrar_lote(data, usuario_activo):
         """
         Orquesta el registro de un lote de PRODUCCIÓN de Inyección: por cada item
-        sincroniza o crea su fila en ProduccionInyeccion, calcula tiempos/PNC,
-        confirma la transacción y por último intenta el PDF (best-effort, nunca
-        aborta el lote ya confirmado). El lote queda en 'PENDIENTE'.
+        sincroniza o crea su fila en ProduccionInyeccion, calcula tiempos/PNC y
+        confirma la transacción. El lote queda en 'PENDIENTE'.
+
+        El PDF de validación ya NO se genera aquí (reunión 2026-08-25) -- se
+        movió a validar_lote, porque antes de validar cantidad_real/pnc_total
+        no están auditados contra PNC. Ver _generar_y_subir_pdf_lote.
 
         Esta ruta NO valida. El cierre de lote —firma de auditoría, descuento de
         BOM, acreditación de `por_pulir` y propagación FIFO a cubetas— vive
@@ -669,8 +766,10 @@ class InyeccionService:
                 logger.error(f" ❌ Error en InyeccionService.registrar_lote: {e}")
             raise
 
-        # --- PDF (opcional y resiliente, fuera de la transacción ya confirmada) ---
-        pdf_ok, _ = InyeccionService._generar_pdf_lote(turno, items)
+        # NOTA (reunión 2026-08-25): el PDF ya NO se genera aquí -- se movió a
+        # validar_lote. Antes de validar, cantidad_real/pnc_total no están
+        # auditados contra PNC, así que un PDF generado en este punto
+        # reportaría cifras provisionales bajo la apariencia de definitivas.
 
         # DTO por item, construido DESPUÉS del commit para reflejar valores
         # definitivos (id_sql autoincremental incluido). Contrato explícito:
@@ -691,8 +790,6 @@ class InyeccionService:
         return {
             'success': True,
             'mensaje': 'Lote registrado exitosamente. Queda PENDIENTE de validación.',
-            'pdf_generated': pdf_ok,
-            'pdf_status': "success" if pdf_ok else "failed",
             'id_inyeccion': id_iny_lote,
             'items': items_resultado
         }
@@ -905,12 +1002,27 @@ class InyeccionService:
         except Exception:
             pass
 
+        # PDF de validación (reunión 2026-08-25): se genera AQUÍ, no en
+        # registrar_lote -- ver docstring de _generar_y_subir_pdf_lote. Igual
+        # de best-effort: un PDF/Drive caído no debe tumbar una validación ya
+        # confirmada y comiteada.
+        pdf_resultado = {'status': 'fallido', 'url': None, 'error': 'sin registros para generar el PDF'}
+        try:
+            if registros_iny:
+                turno_pdf, items_pdf = InyeccionService._construir_turno_items_para_pdf(registros_iny)
+                pdf_resultado = InyeccionService._generar_y_subir_pdf_lote(turno_pdf, items_pdf)
+        except Exception as e_pdf:
+            logger.error(f"❌ Error inesperado generando el PDF de validación para {id_inyeccion}: {e_pdf}")
+            pdf_resultado = {'status': 'fallido', 'url': None, 'error': str(e_pdf)}
+
         logger.info(f"✅ [Validación] Lote {id_inyeccion} cerrado y validado correctamente por {validador_actual}.")
         return {
             "success": True,
             "message": f"Lote {id_inyeccion} validado e inventario actualizado",
             "validado_por": validador_actual,
-            "items": items_resultado
+            "items": items_resultado,
+            "pdf_status": pdf_resultado['status'],
+            "pdf_url": pdf_resultado['url'],
         }
 
     @staticmethod
@@ -922,22 +1034,34 @@ class InyeccionService:
         físico en ProduccionInyeccion y su lote de trazabilidad por referencia.
         Transaccional: cualquier fallo hace rollback completo antes de propagar.
 
+        OP heredada de la programación (reunión 2026-08-25): desde que
+        guardar_programacion asigna la OP automáticamente, el operario ya no
+        debería teclearla. Precedencia: override explícito del payload (botón
+        "editar OP", solo ROL_ADMINS) -> la que ya trae prog_inicial.op_world_office
+        (camino normal) -> si ninguna existe, se sigue exigiendo -- cubre
+        programaciones creadas antes de este cambio, sin backfill.
+
         Puede lanzar ValueError, ProgramacionNoEncontradaException u
         OwnershipMismatchException — el controlador las traduce a HTTP.
         """
         from backend.utils.formatters import preservar_o_normalizar_prefijo
 
         id_prog = data.get('id_programacion')
-        op_world_office = data.get('op_world_office')
-
-        if not id_prog or not op_world_office:
-            raise ValueError("Los campos id_programacion y op_world_office son obligatorios")
-
-        op_world_office = str(op_world_office).strip().upper()
+        if not id_prog:
+            raise ValueError("El campo id_programacion es obligatorio")
 
         prog_inicial = db.session.query(ProgramacionInyeccion).get(id_prog)
         if not prog_inicial:
             raise ProgramacionNoEncontradaException(id_prog)
+
+        op_world_office = data.get('op_world_office') or prog_inicial.op_world_office
+        if not op_world_office:
+            raise ValueError(
+                "Esta programación no tiene OP asignada automáticamente "
+                "(fue creada antes del cambio). Indique op_world_office manualmente."
+            )
+
+        op_world_office = str(op_world_office).strip().upper()
 
         programaciones_bloque = db.session.query(ProgramacionInyeccion).filter(
             ProgramacionInyeccion.maquina == prog_inicial.maquina,
@@ -1245,9 +1369,17 @@ class InyeccionService:
         Registra la planificación del turno de la tarde anterior en
         ProgramacionInyeccion (UPSERT por fecha+maquina+codigo_sistema+molde) y
         crea su distribución asociada de cubetas por pedido en
-        DistribucionOpPedidos, dejando op_world_office en NULL (se completa al
-        iniciar trabajo). Soporta múltiples productos en el mismo montaje de
-        forma atómica: cualquier fallo hace rollback completo antes de propagar.
+        DistribucionOpPedidos. Soporta múltiples productos en el mismo montaje
+        de forma atómica: cualquier fallo hace rollback completo antes de
+        propagar.
+
+        OP automática (reunión 2026-08-25): op_world_office se reserva vía
+        OpNumeradorService.obtener_o_reservar('INYECCION', fecha, maquina) --
+        una sola OP por máquina/día, idéntica sin importar cuántas referencias
+        tenga el montaje ni si se reprograma varias veces (la reserva es
+        idempotente). Las cubetas (DistribucionOpPedidos) siguen naciendo con
+        op_world_office=None a propósito: la propagación real ocurre en
+        iniciar_trabajo, que ya sabe limpiar/reasignar cubetas sin duplicar.
 
         Puede lanzar ValueError (validación de payload) — el controlador la
         traduce a 400.
@@ -1271,10 +1403,9 @@ class InyeccionService:
         observaciones = data.get('observaciones')
         pedidos_asignados = data.get('pedidos_asignados', [])
 
-        try:
-            molde_val = int(float(data.get('molde'))) if data.get('molde') is not None else None
-        except (ValueError, TypeError) as e_molde:
-            raise ValueError(f"Error en formato de molde: {str(e_molde)}")
+        # Texto, no número: el código real de molde no es numérico ('5002A',
+        # '9304 moneda' -- ver rel_producto_molde). Ver migrate_molde_texto.py.
+        molde_val = str(data.get('molde') or '').strip() or None
 
         productos = data.get('productos')
         if not productos:
@@ -1297,6 +1428,14 @@ class InyeccionService:
         programaciones_ids = []
 
         try:
+            # OP automática: una reserva por (fecha, máquina), compartida por
+            # todo el montaje. Idempotente -- reprogramar el mismo día/máquina
+            # devuelve la MISMA OP, no crea una nueva. No hace commit propio:
+            # vive dentro de esta misma transacción atómica.
+            op_generada = OpNumeradorService.obtener_o_reservar(
+                'INYECCION', fecha_dt, maquina, usuario=responsable_planta
+            )
+
             for prod_data in productos:
                 cod_sistema = prod_data.get('codigo_sistema')
                 if not cod_sistema:
@@ -1314,7 +1453,7 @@ class InyeccionService:
                         ProgramacionInyeccion.fecha == fecha_dt,
                         ProgramacionInyeccion.maquina == maquina,
                         ProgramacionInyeccion.codigo_sistema == cod_sistema,
-                        db.func.coalesce(ProgramacionInyeccion.molde, 0) == (molde_val if molde_val is not None else 0)
+                        db.func.coalesce(ProgramacionInyeccion.molde, '') == (molde_val or '')
                     ).first()
 
                     if existente:
@@ -1323,6 +1462,11 @@ class InyeccionService:
                         existente.responsable_planta = responsable_planta
                         existente.observaciones = observaciones
                         existente.estado = 'PROGRAMADO'
+                        # Solo si sigue vacía: si la máquina ya arrancó
+                        # (iniciar_trabajo puso estado='EN_PROCESO' y una OP
+                        # real), reprogramar aquí NO debe pisarla.
+                        if not existente.op_world_office:
+                            existente.op_world_office = op_generada.numero_op
                         db.session.flush()
                         programaciones_ids.append(existente.id)
                     else:
@@ -1336,7 +1480,7 @@ class InyeccionService:
                             cavidades=cav_val,
                             responsable_planta=responsable_planta,
                             observaciones=observaciones,
-                            op_world_office=None
+                            op_world_office=op_generada.numero_op
                         )
                         db.session.add(nueva_prog)
                         db.session.flush()
@@ -1393,7 +1537,8 @@ class InyeccionService:
         return {
             "success": True,
             "message": f"Programación diaria ({len(programaciones_ids)} referencias) y cubetas creadas correctamente",
-            "id_programacion": programaciones_ids[0] if programaciones_ids else None
+            "id_programacion": programaciones_ids[0] if programaciones_ids else None,
+            "orden_produccion": op_generada.numero_op
         }
 
     @staticmethod
@@ -1530,10 +1675,22 @@ class InyeccionService:
         if not codigo:
             raise ValueError("Código de producto es requerido")
 
+        # Match EXACTO (normalizado), no ilike('%codigo%') -- un substring
+        # amplio confunde referencias que comparten dígitos pero son productos
+        # distintos (ej. buscar "5002" también traía pedidos de "FR-5002A",
+        # "FR-5002B", "KIT-03-5002"... 246 pares así en la tabla real,
+        # hallazgo 2026-08-31). El lado columna se normaliza en SQL
+        # (sql_normalizar_codigo_fr) y el parámetro se normaliza en Python
+        # ANTES de bindearlo -- pasarlo envuelto en sql_normalizar_codigo_fr
+        # dentro de un :param de text() rompe el parser de SQLAlchemy (:: se
+        # interpreta como escape de dos puntos literales, no cast de
+        # Postgres), ver memoria del proyecto (mismo bug ya encontrado hoy
+        # en PulidoService).
+        codigo_norm = _normalizar_codigo_fr_python(codigo)
         pedidos_activos = db.session.query(Pedido).filter(
-            Pedido.id_codigo.ilike(f"%{codigo}%"),
-            Pedido.estado.in_(['PENDIENTE', 'ABIERTO', 'Alistamiento', 'ALISTADO'])
-        ).all()
+            text(f"{sql_normalizar_codigo_fr('id_codigo')} = :codigo_norm"),
+            Pedido.estado.in_(ESTADOS_PEDIDO_ACTIVO)
+        ).params(codigo_norm=codigo_norm).all()
 
         resultados = []
         for p in pedidos_activos:
@@ -1546,7 +1703,7 @@ class InyeccionService:
 
             cant_pendiente = max(0.0, cant_solicitada - cant_alistada)
 
-            if cant_pendiente > 0 or p.estado in ['PENDIENTE', 'ABIERTO']:
+            if cant_pendiente > 0:
                 resultados.append({
                     "id_pedido": p.id_pedido,
                     "cliente": p.cliente or "CLIENTE GENERAL",
@@ -1577,12 +1734,27 @@ class InyeccionService:
         if not codigo:
             raise ValueError("El código es requerido")
 
+        # Match EXACTO (normalizado) en vez de ilike('%codigo%') -- ver
+        # docstring de obtener_pedidos_pendientes: un substring amplio mezcla
+        # referencias que comparten dígitos pero son productos distintos
+        # (ej. "5002" también traía "FR-5002A", "FR-5002B", "KIT-03-5002").
+        # Encontrado 2026-08-31 revisando por qué "Demanda Activa" podía
+        # salir inflada en Nueva Programación.
+        codigo_norm = _normalizar_codigo_fr_python(codigo)
         pedidos_activos = db.session.query(Pedido).filter(
-            Pedido.id_codigo.ilike(f"%{codigo}%"),
-            Pedido.estado.in_(['PENDIENTE', 'ABIERTO', 'Alistamiento', 'ALISTADO', 'EXPORTADO_WO'])
-        ).all()
+            text(f"{sql_normalizar_codigo_fr('id_codigo')} = :codigo_norm"),
+            Pedido.estado.in_(ESTADOS_PEDIDO_ACTIVO)
+        ).params(codigo_norm=codigo_norm).all()
 
         unidades_pedidas_b2b = 0.0
+        # Alistado, pendiente despacho (pedido de la jefa 2026-08-31): unidades
+        # que YA se separaron del inventario para estos pedidos pero todavía no
+        # salen -- se muestran aparte de la demanda real para no verse como
+        # "no hay nada pendiente" cuando en realidad hay unidades comprometidas
+        # esperando despacho (hallazgo: el pedido de MT-7004-B con cant_alistada
+        # = cantidad total quedaba invisible, mezclado silenciosamente dentro
+        # de una Demanda Activa en 0).
+        alistado_pendiente_despacho = 0.0
         for p in pedidos_activos:
             try:
                 cant_solicitada = float(p.cantidad or 0)
@@ -1591,24 +1763,40 @@ class InyeccionService:
                 cant_solicitada = 0.0
                 cant_alistada = 0.0
 
+            cant_alistada = min(cant_alistada, cant_solicitada)
             cant_pendiente = max(0.0, cant_solicitada - cant_alistada)
             unidades_pedidas_b2b += cant_pendiente
+            alistado_pendiente_despacho += cant_alistada
 
+        # Mismo criterio: match exacto sobre codigo_sistema (la fuente de
+        # verdad para el catálogo -- ver memoria del proyecto) en vez de
+        # ilike, que podía traer el producto equivocado si "codigo" es
+        # substring de otro id_codigo/codigo_sistema real.
         prod = db.session.query(Producto).filter(
-            (Producto.codigo_sistema.ilike(f"%{codigo}%")) |
-            (Producto.id_codigo.ilike(f"%{codigo}%"))
+            (Producto.codigo_sistema == codigo_norm) | (Producto.id_codigo == codigo_norm)
         ).first()
 
         stock_terminado = 0.0
         stock_bodega = 0.0
+        stock_por_pulir = 0.0
 
         if prod:
             stock_terminado = float(prod.p_terminado or 0)
             stock_bodega = float(prod.stock_bodega or 0)
+            stock_por_pulir = float(prod.por_pulir or 0)
 
         stock_actual_disponible = stock_terminado + stock_bodega
 
         logger.info(f"[AUDITORÍA DE DEMANDA] {codigo}: B2B pedido={unidades_pedidas_b2b}, stock disponible={stock_actual_disponible}")
+
+        # Empacado hoy (pedido de la jefa 2026-08-31, Opción A): cuánto de
+        # esta referencia ya se armó/empacó hoy -- para no programar más
+        # producción de algo que ya salió armado en el día. Match exacto
+        # normalizado, mismo criterio que el resto de esta función.
+        empacado_hoy = db.session.query(db.func.coalesce(db.func.sum(ProduccionEmpaque.cantidad), 0)).filter(
+            text(f"{sql_normalizar_codigo_fr('id_codigo')} = :codigo_norm"),
+            ProduccionEmpaque.fecha == get_colombia_time().date()
+        ).params(codigo_norm=codigo_norm).scalar()
 
         return {
             "success": True,
@@ -1616,7 +1804,10 @@ class InyeccionService:
             "unidades_pedidas_b2b": int(round(unidades_pedidas_b2b)),
             "stock_actual_disponible": int(round(stock_actual_disponible)),
             "stock_terminado": int(round(stock_terminado)),
-            "stock_bodega": int(round(stock_bodega))
+            "stock_bodega": int(round(stock_bodega)),
+            "stock_por_pulir": int(round(stock_por_pulir)),
+            "empacado_hoy": int(round(float(empacado_hoy or 0))),
+            "alistado_pendiente_despacho": int(round(alistado_pendiente_despacho))
         }
 
     # ---------------------------------------------------------------
@@ -1630,6 +1821,16 @@ class InyeccionService:
         flujo de lote (registrar_lote/validar_lote/iniciar_trabajo): crea un
         único ProduccionInyeccion suelto, descuenta la BOM y suma a POR PULIR.
         No pasa por Programación/MES.
+
+        Sin protección contra reenvío (hallazgo 2026-08-27, mismo problema
+        que EmpaqueService.reportar): cada llamada crea una fila nueva con un
+        UUID propio, así que un reintento de red o un doble toque duplica el
+        descuento de BOM y el crédito a POR PULIR sin que nada lo detecte.
+        Se cierra igual que en Empaque: si en los últimos
+        SEGUNDOS_VENTANA_DUPLICADO segundos ya existe un registro idéntico
+        (mismo código, responsable, máquina y cantidad), se asume que es el
+        mismo envío repetido y se devuelve ese registro sin tocar stock de
+        nuevo.
         """
         if not data:
             raise ValueError('No se recibieron datos')
@@ -1650,15 +1851,33 @@ class InyeccionService:
             cavidades = int(float(data.get('no_cavidades', 1) or 1))
             pnc = float(data.get('pnc', 0) or 0)
             cantidad_final = float(data.get('cantidad_real', disparos * cavidades))
+            maquina = data.get('maquina')
+            ahora = get_colombia_time()
+
+            ventana = ahora - timedelta(seconds=SEGUNDOS_VENTANA_DUPLICADO)
+            duplicado = ProduccionInyeccion.query.filter(
+                ProduccionInyeccion.id_codigo == codigo_norm,
+                ProduccionInyeccion.responsable == responsable,
+                ProduccionInyeccion.maquina == maquina,
+                ProduccionInyeccion.cantidad_real == cantidad_final,
+                ProduccionInyeccion.fecha_inicia >= ventana,
+            ).order_by(ProduccionInyeccion.id.desc()).first()
+            if duplicado:
+                logger.warning(
+                    f"⚠️ [ANTI-DUPLICADO] registrar_directa: reenvío detectado para "
+                    f"{codigo_norm}/{responsable}/{maquina} ({cantidad_final} u.) -- "
+                    f"se devuelve {duplicado.id_inyeccion} sin volver a tocar stock."
+                )
+                return {'id': duplicado.id_inyeccion}
 
             id_inyeccion = f"INY-{uuid.uuid4().hex[:8].upper()}"
 
             nuevo_registro = ProduccionInyeccion(
                 id_inyeccion=id_inyeccion,
-                fecha_inicia=date.today(),
+                fecha_inicia=ahora,
                 id_codigo=codigo_norm,
                 responsable=responsable,
-                maquina=data.get('maquina'),
+                maquina=maquina,
                 cavidades=cavidades,
                 cant_contador=disparos,
                 cantidad_real=cantidad_final,

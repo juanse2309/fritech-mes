@@ -1064,13 +1064,18 @@ const ModuloEnsamble = {
                     badge = ' <span class="badge rounded-pill ms-1" style="background:#fdf3e2;color:#96650b;font-weight:600;">⚠ Faltan procesos</span>';
                 }
 
+                const badgeOp = p.op_numero
+                    ? `<div class="mt-1"><span class="badge" style="background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;font-size:.7rem;font-weight:700;"><i class="fas fa-file-invoice me-1"></i>OP ${p.op_numero}</span></div>`
+                    : '';
+
                 html += `
                     <div class="mb-2 p-2 border-bottom">
                         <div class="d-flex justify-content-between align-items-center small">
                             <span>${p.id_codigo}${badge}</span>
                             <span>${p.cantidad_realizada}/${p.cantidad_objetivo}</span>
                         </div>
-                        <div class="progress" style="height: 3px;">
+                        ${badgeOp}
+                        <div class="progress mt-1" style="height: 3px;">
                             <div class="progress-bar ${completada ? 'bg-success' : ''}" style="width: ${porc}%"></div>
                         </div>
                     </div>
@@ -1117,11 +1122,90 @@ const ModuloEnsamble = {
             const data = await res.json();
             mostrarLoading(false);
             if (data.success) {
-                mostrarNotificacion('Meta programada', 'success');
+                // OP automática: el numerador ya la asignó al programar, pero
+                // antes no se veía por ningún lado (pedido del usuario
+                // 2026-08-28). api_success la anida en 'data'.
+                const opAsignada = data.data?.op_numero || '';
+                if (opAsignada) {
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'Meta programada',
+                        html: `<div class="mt-2"><span class="badge bg-primary fs-6">OP asignada: ${opAsignada}</span></div>`
+                    });
+                } else {
+                    mostrarNotificacion('Meta programada', 'success');
+                }
                 this.listarProgramacion();
                 this.listarTareasPendientes();
             }
         } catch (e) { mostrarLoading(false); console.error(e); }
+    },
+
+    // Cierre de jornada (reunión 2026-08-25): marca la OP del día como lista
+    // para que la vista de Zoe la pueda descargar al día siguiente. Acto
+    // explícito -- se dispara desde este botón, nunca automático.
+    esAdmin: function () {
+        if (typeof AuthModule === 'undefined' || !AuthModule.currentUser) return false;
+        const rol = (AuthModule.currentUser.rol || AuthModule.currentUser.role || '').toUpperCase();
+        return rol.includes('ADMIN') || rol.includes('GERENCIA');
+    },
+
+    cerrarJornada: async function (forzar = false, motivo = null) {
+        const hoy = new Date().toISOString().slice(0, 10);
+
+        if (!forzar) {
+            const confirmacion = await Swal.fire({
+                title: 'Cerrar Jornada de Ensamble',
+                html: `Se va a cerrar el día <b>${hoy}</b> para que quede lista la descarga hacia World Office.<br><small class="text-muted">Si queda algún proceso sin marcar en el checklist, no se podrá cerrar.</small>`,
+                icon: 'question',
+                showCancelButton: true,
+                confirmButtonText: '<i class="fas fa-lock me-1"></i> Cerrar Jornada',
+                cancelButtonText: 'Cancelar',
+                confirmButtonColor: '#16a34a'
+            });
+            if (!confirmacion.isConfirmed) return;
+        }
+
+        const body = { fecha: hoy };
+        if (forzar) { body.forzar = true; body.motivo = motivo; }
+
+        const res = await fetchData('/api/ensamble/cerrar_jornada', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+
+        if (res?.success) {
+            Swal.fire({
+                icon: 'success',
+                title: 'Jornada cerrada',
+                text: `${res.data.numero_op} quedó lista para exportar.`,
+                timer: 2500,
+                showConfirmButton: false
+            });
+            return;
+        }
+
+        // fetchData ya mostró el toast con el mensaje de error (incluye
+        // cuántas metas quedan con checklist incompleto). Si el usuario es
+        // admin, ofrecerle forzar el cierre con un motivo -- sin esto, un
+        // rechazo por checklist es un callejón sin salida hasta terminar
+        // todo, que puede no ser posible el mismo día.
+        if (!forzar && this.esAdmin()) {
+            const { value: motivoForzado } = await Swal.fire({
+                title: '¿Forzar el cierre?',
+                input: 'text',
+                inputPlaceholder: 'Motivo del cierre forzado (obligatorio)',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: 'Forzar cierre',
+                confirmButtonColor: '#dc2626',
+                inputValidator: (value) => !value?.trim() ? 'El motivo es obligatorio' : undefined
+            });
+            if (motivoForzado) {
+                await this.cerrarJornada(true, motivoForzado.trim());
+            }
+        }
     },
 
     configurarEventos: function () {
@@ -1132,6 +1216,7 @@ const ModuloEnsamble = {
         document.getElementById('btn-detalle-pnc')?.addEventListener('click', () => this.abrirModalPNC());
         document.getElementById('btn-cancelar-reporte')?.addEventListener('click', () => this.resetFormulario(true));
         document.getElementById('btn-ver-completadas')?.addEventListener('click', () => this.mostrarCompletadas());
+        document.getElementById('btn-cerrar-jornada-ensamble')?.addEventListener('click', () => this.cerrarJornada());
 
         document.getElementById('btn-ia-voice-ensamble')?.addEventListener('click', () => this.toggleGrabacionVoz());
         document.getElementById('btn-cancelar-voz-ensamble')?.addEventListener('click', () => this.cancelarGrabacionVoz());

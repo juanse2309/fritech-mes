@@ -73,6 +73,7 @@ def obtener_metricas_bi():
 
             # 2. Analítica de Pulido → PulidoService (lógica de negocio aislada)
             pulido_profundo  = PulidoService.get_ranking_leaderboard(desde, hasta)
+            pulido_evolucion = PulidoService.get_evolucion_operarias(desde, hasta)
             analytics_pulido = PulidoService.get_analytics_completo(desde, hasta)
             analytics_pulido["eficiencia_referencia"] = DashboardService.calcular_eficiencia_pulido_por_referencia(desde, hasta)
             analytics_inyeccion = DashboardRepository.get_analytics_inyeccion(desde, hasta)
@@ -120,7 +121,10 @@ def obtener_metricas_bi():
                     for op in ranking_iny_ops
                 ],
                 # pulido_profundo es el DTO limpio generado por PulidoService
-                "pulido_profundo": pulido_profundo
+                "pulido_profundo": pulido_profundo,
+                # % de cambio en volumen/eficiencia vs el período anterior de igual
+                # duración -- ver PulidoService.get_evolucion_operarias.
+                "pulido_evolucion": pulido_evolucion
             },
             "maquinas": maquinas_con_pct,
             "tendencia": tendencia,

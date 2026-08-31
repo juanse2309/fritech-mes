@@ -1,12 +1,13 @@
 from flask import Blueprint, request, session, current_app
 import logging
+import os
 from backend.core.sql_database import db
 from backend.core.responses import api_success, api_error
 from backend.models.sql_models import ProgramacionEnsamble, Ensamble
 from backend.services.audit_service import OwnershipMismatchException
-from backend.services.ensamble_service import EnsambleService, BomNoDisponibleException, StockInsuficienteException
+from backend.services.ensamble_service import EnsambleService, BomNoDisponibleException, StockInsuficienteException, ChecklistIncompletoException
 from backend.config.constants import FALLBACK_OPERARIO
-from backend.utils.auth_middleware import _obtener_usuario_activo, require_role, ROL_ADMINS, ROL_JEFES, ROL_OPERARIOS
+from backend.utils.auth_middleware import _obtener_usuario_activo, obtener_identidad_segura, require_role, ROL_ADMINS, ROL_JEFES, ROL_OPERARIOS
 
 ensamble_bp = Blueprint('ensamble_bp', __name__)
 logger = logging.getLogger(__name__)
@@ -149,6 +150,90 @@ def reportar_ensamble_multi():
     except Exception as e:
         db.session.rollback()
         logger.error(f"❌ ERROR REPORTE MULTI-ENSAMBLE: {e}")
+        return api_error(str(e), status_code=500)
+
+
+@ensamble_bp.route('/api/ensamble/cerrar_jornada', methods=['POST'])
+@require_role(ROLES_ENSAMBLE)
+def cerrar_jornada():
+    """
+    Cierre de jornada (reunión 2026-08-25): marca la OP del día como lista
+    para que Zoe la descargue al día siguiente. Rechaza si queda checklist
+    de procesos incompleto, salvo forzar=True -- que exige ser ROL_ADMINS
+    (no basta con ROLES_ENSAMBLE) y traer un motivo.
+    """
+    data = request.get_json() or {}
+    forzar = bool(data.get('forzar'))
+
+    usuario, rol = obtener_identidad_segura(request)
+
+    if forzar and not any(r in (rol or '').upper() for r in ROL_ADMINS):
+        return api_error(
+            "Cerrar la jornada de forma forzada requiere rol de administrador.",
+            status_code=403
+        )
+
+    try:
+        resultado = EnsambleService.cerrar_jornada(
+            fecha_str=data.get('fecha'),
+            usuario=usuario,
+            forzar=forzar,
+            motivo=data.get('motivo'),
+        )
+        return api_success(data=resultado, message=f"Jornada {resultado['numero_op']} cerrada correctamente.")
+    except ChecklistIncompletoException as e:
+        return api_error(
+            e.message, status_code=409, code="CHECKLIST_INCOMPLETO",
+            metas_incompletas=e.metas_incompletas
+        )
+    except ValueError as e:
+        return api_error(str(e), status_code=400)
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"❌ Error cerrando jornada de ensamble: {e}")
+        return api_error(str(e), status_code=500)
+
+
+def _mask_token(token):
+    """Enmascara un token para logging seguro -- ver wo_routes._mask_token
+    (misma lógica, duplicada aquí para no acoplar este blueprint a otro)."""
+    if not token:
+        return "(vacío)"
+    token = str(token)
+    return f"{token[:4]}***" if len(token) > 4 else "***"
+
+
+@ensamble_bp.route('/api/ensamble/cerrar_jornada_auto', methods=['GET', 'POST'])
+def cerrar_jornada_auto():
+    """
+    Red de seguridad para cuando el responsable de Ensamble olvida darle al
+    botón de "Cerrar Jornada" (pedido del usuario 2026-08-28). Pensada para
+    una Tarea Programada de Windows en planta a las 22:00 -- mismo patrón
+    exacto que agente_wo_cartera.py/sincronizar_automatica: token
+    compartido, NO sesión/JWT de usuario humano, canal aparte para procesos
+    automatizados.
+
+    Solo cierra si el checklist de procesos YA está completo -- si de
+    verdad quedó trabajo pendiente, no se fuerza. Ver
+    EnsambleService.cerrar_jornada_automatica.
+    """
+    token_recibido = request.args.get('token') or request.headers.get('X-Sync-Token')
+    token_esperado = os.getenv('SYNC_TOKEN')
+
+    if token_esperado is None:
+        logger.error("❌ Variable de entorno SYNC_TOKEN no configurada en el servidor (es None).")
+        return api_error("Error de configuración de seguridad: SYNC_TOKEN es None", status_code=500)
+
+    if token_recibido != token_esperado:
+        logger.warning(f"⚠️ Intento de cierre automático de jornada no autorizado. Token recibido: {_mask_token(token_recibido)}")
+        return api_error("No autorizado. Token inválido.", status_code=403)
+
+    try:
+        resultado = EnsambleService.cerrar_jornada_automatica(fecha_str=request.args.get('fecha'))
+        return api_success(data=resultado, message="Cierre automático ejecutado.")
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"❌ Error en cierre automático de jornada: {e}")
         return api_error(str(e), status_code=500)
 
 
