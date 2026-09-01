@@ -1738,9 +1738,27 @@ window.ModuloDashboard = (function () {
         return `hsl(${Math.round((idx * 137.508) % 360)}, 62%, 55%)`;
     }
 
-    // Tope de referencias con color propio; el resto se agrupa en "Otras
-    // referencias" para que la leyenda siga siendo legible.
-    const MAX_REFS_MIX = 12;
+    // Tope de referencias con color propio cuando el rango filtrado es largo
+    // (ej. un mes); el resto se agrupa en "Otras referencias" para que la
+    // leyenda siga siendo legible. Pedido del usuario 2026-09-01: en rangos
+    // cortos (día/semana) las jefas quieren ver TODAS las referencias sin
+    // agrupar, porque ahí sí son pocas.
+    const MAX_REFS_MIX_LARGO = 12;
+    const RANGO_CORTO_DIAS = 7;
+
+    // Sin límite en rangos cortos (Infinity -> slice(0, Infinity) trae todo
+    // y slice(Infinity) para "el resto" queda vacío); con límite en rangos
+    // largos, mismo criterio de antes. Si no hay filtro de fecha activo se
+    // asume rango largo (conservador, evita una leyenda gigante por defecto).
+    function limiteReferenciasMix() {
+        const desde = document.getElementById('db-fecha-desde')?.value;
+        const hasta = document.getElementById('db-fecha-hasta')?.value;
+        if (!desde || !hasta) return MAX_REFS_MIX_LARGO;
+        const dDesde = new Date(`${desde}T00:00:00`);
+        const dHasta = new Date(`${hasta}T00:00:00`);
+        const dias = Math.round((dHasta - dDesde) / 86400000) + 1;
+        return (dias > 0 && dias <= RANGO_CORTO_DIAS) ? Infinity : MAX_REFS_MIX_LARGO;
+    }
 
     /**
      * Mismo ranking volumétrico que renderChartPulidoRanking (operaria vs piezas),
@@ -1788,8 +1806,9 @@ window.ModuloDashboard = (function () {
             });
         });
         const refsOrdenadas = Object.keys(totalPorRef).sort((a, b) => totalPorRef[b] - totalPorRef[a]);
-        const refsTop = refsOrdenadas.slice(0, MAX_REFS_MIX);
-        const refsResto = refsOrdenadas.slice(MAX_REFS_MIX);
+        const limiteRefs = limiteReferenciasMix();
+        const refsTop = refsOrdenadas.slice(0, limiteRefs);
+        const refsResto = refsOrdenadas.slice(limiteRefs);
 
         // Total por operaria SEGÚN el mismo desglose: la base del % debe ser lo
         // que realmente se está pintando, no 'buenas', para que los tramos
