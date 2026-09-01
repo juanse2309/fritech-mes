@@ -150,8 +150,8 @@ def marcar_registros_procesados(division: str, p_inicio, p_fin) -> int:
         SET estado_pago = 'PROCESADO'
         FROM db_usuarios u
         WHERE {join}
-          AND a.fecha >= :p_inicio
-          AND a.fecha <= :p_fin
+          AND CAST(a.fecha AS DATE) >= :p_inicio
+          AND CAST(a.fecha AS DATE) <= :p_fin
           AND COALESCE(a.estado_pago, 'PENDIENTE') != 'PROCESADO'
           {cond}
     """)

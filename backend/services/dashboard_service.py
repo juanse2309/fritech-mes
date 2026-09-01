@@ -338,8 +338,8 @@ class DashboardService:
             filt_iny = ""
             filt_pul = ""
             if desde and hasta:
-                filt_iny = " AND i.fecha_inicia BETWEEN :desde AND :hasta"
-                filt_pul = " AND d.fecha BETWEEN :desde AND :hasta"
+                filt_iny = " AND CAST(i.fecha_inicia AS DATE) BETWEEN :desde AND :hasta"
+                filt_pul = " AND CAST(d.fecha AS DATE) BETWEEN :desde AND :hasta"
                 params["desde"] = desde
                 params["hasta"] = hasta
 
@@ -578,7 +578,7 @@ class DashboardService:
             filt = ""
             params = {'responsable': str(responsable).strip().upper()}
             if desde and hasta:
-                filt = " AND i.fecha_inicia BETWEEN :desde AND :hasta"
+                filt = " AND CAST(i.fecha_inicia AS DATE) BETWEEN :desde AND :hasta"
                 params['desde'] = desde
                 params['hasta'] = hasta
 
@@ -637,7 +637,7 @@ class DashboardService:
             filt = " AND p.estado IN ('FINALIZADO', 'APROBADO') AND p.cantidad_real > 0 AND p.tiempo_total_minutos > 0"
             params = {}
             if desde and hasta:
-                filt += " AND p.fecha BETWEEN :desde AND :hasta"
+                filt += " AND CAST(p.fecha AS DATE) BETWEEN :desde AND :hasta"
                 params['desde'] = desde
                 params['hasta'] = hasta
 

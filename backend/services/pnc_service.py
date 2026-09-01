@@ -175,12 +175,12 @@ class PncService:
         try:
             start_date, end_date = cls._parse_fechas(fecha_inicio, fecha_fin)
             params = {'start': start_date, 'end': end_date}
-            filt_iny = " WHERE i.fecha_inicia BETWEEN :start AND :end" if start_date and end_date else " WHERE 1=1"
-            filt_pul = " WHERE d.fecha BETWEEN :start AND :end" if start_date and end_date else " WHERE 1=1"
-            filt_ens = " WHERE e.fecha BETWEEN :start AND :end" if start_date and end_date else " WHERE 1=1"
-            filt_gen_iny = " WHERE fecha_inicia BETWEEN :start AND :end" if start_date and end_date else " WHERE 1=1"
-            filt_gen_pul = " WHERE fecha BETWEEN :start AND :end" if start_date and end_date else " WHERE 1=1"
-            filt_gen_ens = " WHERE fecha BETWEEN :start AND :end" if start_date and end_date else " WHERE 1=1"
+            filt_iny = " WHERE CAST(i.fecha_inicia AS DATE) BETWEEN :start AND :end" if start_date and end_date else " WHERE 1=1"
+            filt_pul = " WHERE CAST(d.fecha AS DATE) BETWEEN :start AND :end" if start_date and end_date else " WHERE 1=1"
+            filt_ens = " WHERE CAST(e.fecha AS DATE) BETWEEN :start AND :end" if start_date and end_date else " WHERE 1=1"
+            filt_gen_iny = " WHERE CAST(fecha_inicia AS DATE) BETWEEN :start AND :end" if start_date and end_date else " WHERE 1=1"
+            filt_gen_pul = " WHERE CAST(fecha AS DATE) BETWEEN :start AND :end" if start_date and end_date else " WHERE 1=1"
+            filt_gen_ens = " WHERE CAST(fecha AS DATE) BETWEEN :start AND :end" if start_date and end_date else " WHERE 1=1"
 
             # 1. Producción buena por área (base para FPY / % PNC)
             buenas_iny = cls._sum_buenas('db_inyeccion', 'cantidad_real', filt_gen_iny, params)

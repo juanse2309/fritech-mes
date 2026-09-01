@@ -51,8 +51,13 @@ class DashboardRepository:
         """
         try:
             params = {'desde': desde, 'hasta': hasta}
-            filt_iny = " WHERE fecha_inicia BETWEEN :desde AND :hasta" if desde and hasta else " WHERE 1=1"
-            filt_gen = " WHERE fecha BETWEEN :desde AND :hasta" if desde and hasta else " WHERE 1=1"
+            # CAST(... AS DATE): fecha/fecha_inicia son TIMESTAMP, no DATE. Un BETWEEN
+            # directo contra un string 'YYYY-MM-DD' interpreta :hasta como medianoche
+            # (00:00:00) y descarta CASI TODOS los registros reales de ese día (guardados
+            # con hora de turno, ej. 06:40) -- confirmado en producción: filtrar un solo
+            # día de Inyección devolvía 0 piezas aunque sí había producción esa fecha.
+            filt_iny = " WHERE CAST(fecha_inicia AS DATE) BETWEEN :desde AND :hasta" if desde and hasta else " WHERE 1=1"
+            filt_gen = " WHERE CAST(fecha AS DATE) BETWEEN :desde AND :hasta" if desde and hasta else " WHERE 1=1"
 
             # Las columnas de db_mezcla/db_ventas ya son NUMERIC nativo en Postgres:
             # el cast previo pasaba por texto+regex y arrastraba dos bugs con
@@ -66,8 +71,8 @@ class DashboardRepository:
                 return f"COALESCE({col}, 0)"
 
             # Filtros específicos con prefijos
-            filt_iny_pnc = " WHERE i.fecha_inicia BETWEEN :desde AND :hasta" if desde and hasta else " WHERE 1=1"
-            filt_pul_pnc = " WHERE d.fecha BETWEEN :desde AND :hasta" if desde and hasta else " WHERE 1=1"
+            filt_iny_pnc = " WHERE CAST(i.fecha_inicia AS DATE) BETWEEN :desde AND :hasta" if desde and hasta else " WHERE 1=1"
+            filt_pul_pnc = " WHERE CAST(d.fecha AS DATE) BETWEEN :desde AND :hasta" if desde and hasta else " WHERE 1=1"
 
             # --- KPIs consolidados en UN solo round-trip ---
             # Antes: 9 db.session.execute() secuenciales (iny/pul/ens OK+PNC, ventas,
@@ -179,7 +184,7 @@ class DashboardRepository:
             """
             params = {'lim': limit}
             if desde and hasta:
-                sql += ' AND i.fecha_inicia BETWEEN :desde AND :hasta'
+                sql += ' AND CAST(i.fecha_inicia AS DATE) BETWEEN :desde AND :hasta'
                 params['desde'] = desde
                 params['hasta'] = hasta
             sql += ' GROUP BY i.responsable ORDER BY total DESC LIMIT :lim'
@@ -198,7 +203,7 @@ class DashboardRepository:
             sql = f"SELECT maquina, SUM(COALESCE(cantidad_real, 0)) as total FROM db_inyeccion WHERE 1=1"
             params = {}
             if desde and hasta:
-                sql += ' AND fecha_inicia BETWEEN :desde AND :hasta'
+                sql += ' AND CAST(fecha_inicia AS DATE) BETWEEN :desde AND :hasta'
                 params['desde'] = desde
                 params['hasta'] = hasta
             sql += ' GROUP BY maquina ORDER BY total DESC'
@@ -218,7 +223,7 @@ class DashboardRepository:
             params = {'lim': limit}
             filt = ""
             if desde and hasta:
-                filt = " AND p.fecha BETWEEN :desde AND :hasta"
+                filt = " AND CAST(p.fecha AS DATE) BETWEEN :desde AND :hasta"
                 params['desde'] = desde
                 params['hasta'] = hasta
 
@@ -272,8 +277,8 @@ class DashboardRepository:
             filt_iny = ""
             filt_pnc = ""
             if desde and hasta:
-                filt_iny = " AND fecha_inicia BETWEEN :desde AND :hasta"
-                filt_pnc = " AND i.fecha_inicia BETWEEN :desde AND :hasta"
+                filt_iny = " AND CAST(fecha_inicia AS DATE) BETWEEN :desde AND :hasta"
+                filt_pnc = " AND CAST(i.fecha_inicia AS DATE) BETWEEN :desde AND :hasta"
                 params['desde'] = desde
                 params['hasta'] = hasta
 
@@ -359,16 +364,16 @@ class DashboardRepository:
             }
 
             params = {'desde': desde, 'hasta': hasta}
-            filt_iny = " WHERE i.fecha_inicia BETWEEN :desde AND :hasta" if desde and hasta else " WHERE 1=1"
-            filt_pul = " WHERE d.fecha BETWEEN :desde AND :hasta" if desde and hasta else " WHERE 1=1"
-            filt_ens = " WHERE e.fecha BETWEEN :desde AND :hasta" if desde and hasta else " WHERE 1=1"
+            filt_iny = " WHERE CAST(i.fecha_inicia AS DATE) BETWEEN :desde AND :hasta" if desde and hasta else " WHERE 1=1"
+            filt_pul = " WHERE CAST(d.fecha AS DATE) BETWEEN :desde AND :hasta" if desde and hasta else " WHERE 1=1"
+            filt_ens = " WHERE CAST(e.fecha AS DATE) BETWEEN :desde AND :hasta" if desde and hasta else " WHERE 1=1"
             # Filtro empujado DENTRO de las CTEs de representante (abajo): sin esto,
             # el DISTINCT ON + ORDER BY escanea y ordena la tabla db_inyeccion/db_pulido
             # COMPLETA incluso cuando el usuario pide un solo día, y el filtro de fecha
             # (filt_iny/filt_pul de arriba) recién se aplica DESPUÉS, sobre el resultado
             # ya materializado. Al acotar aquí, Postgres solo ordena las filas del rango.
-            filt_iny_cte = " AND fecha_inicia BETWEEN :desde AND :hasta" if desde and hasta else ""
-            filt_pul_cte = " AND fecha BETWEEN :desde AND :hasta" if desde and hasta else ""
+            filt_iny_cte = " AND CAST(fecha_inicia AS DATE) BETWEEN :desde AND :hasta" if desde and hasta else ""
+            filt_pul_cte = " AND CAST(fecha AS DATE) BETWEEN :desde AND :hasta" if desde and hasta else ""
 
             def _user_cast(col):
                 # costo_total ya es NUMERIC nativo: COALESCE directo, sin el
@@ -566,7 +571,7 @@ class DashboardRepository:
                     # tacometro/rendimiento mensual y el total de Backorder que nunca
                     # podia reconciliar (confirmado: brecha de ~$127M en produccion).
                     filt = (
-                        " WHERE ((fecha BETWEEN :start AND :end) OR (fecha BETWEEN :start_prev AND :end_prev))"
+                        " WHERE ((CAST(fecha AS DATE) BETWEEN :start AND :end) OR (CAST(fecha AS DATE) BETWEEN :start_prev AND :end_prev))"
                         " AND UPPER(TRIM(nombres)) NOT ILIKE '%FRIPARTS%'"
                     )
                     params = {
@@ -698,7 +703,7 @@ class DashboardRepository:
     def _get_admin_dashboard_metrics_sql_impl(cls, start_date=None, end_date=None):
         """Encapsula todas las métricas de Jefatura (SQL-Native) coincidiendo con frontend."""
         params = {'start': start_date, 'end': end_date}
-        filt = " WHERE fecha BETWEEN :start AND :end" if start_date and end_date else " WHERE 1=1"
+        filt = " WHERE CAST(fecha AS DATE) BETWEEN :start AND :end" if start_date and end_date else " WHERE 1=1"
         con_filtro_fecha = bool(start_date and end_date)
 
         def _sql_cast_num(col):
@@ -840,7 +845,7 @@ class DashboardRepository:
                         FROM db_ventas b
                         LEFT JOIN db_cliente_equivalencias e
                             ON UPPER(TRIM(b.nombres)) = UPPER(TRIM(e.alias))
-                        {filt.replace('WHERE fecha', 'WHERE b.fecha')}
+                        {filt.replace('CAST(fecha AS DATE)', 'CAST(b.fecha AS DATE)')}
                         AND UPPER(TRIM(b.nombres)) NOT ILIKE '%FRIPARTS%'
                         GROUP BY 1, b.productos
                     )
@@ -986,8 +991,8 @@ class DashboardRepository:
         """Retorna tendencia diaria de producción (Inyección y Pulido)."""
         try:
             params = {'desde': desde, 'hasta': hasta}
-            filt_iny = " WHERE fecha_inicia BETWEEN :desde AND :hasta" if desde and hasta else " WHERE 1=1"
-            filt_pul = " WHERE fecha BETWEEN :desde AND :hasta" if desde and hasta else " WHERE 1=1"
+            filt_iny = " WHERE CAST(fecha_inicia AS DATE) BETWEEN :desde AND :hasta" if desde and hasta else " WHERE 1=1"
+            filt_pul = " WHERE CAST(fecha AS DATE) BETWEEN :desde AND :hasta" if desde and hasta else " WHERE 1=1"
 
             sql = f"""
                 WITH iny AS (

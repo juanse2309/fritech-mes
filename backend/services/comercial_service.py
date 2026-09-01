@@ -166,7 +166,7 @@ class ComercialHistoricoService:
                 COUNT(v.id)::INTEGER AS total_transacciones
             FROM db_ventas v
             WHERE v.fecha >= MAKE_DATE(:start_year, 1, 1)
-              AND v.fecha <= MAKE_DATE(:end_year, 12, 31)
+              AND CAST(v.fecha AS DATE) <= MAKE_DATE(:end_year, 12, 31)
               AND {FILTRO_SCOPE_ROL}
               AND {FILTRO_VENDEDOR_OPCIONAL}
               AND {FILTRO_SOLO_VENTA}
@@ -181,7 +181,7 @@ class ComercialHistoricoService:
                 ROUND(SUM({cantidad_expr})::NUMERIC, 2) AS total_unidades
             FROM db_ventas v
             WHERE v.fecha >= MAKE_DATE(:start_year, 1, 1)
-              AND v.fecha <= MAKE_DATE(:end_year, 12, 31)
+              AND CAST(v.fecha AS DATE) <= MAKE_DATE(:end_year, 12, 31)
               AND {FILTRO_SCOPE_ROL}
               AND {FILTRO_VENDEDOR_OPCIONAL}
               AND {FILTRO_SOLO_VENTA}
@@ -196,7 +196,7 @@ class ComercialHistoricoService:
                 ROUND(SUM({cantidad_expr})::NUMERIC, 2) AS total_unidades
             FROM db_ventas v
             WHERE v.fecha >= MAKE_DATE(:start_year, 1, 1)
-              AND v.fecha <= MAKE_DATE(:end_year, 12, 31)
+              AND CAST(v.fecha AS DATE) <= MAKE_DATE(:end_year, 12, 31)
               AND {FILTRO_SCOPE_ROL}
               AND {FILTRO_VENDEDOR_OPCIONAL}
               AND {FILTRO_SOLO_VENTA}
@@ -261,7 +261,7 @@ class ComercialHistoricoService:
                     COUNT(v.id)::INTEGER AS total_transacciones
                 FROM db_ventas v
                 WHERE v.fecha >= MAKE_DATE(:start_year, 1, 1)
-                  AND v.fecha <= MAKE_DATE(:end_year, 12, 31)
+                  AND CAST(v.fecha AS DATE) <= MAKE_DATE(:end_year, 12, 31)
                   AND {FILTRO_SCOPE_ROL}
                   AND {FILTRO_VENDEDOR_OPCIONAL}
                   AND {FILTRO_SOLO_VENTA}

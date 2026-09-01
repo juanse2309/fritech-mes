@@ -214,7 +214,11 @@ def _construir_movimientos_historial(f_desde, f_hasta, tipo_filtro):
     # 3. ENSAMBLE
     if not tipo_filtro or tipo_filtro == 'ENSAMBLE':
         try:
-            res = Ensamble.query.filter(Ensamble.fecha.between(f_desde, f_hasta)).all()
+            # Ensamble.fecha es TIMESTAMP: .between(date, date) compara contra
+            # medianoche del :hasta y descarta los registros con hora real
+            # (mismo bug que el resto de filtros de fecha del dashboard) --
+            # se castea a DATE para comparar por día completo.
+            res = Ensamble.query.filter(db.func.cast(Ensamble.fecha, db.Date).between(f_desde, f_hasta)).all()
             for r in res:
                 movimientos.append({
                     'Fecha': getattr(r.fecha, 'strftime', lambda x: '')('%d/%m/%Y') if r.fecha else '',
@@ -269,7 +273,8 @@ def _construir_movimientos_historial(f_desde, f_hasta, tipo_filtro):
     # 5. VENTAS
     if not tipo_filtro or tipo_filtro in ['VENTA', 'VENTAS', 'FACTURACION']:
         try:
-            res = RawVentas.query.filter(RawVentas.fecha.between(f_desde, f_hasta)).all()
+            # RawVentas.fecha es TIMESTAMP -- mismo bug de CAST que Ensamble arriba.
+            res = RawVentas.query.filter(db.func.cast(RawVentas.fecha, db.Date).between(f_desde, f_hasta)).all()
             for r in res:
                 movimientos.append({
                     'Fecha': getattr(r.fecha, 'strftime', lambda x: '')('%d/%m/%Y') if r.fecha else '',

@@ -173,7 +173,7 @@ class VentasRepository:
                         cantidad,
                         total_ingresos
                     FROM db_ventas
-                    WHERE fecha >= :start_date AND fecha <= :end_date
+                    WHERE CAST(fecha AS DATE) >= :start_date AND CAST(fecha AS DATE) <= :end_date
                       AND (clasificacion ILIKE '%venta%' OR clasificacion IS NULL)
                 )
             """
@@ -294,7 +294,7 @@ class VentasRepository:
         else:
             params = {"cliente": f"%{cliente_nombre}%"}
         if start_date and end_date:
-            filt = "AND fecha BETWEEN :sd AND :ed"
+            filt = "AND CAST(fecha AS DATE) BETWEEN :sd AND :ed"
             params["sd"] = start_date
             params["ed"] = end_date
 

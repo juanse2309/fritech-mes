@@ -379,7 +379,7 @@ class PulidoService:
             params = {'lim': limit}
             filt = " AND p.estado IN ('FINALIZADO', 'APROBADO')"
             if desde and hasta:
-                filt += " AND p.fecha BETWEEN :desde AND :hasta"
+                filt += " AND CAST(p.fecha AS DATE) BETWEEN :desde AND :hasta"
                 params['desde'] = desde
                 params['hasta'] = hasta
 
@@ -542,7 +542,7 @@ class PulidoService:
             params = {}
             filt = " AND p.estado IN ('FINALIZADO', 'APROBADO')"
             if desde and hasta:
-                filt += " AND p.fecha BETWEEN :desde AND :hasta"
+                filt += " AND CAST(p.fecha AS DATE) BETWEEN :desde AND :hasta"
                 params['desde'] = desde
                 params['hasta'] = hasta
 
