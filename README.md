@@ -1,8 +1,16 @@
-# 🏭 FriTech MES - Sistema de Gestión de Producción e Inventario ![v1.7.0](https://img.shields.io/badge/versión-1.7.0--estable-green)
+# 🏭 FriTech MES - Sistema de Gestión de Producción e Inventario ![v1.8.43](https://img.shields.io/badge/versión-1.8.43--estable-green)
 
 FriTech MES (Manufacturing Execution System) es una plataforma full-stack diseñada específicamente para el control y automatización de procesos de producción, gestión de inventarios y sincronización con el ERP World Office de la planta de fabricación de bujes de FriParts.
 
 El sistema utiliza una **arquitectura 100% SQL-First**, empleando **PostgreSQL** en la nube como base de datos transaccional única. La dependencia histórica de Google Sheets ha sido completamente removida, conservando únicamente la API de Google Drive de manera opcional para el almacenamiento de reportes PDF generados.
+
+## ✨ Novedades Versión 1.8.43 (Estable)
+- **Lanzamiento 2026-08-31**: numeración automática de OP (INY/ENS/EMP) con bloque dedicado, nuevo módulo de **Empaque** (descuenta componentes vía BOM con prelación P. TERMINADO → POR PULIR y acredita el muñeco armado) y **Panel de Supervisión** de Pulido para Administración con tarjetas en vivo por operaria.
+- **Pulido — confiabilidad de pausar/reanudar**: las llamadas a pausar/reanudar ciclo ahora reintentan (3 intentos con backoff) y, si aun así fallan, resincronizan contra el estado real del servidor antes de mostrar error -- eliminó falsos "No se pudo reanudar" cuando la petición sí había llegado.
+- **Pulido — cola de autorización**: un reporte bloqueado por fecha/OP ya no se pierde si no hay un ADMIN físicamente presente -- queda pendiente y cualquier Administración puede autorizarlo o rechazarlo de forma remota desde el Panel de Supervisión.
+- **Pulido — Panel de Supervisión**: rediseño visual con imagen real del producto por tarjeta, indicador automático de "Break" durante las ventanas de desayuno/almuerzo (solo visual, no toca el descuento real de tiempos), y "Corregir" ahora edita Referencia/OP/Lote (mientras la sesión sigue activa) en vez de las cantidades ya reportadas.
+- **Pulido — corrección de datos**: la cantidad de "Bujes Revueltos" no recalculaba el total producido bruto, generando un falso "Error de Consistencia" que bloqueaba reportes reales en planta.
+- **Gestión de Pedidos — Ver Empacado**: vista rápida y desplegable (colapsada por pedido) de cuánto lleva empacado/alistado cada pedido pendiente, referencia por referencia, sin tener que entrar uno por uno.
 
 ## ✨ Novedades Versión 1.7.0 (Estable)
 - **Nuevo módulo — Cartera**: saldos, edades de cartera (30-60-90) y detalle de factura por cliente sincronizados desde World Office, con búsqueda por número de documento sin prefijo.

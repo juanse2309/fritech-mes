@@ -1582,6 +1582,21 @@ const AlmacenModule = {
     },
 
     /**
+     * Colapsa/expande el detalle de un pedido dentro del modal "Ver
+     * Empacado" (plan 2026-09-01, 2da correccion): todos los pedidos
+     * arrancan colapsados para que el scroll recorra solo encabezados y no
+     * el detalle completo de cada uno.
+     */
+    toggleDetalleEmpacado: function (idPedido) {
+        const detalle = document.getElementById(`empacado-detalle-${idPedido}`);
+        const chevron = document.getElementById(`empacado-chevron-${idPedido}`);
+        if (!detalle) return;
+        const abierto = detalle.style.display !== 'none';
+        detalle.style.display = abierto ? 'none' : 'block';
+        if (chevron) chevron.style.transform = abierto ? 'rotate(0deg)' : 'rotate(90deg)';
+    },
+
+    /**
      * Vista rápida de lo ya empacado/alistado (pedido de almacén 2026-09-02,
      * corregido el mismo día): NO tiene nada que ver con el módulo de
      * producción de Empaque -- usa el mismo dato que ya se ve dentro del
@@ -1590,7 +1605,8 @@ const AlmacenModule = {
      * pedidos pendientes a la vez, para no tener que entrar pedido por
      * pedido a revisarlo. Reutiliza this.pedidosVisibles (ya calculado por
      * renderizarTarjetas con el mismo filtro de "no completados" que se ve
-     * en pantalla) -- no pega a ningún endpoint nuevo.
+     * en pantalla) -- no pega a ningún endpoint nuevo. Cada pedido arranca
+     * colapsado (ver toggleDetalleEmpacado) para minimizar el scroll.
      */
     abrirModalEmpacado: async function () {
         const modal = document.getElementById('modalEmpacadoAlmacen');
@@ -1640,24 +1656,32 @@ const AlmacenModule = {
                         </tr>`;
                 }).join('');
 
+                const bodyId = `empacado-detalle-${pedido.id_pedido}`;
+                const chevronId = `empacado-chevron-${pedido.id_pedido}`;
                 return `
-                    <div class="mb-3 border rounded-3 overflow-hidden">
-                        <div class="d-flex justify-content-between align-items-center px-3 py-2" style="background:#f8fafc;">
-                            <span class="fw-bold small"><i class="fas fa-hashtag me-1 text-muted"></i>${pedido.id_pedido} <span class="text-muted fw-normal">- ${pedido.cliente}</span></span>
+                    <div class="mb-2 border rounded-3 overflow-hidden">
+                        <div class="d-flex justify-content-between align-items-center px-3 py-2" style="background:#f8fafc; cursor: pointer;"
+                             onclick="AlmacenModule.toggleDetalleEmpacado('${pedido.id_pedido}')">
+                            <span class="fw-bold small">
+                                <i class="fas fa-chevron-right me-2 text-muted" id="${chevronId}" style="transition: transform 0.15s; font-size: 0.7rem;"></i>
+                                <i class="fas fa-hashtag me-1 text-muted"></i>${pedido.id_pedido} <span class="text-muted fw-normal">- ${pedido.cliente}</span>
+                            </span>
                             <span class="badge bg-primary">${parseInt(pedido.progreso) || 0}%</span>
                         </div>
-                        <table class="table table-compact table-sm table-hover align-middle mb-0" style="table-layout: fixed; width: 100%;">
-                            <colgroup>
-                                <col style="width: 52%;">
-                                <col style="width: 16%;">
-                                <col style="width: 16%;">
-                                <col style="width: 16%;">
-                            </colgroup>
-                            <thead class="table-light">
-                                <tr><th class="small">Referencia</th><th class="small text-center">Sol.</th><th class="small text-center">${etiqueta}</th><th class="small text-center">%</th></tr>
-                            </thead>
-                            <tbody>${filas}</tbody>
-                        </table>
+                        <div id="${bodyId}" style="display: none;">
+                            <table class="table table-compact table-sm table-hover align-middle mb-0" style="table-layout: fixed; width: 100%;">
+                                <colgroup>
+                                    <col style="width: 52%;">
+                                    <col style="width: 16%;">
+                                    <col style="width: 16%;">
+                                    <col style="width: 16%;">
+                                </colgroup>
+                                <thead class="table-light">
+                                    <tr><th class="small">Referencia</th><th class="small text-center">Sol.</th><th class="small text-center">${etiqueta}</th><th class="small text-center">%</th></tr>
+                                </thead>
+                                <tbody>${filas}</tbody>
+                            </table>
+                        </div>
                     </div>`;
             }).join('');
 
