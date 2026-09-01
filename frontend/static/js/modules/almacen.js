@@ -1582,13 +1582,15 @@ const AlmacenModule = {
     },
 
     /**
-     * Vista rápida de lo empacado hoy (plan 2026-09-02, pedido de almacén):
-     * reutiliza el mismo endpoint que ya usa el módulo de Empaque
-     * (GET /api/empaque/reportes, por defecto solo hoy) -- aquí solo se le
-     * da una puerta de entrada desde Gestión de Pedidos, sin tener que
-     * entrar al módulo de Empaque. El resumen agrupado por referencia es
-     * lo principal (lo que de verdad piden ver "de un vistazo"); el detalle
-     * cronológico completo queda debajo por si hace falta.
+     * Vista rápida de lo ya empacado/alistado (pedido de almacén 2026-09-02,
+     * corregido el mismo día): NO tiene nada que ver con el módulo de
+     * producción de Empaque -- usa el mismo dato que ya se ve dentro del
+     * checklist de cada pedido (pedido.productos[].cant_lista, la cantidad
+     * que ya se marcó como "Empacado"/"Alistado" ahí), pero de TODOS los
+     * pedidos pendientes a la vez, para no tener que entrar pedido por
+     * pedido a revisarlo. Reutiliza this.pedidosVisibles (ya calculado por
+     * renderizarTarjetas con el mismo filtro de "no completados" que se ve
+     * en pantalla) -- no pega a ningún endpoint nuevo.
      */
     abrirModalEmpacado: async function () {
         const modal = document.getElementById('modalEmpacadoAlmacen');
@@ -1599,59 +1601,70 @@ const AlmacenModule = {
         body.innerHTML = '<div class="text-center py-4 text-muted"><i class="fas fa-spinner fa-spin fa-2x"></i></div>';
 
         try {
-            const res = await fetch('/api/empaque/reportes');
-            const data = await res.json();
-            const filas = data?.data || [];
+            await this.cargarPedidos(false);
 
-            if (!filas.length) {
+            const isMetals = (window.AppState?.user?.division === 'FRIMETALS');
+            const etiqueta = isMetals ? 'Alistado' : 'Empacado';
+            const pedidos = (this.pedidosVisibles && this.pedidosVisibles.length)
+                ? this.pedidosVisibles
+                : (this.pedidosPendientes || []);
+
+            if (!pedidos.length) {
                 body.innerHTML = `
                     <div class="text-center py-4 text-muted">
                         <i class="fas fa-box-open fa-2x mb-2" style="opacity:0.3;"></i>
-                        <p class="mb-0">Nada empacado todavía hoy.</p>
+                        <p class="mb-0">No hay pedidos pendientes.</p>
                     </div>`;
                 return;
             }
 
-            const porReferencia = {};
-            filas.forEach(r => {
-                const cod = r.id_codigo || 'Sin referencia';
-                if (!porReferencia[cod]) porReferencia[cod] = { total: 0, reportes: 0 };
-                porReferencia[cod].total += Number(r.cantidad) || 0;
-                porReferencia[cod].reportes += 1;
-            });
-            const resumen = Object.entries(porReferencia).sort((a, b) => b[1].total - a[1].total);
+            const bloques = pedidos.map(pedido => {
+                const productos = pedido.productos || [];
+                if (!productos.length) return '';
 
-            body.innerHTML = `
-                <table class="table table-sm table-hover align-middle mb-4">
-                    <thead class="table-light">
-                        <tr><th>Referencia</th><th class="text-center">Total Empacado</th><th class="text-center">Reportes</th></tr>
-                    </thead>
-                    <tbody>
-                        ${resumen.map(([cod, d]) => `
-                            <tr>
-                                <td class="fw-bold">${cod}</td>
-                                <td class="text-center"><span class="badge bg-success fs-6">${d.total}</span></td>
-                                <td class="text-center text-muted">${d.reportes}</td>
-                            </tr>`).join('')}
-                    </tbody>
-                </table>
-                <h6 class="text-muted small text-uppercase mb-2">Detalle de reportes</h6>
-                <div class="table-responsive">
-                    <table class="table table-sm table-hover align-middle mb-0">
-                        <thead class="table-light">
-                            <tr><th class="small">Hora</th><th class="small">Referencia</th><th class="small text-center">Cant.</th><th class="small">OP</th><th class="small">Responsable</th></tr>
-                        </thead>
-                        <tbody>
-                            ${filas.map(r => `
-                                <tr>
-                                    <td class="small text-muted">${(r.fecha_registro || '').slice(11)}</td>
-                                    <td class="small fw-bold">${r.id_codigo}</td>
-                                    <td class="small text-center"><span class="badge bg-primary">${r.cantidad}</span></td>
-                                    <td class="small"><code>${r.op_numero || '-'}</code></td>
-                                    <td class="small text-muted">${r.responsable || '-'}</td>
-                                </tr>`).join('')}
-                        </tbody>
-                    </table>
+                const filas = productos.map(p => {
+                    const solicitado = parseInt(p.cantidad) || 0;
+                    const empacado = parseInt(p.cant_lista) || 0;
+                    const pct = solicitado > 0 ? Math.min(100, Math.round((empacado / solicitado) * 100)) : 0;
+                    const completo = p.no_disponible || empacado >= solicitado;
+                    const desc = (p.descripcion || '').slice(0, 32);
+                    return `
+                        <tr>
+                            <td class="small" style="overflow: hidden;">
+                                <span class="fw-bold d-block text-truncate">${p.codigo}</span>
+                                <span class="text-muted text-truncate d-block" style="font-size: 0.68rem;">${desc}</span>
+                            </td>
+                            <td class="small text-center text-muted">${solicitado}</td>
+                            <td class="small text-center"><span class="badge ${completo ? 'bg-success' : 'bg-secondary'}">${p.no_disponible ? 'N/D' : empacado}</span></td>
+                            <td class="small text-center text-muted">${p.no_disponible ? '-' : pct + '%'}</td>
+                        </tr>`;
+                }).join('');
+
+                return `
+                    <div class="mb-3 border rounded-3 overflow-hidden">
+                        <div class="d-flex justify-content-between align-items-center px-3 py-2" style="background:#f8fafc;">
+                            <span class="fw-bold small"><i class="fas fa-hashtag me-1 text-muted"></i>${pedido.id_pedido} <span class="text-muted fw-normal">- ${pedido.cliente}</span></span>
+                            <span class="badge bg-primary">${parseInt(pedido.progreso) || 0}%</span>
+                        </div>
+                        <table class="table table-compact table-sm table-hover align-middle mb-0" style="table-layout: fixed; width: 100%;">
+                            <colgroup>
+                                <col style="width: 52%;">
+                                <col style="width: 16%;">
+                                <col style="width: 16%;">
+                                <col style="width: 16%;">
+                            </colgroup>
+                            <thead class="table-light">
+                                <tr><th class="small">Referencia</th><th class="small text-center">Sol.</th><th class="small text-center">${etiqueta}</th><th class="small text-center">%</th></tr>
+                            </thead>
+                            <tbody>${filas}</tbody>
+                        </table>
+                    </div>`;
+            }).join('');
+
+            body.innerHTML = bloques || `
+                <div class="text-center py-4 text-muted">
+                    <i class="fas fa-box-open fa-2x mb-2" style="opacity:0.3;"></i>
+                    <p class="mb-0">No hay pedidos pendientes.</p>
                 </div>`;
         } catch (e) {
             console.error('[Almacen] Error cargando empacado:', e);
