@@ -1828,22 +1828,26 @@ const ModuloPulido = {
                                 <button class="btn btn-sm btn-outline-primary flex-fill" onclick="ModuloPulido._toggleEdicionSupervision('${s.id_pulido}')"><i class="fas fa-pen me-1"></i>Corregir</button>
                             </div>
                             <div id="edit-sup-${s.id_pulido}" style="display:none;" class="border-top pt-2 mt-1">
+                                <!-- Corregir aquí es para mientras SIGUE trabajando (Referencia/OP/Lote
+                                     mal digitados al iniciar) -- las buenas y el PNC todavía no existen
+                                     en este punto (se reportan al Terminar, y la tarjeta desaparece del
+                                     panel apenas eso pasa, porque ya no está TRABAJANDO/PAUSADA). -->
                                 <div class="row g-2">
+                                    <div class="col-12">
+                                        <label class="small fw-bold mb-0">Referencia</label>
+                                        <input type="text" class="form-control form-control-sm" id="edit-codigo-${s.id_pulido}" value="${s.codigo || ''}">
+                                    </div>
                                     <div class="col-6">
-                                        <label class="small fw-bold mb-0">Buenas</label>
-                                        <input type="number" class="form-control form-control-sm" id="edit-cant-${s.id_pulido}" value="${s.cantidad_real}">
+                                        <label class="small fw-bold mb-0">OP</label>
+                                        <input type="text" class="form-control form-control-sm" id="edit-op-${s.id_pulido}" value="${s.orden_produccion || ''}">
                                     </div>
-                                    <div class="col-3">
-                                        <label class="small fw-bold mb-0">PNC Iny</label>
-                                        <input type="number" class="form-control form-control-sm" id="edit-pnciny-${s.id_pulido}" value="${s.pnc_inyeccion}">
-                                    </div>
-                                    <div class="col-3">
-                                        <label class="small fw-bold mb-0">PNC Pul</label>
-                                        <input type="number" class="form-control form-control-sm" id="edit-pncpul-${s.id_pulido}" value="${s.pnc_pulido}">
+                                    <div class="col-6">
+                                        <label class="small fw-bold mb-0">Lote</label>
+                                        <input type="text" class="form-control form-control-sm" id="edit-lote-${s.id_pulido}" value="${s.lote || ''}">
                                     </div>
                                 </div>
                                 <label class="small fw-bold mb-0 mt-2 d-block">Motivo (obligatorio, queda en Observaciones)</label>
-                                <textarea class="form-control form-control-sm" id="edit-motivo-${s.id_pulido}" rows="2" placeholder="Ej: la operaria digitó mal la cantidad"></textarea>
+                                <textarea class="form-control form-control-sm" id="edit-motivo-${s.id_pulido}" rows="2" placeholder="Ej: se le quedó pegada la OP de ayer"></textarea>
                                 <div class="d-flex gap-2 mt-2">
                                     <button class="btn btn-sm btn-success flex-fill" onclick="ModuloPulido._guardarEdicionSupervision('${s.id_pulido}')"><i class="fas fa-check me-1"></i>Guardar</button>
                                     <button class="btn btn-sm btn-secondary flex-fill" onclick="ModuloPulido._toggleEdicionSupervision('${s.id_pulido}')">Cancelar</button>
@@ -1928,27 +1932,36 @@ const ModuloPulido = {
             return;
         }
 
-        const cantidad_real = document.getElementById(`edit-cant-${idPulido}`)?.value;
-        const pnc_inyeccion = document.getElementById(`edit-pnciny-${idPulido}`)?.value;
-        const pnc_pulido = document.getElementById(`edit-pncpul-${idPulido}`)?.value;
+        // Mientras la sesión sigue TRABAJANDO/PAUSADA todavía no hay buenas
+        // ni PNC que corregir (eso se reporta al Terminar, y ahí la tarjeta
+        // desaparece del panel) -- lo que sí puede estar mal digitado al
+        // iniciar es la Referencia/OP/Lote, así que es lo único que se edita
+        // aquí. cantidad_real/pnc se mandan tal cual venían (normalmente 0).
+        const codigo_producto = document.getElementById(`edit-codigo-${idPulido}`)?.value.trim();
+        const orden_produccion = document.getElementById(`edit-op-${idPulido}`)?.value.trim();
+        const lote = document.getElementById(`edit-lote-${idPulido}`)?.value.trim();
+        if (!codigo_producto) {
+            Swal.fire('Falta la referencia', 'La referencia no puede quedar vacía.', 'warning');
+            return;
+        }
 
-        // Payload completo: se preservan todos los campos que la operaria ya
-        // tenía (código, OP, lote, fecha, estado) y solo se cambian los que
-        // el admin editó -- mandar el 'estado' explícito es obligatorio: si
-        // se omite, el backend por defecto lo pone en FINALIZADO (ver
-        // _ejecutar_persistencia_pulido), lo que cerraría de golpe una
-        // sesión que sigue TRABAJANDO/PAUSADA sin que nadie lo pidiera.
+        // Payload completo: se preservan fecha/estado/cantidad_real/PNC tal
+        // cual estaban, y solo se cambian Referencia/OP/Lote -- mandar el
+        // 'estado' explícito es obligatorio: si se omite, el backend por
+        // defecto lo pone en FINALIZADO (ver _ejecutar_persistencia_pulido),
+        // lo que cerraría de golpe una sesión que sigue TRABAJANDO/PAUSADA
+        // sin que nadie lo pidiera.
         const nuevaObs = `${s.observaciones || ''}\n[CORRECCIÓN ADMIN ${new Date().toLocaleString('es-CO')}]: ${motivo}`.trim();
         const payload = {
             id_pulido: s.id_pulido,
             fecha_inicio: s.fecha,
-            codigo_producto: s.codigo,
-            orden_produccion: s.orden_produccion,
-            lote: s.lote,
+            codigo_producto,
+            orden_produccion,
+            lote,
             estado: s.estado,
-            cantidad_real,
-            pnc_inyeccion,
-            pnc_pulido,
+            cantidad_real: s.cantidad_real,
+            pnc_inyeccion: s.pnc_inyeccion,
+            pnc_pulido: s.pnc_pulido,
             cantidad_recibida: s.cantidad_recibida,
             criterio_pnc_inyeccion: s.criterio_pnc_inyeccion,
             criterio_pnc_pulido: s.criterio_pnc_pulido,
@@ -2341,6 +2354,7 @@ const ModuloPulido = {
     eliminarFilaRevuelto: function(id) {
         this.revueltosRows = this.revueltosRows.filter(r => r.id !== id);
         this.renderFilasRevuelto();
+        this.actualizarCalculoPro();
     },
 
     renderFilasRevuelto: function() {
@@ -2376,6 +2390,13 @@ const ModuloPulido = {
             row.id_codigo = document.getElementById(`rev-cod-${id}`)?.value || '';
             row.cantidad = parseFloat(document.getElementById(`rev-cant-${id}`)?.value) || 0;
         }
+        // BUG real 2026-09-02 (reportado en planta): a diferencia del input de
+        // PNC (que sí llama actualizarCalculoPro() en su oninput), este nunca
+        // refrescaba el "TOTAL PRODUCIDO (BRUTO)" en pantalla -- se guardaba
+        // bien al final (guardarReportePro sí suma revueltos), pero el total
+        // mostrado se quedaba congelado sin el revuelto, disparando un falso
+        // "Error de Consistencia" (ej. 200 real vs 199 mostrado).
+        this.actualizarCalculoPro();
     },
 
     initRevueltosAutocomplete: function(rowId) {
