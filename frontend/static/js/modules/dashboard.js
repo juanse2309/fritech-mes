@@ -15,6 +15,8 @@ window.ModuloDashboard = (function () {
     let selectedOperators = []; // Para comparativa cara a cara
 
     let chartPulidoRankingInst = null;
+    let chartPulidoMixRefInst = null;
+    let cachePulidoProfundo = null; // Ultimo 'pulido_profundo' recibido (para re-render del mix sin refetch)
     let chartMensualInst = null;
     let chartRendimientoMensualNewInst = null;
     let inc_unidades_original = [];
@@ -503,6 +505,7 @@ window.ModuloDashboard = (function () {
                         // }
                     }
                     renderChartPulidoRanking(data.rankings?.pulido_profundo || {});
+                    renderChartPulidoMixReferencias(data.rankings?.pulido_profundo || {});
                     renderTablaPulido(data.rankings?.pulido_profundo || {}, data.rankings?.pulido_evolucion || {});
                 }
             } catch (errPulido) {
@@ -1717,6 +1720,177 @@ window.ModuloDashboard = (function () {
 
 
 
+
+    // Paleta ampliada SOLO para el mix por referencia: cada referencia debe ser
+    // distinguible dentro de una misma barra apilada, por eso son más tonos y más
+    // separados en matiz que la paleta de operarias.
+    const colorsRefs = [
+        '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
+        '#ec4899', '#0ea5e9', '#14b8a6', '#d946ef', '#f97316',
+        '#84cc16', '#6366f1', '#06b6d4', '#eab308', '#f43f5e',
+        '#22c55e', '#a855f7', '#fb7185', '#2dd4bf', '#c084fc'
+    ];
+
+    // Fuera de la paleta fija se generan tonos por ángulo áureo: nunca se repite
+    // un color entre dos referencias vecinas de la misma barra.
+    function colorParaReferencia(idx) {
+        if (idx < colorsRefs.length) return colorsRefs[idx];
+        return `hsl(${Math.round((idx * 137.508) % 360)}, 62%, 55%)`;
+    }
+
+    // Tope de referencias con color propio; el resto se agrupa en "Otras
+    // referencias" para que la leyenda siga siendo legible.
+    const MAX_REFS_MIX = 12;
+
+    /**
+     * Mismo ranking volumétrico que renderChartPulidoRanking (operaria vs piezas),
+     * pero la barra se parte en tramos: uno por referencia, de largo proporcional
+     * a las piezas pulidas de esa referencia y con color propio.
+     *
+     * Fuente: cacheAnalyticsPulido.operario_referencia (mismo cantidad_real que
+     * alimenta 'buenas'), así el largo total de la barra coincide con el ranking.
+     */
+    function renderChartPulidoMixReferencias(profundo) {
+        const ctx = document.getElementById('chartPulidoMixRef');
+        if (!ctx) return;
+
+        cachePulidoProfundo = profundo || cachePulidoProfundo || {};
+        profundo = cachePulidoProfundo;
+        limpiarErrorEnCanvas(ctx);
+        initToggleMixPulido();
+
+        const opRef = (cacheAnalyticsPulido && cacheAnalyticsPulido.operario_referencia) || {};
+        const enPorcentaje = document.getElementById('switch-pulido-mix-pct')?.checked === true;
+
+        // Mismo orden y mismo Top 10 que el ranking de piezas
+        const ops = Object.keys(profundo)
+            .map(k => ({ nombre: k, buenas: profundo[k].buenas || 0 }))
+            .sort((a, b) => b.buenas - a.buenas)
+            .slice(0, 10)
+            .filter(o => opRef[o.nombre]);
+
+        if (chartPulidoMixRefInst) chartPulidoMixRefInst.destroy();
+        chartPulidoMixRefInst = null;
+
+        if (ops.length === 0) {
+            mostrarErrorEnCanvas(ctx, 'No hay desglose por referencia de Pulido en este rango.');
+            return;
+        }
+
+        const labels = ops.map(o => o.nombre);
+
+        // Referencias ordenadas por volumen total entre las operarias visibles
+        const totalPorRef = {};
+        ops.forEach(o => {
+            const refs = opRef[o.nombre] || {};
+            Object.keys(refs).forEach(r => {
+                totalPorRef[r] = (totalPorRef[r] || 0) + (refs[r].cantidad_total || 0);
+            });
+        });
+        const refsOrdenadas = Object.keys(totalPorRef).sort((a, b) => totalPorRef[b] - totalPorRef[a]);
+        const refsTop = refsOrdenadas.slice(0, MAX_REFS_MIX);
+        const refsResto = refsOrdenadas.slice(MAX_REFS_MIX);
+
+        // Total por operaria SEGÚN el mismo desglose: la base del % debe ser lo
+        // que realmente se está pintando, no 'buenas', para que los tramos
+        // sumen exactamente 100% en el modo porcentual.
+        const totalPorOp = ops.map(o => {
+            const refs = opRef[o.nombre] || {};
+            return Object.keys(refs).reduce((acc, r) => acc + (refs[r].cantidad_total || 0), 0);
+        });
+
+        const valorDe = (nombreOp, idxOp, refsDeLaSerie) => {
+            const refs = opRef[nombreOp] || {};
+            const qty = refsDeLaSerie.reduce((acc, r) => acc + ((refs[r] || {}).cantidad_total || 0), 0);
+            if (!enPorcentaje) return qty;
+            const tot = totalPorOp[idxOp];
+            // Sin redondear: con 12 tramos, redondear cada uno a 1 decimal hace
+            // que la barra sume 100.2% y el ultimo tramo se recorte contra max:100.
+            return tot > 0 ? (qty / tot) * 100 : 0;
+        };
+
+        const datasets = refsTop.map((ref, i) => ({
+            label: ref,
+            data: ops.map((o, idxOp) => valorDe(o.nombre, idxOp, [ref])),
+            backgroundColor: colorParaReferencia(i),
+            borderWidth: 0,
+            borderRadius: 3,
+            barThickness: 22
+        }));
+
+        if (refsResto.length > 0) {
+            datasets.push({
+                label: `Otras referencias (${refsResto.length})`,
+                data: ops.map((o, idxOp) => valorDe(o.nombre, idxOp, refsResto)),
+                backgroundColor: 'rgba(148, 163, 184, 0.85)',
+                borderWidth: 0,
+                borderRadius: 3,
+                barThickness: 22
+            });
+        }
+
+        chartPulidoMixRefInst = new Chart(ctx, {
+            type: 'bar',
+            data: { labels: labels, datasets: datasets },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: { boxWidth: 10, boxHeight: 10, font: { size: 10 }, padding: 8, usePointStyle: true, pointStyle: 'rectRounded' }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: (c) => {
+                                const idxOp = c.dataIndex;
+                                const tot = totalPorOp[idxOp] || 0;
+                                if (enPorcentaje) {
+                                    const pct = c.raw || 0;
+                                    const pz = Math.round((pct / 100) * tot);
+                                    return ` ${c.dataset.label}: ${pct.toFixed(1)}% (${pz.toLocaleString()} pz)`;
+                                }
+                                const pz = c.raw || 0;
+                                const pct = tot > 0 ? (pz / tot) * 100 : 0;
+                                return ` ${c.dataset.label}: ${Math.round(pz).toLocaleString()} pz (${pct.toFixed(1)}%)`;
+                            },
+                            footer: (items) => {
+                                const idxOp = items && items[0] ? items[0].dataIndex : undefined;
+                                if (idxOp === undefined) return '';
+                                return `Total operaria: ${(totalPorOp[idxOp] || 0).toLocaleString()} pz`;
+                            }
+                        },
+                        itemSort: (a, b) => b.raw - a.raw
+                    }
+                },
+                scales: {
+                    x: {
+                        stacked: true,
+                        beginAtZero: true,
+                        max: enPorcentaje ? 100 : undefined,
+                        grid: { color: 'rgba(0,0,0,0.05)' },
+                        ticks: { callback: (v) => enPorcentaje ? `${v}%` : v.toLocaleString() },
+                        title: {
+                            display: true,
+                            text: enPorcentaje ? '% de la producción de cada operaria' : 'Unidades físicas producidas por referencia',
+                            font: { size: 11 }
+                        }
+                    },
+                    y: { stacked: true, grid: { display: false }, ticks: { font: { weight: 'bold' } } }
+                }
+            }
+        });
+    }
+
+    function initToggleMixPulido() {
+        const sw = document.getElementById('switch-pulido-mix-pct');
+        if (!sw || sw.dataset.listenerAttached === 'true') return;
+        sw.dataset.listenerAttached = 'true';
+        sw.addEventListener('change', () => renderChartPulidoMixReferencias(cachePulidoProfundo || {}));
+    }
+
+
     function renderTablaPulido(profundo, evolucion) {
         const tbody = document.querySelector('#tabla-leaderboard-pulido tbody');
         if (!tbody) return;
@@ -1747,17 +1921,32 @@ window.ModuloDashboard = (function () {
             const calidadYield = (buenas > 0 && pnc > 0 && calidadRaw > 99) ? calidadRaw.toFixed(2) : Math.round(calidadRaw);
             const ylColor = calidadRaw > 95 ? 'success' : (calidadRaw > 85 ? 'warning' : 'danger');
 
-            const topProd = mix[0] ? mix[0].prod : "N/A";
+            // pulido_profundo no trae 'mix': la referencia top se saca del
+            // desglose por referencia (misma fuente que el modal).
+            const refsOp = cacheAnalyticsPulido?.operario_referencia?.[op] || null;
+            let topProd = mix[0] ? mix[0].prod : "N/A";
+            if (refsOp) {
+                const topRef = Object.keys(refsOp)
+                    .sort((a, b) => (refsOp[b].cantidad_total || 0) - (refsOp[a].cantidad_total || 0))[0];
+                if (topRef) topProd = topRef;
+            }
 
             // Preparar el detalle para el alert combinando analytics_pulido si existe
             let detalleMixStr = '';
             if (cacheAnalyticsPulido && cacheAnalyticsPulido.operario_referencia && cacheAnalyticsPulido.operario_referencia[op]) {
                 const refs = cacheAnalyticsPulido.operario_referencia[op];
-                // refs es un objeto { [ref]: { cantidad_total, costo_unidad } }
+                // refs es un objeto { [ref]: { cantidad_total, costo_unidad,
+                // hora_inicio, hora_fin, minutos, min_por_pieza, lotes } }
                 const arr = Object.keys(refs).map(r => ({
                     ref: r,
                     cantidad: refs[r].cantidad_total || 0,
-                    costo_u: refs[r].costo_unidad || 0
+                    costo_u: refs[r].costo_unidad || 0,
+                    ini: refs[r].hora_inicio || null,
+                    fin: refs[r].hora_fin || null,
+                    min: refs[r].minutos || 0,
+                    // null (no 0) = la operaria no capturó tiempo en esa referencia
+                    mpz: (refs[r].min_por_pieza === null || refs[r].min_por_pieza === undefined) ? null : refs[r].min_por_pieza,
+                    lotes: refs[r].lotes || 0
                 })).sort((a, b) => b.cantidad - a.cantidad);
                 detalleMixStr = encodeURIComponent(JSON.stringify(arr));
             } else {
@@ -2203,14 +2392,44 @@ window.ModuloDashboard = (function () {
             try {
                 const arr = JSON.parse(decodeURIComponent(detalleMix));
 
+                // Solo Pulido envía tiempos; si el DTO no los trae (otros
+                // procesos) se conserva la tabla corta de siempre.
+                const conTiempos = arr.some(i => i.ini || i.fin || i.mpz !== null && i.mpz !== undefined);
+
+                const fmtDuracion = (mins) => {
+                    const m = Math.round(Number(mins) || 0);
+                    if (m <= 0) return '—';
+                    if (m < 60) return `${m} min`;
+                    return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
+                };
+
                 const filasHtml = arr.map(item => {
+                    const celdasTiempo = conTiempos ? `
+                            <td class="text-nowrap small text-muted">${item.ini || '—'}</td>
+                            <td class="text-nowrap small text-muted">${item.fin || '—'}</td>
+                            <td class="text-nowrap small">${fmtDuracion(item.min)}</td>
+                            <td class="text-nowrap fw-bold ${item.mpz === null || item.mpz === undefined ? 'text-muted' : 'text-primary'}" style="font-family: 'JetBrains Mono', monospace;">
+                                ${item.mpz === null || item.mpz === undefined ? '—' : `${Number(item.mpz).toFixed(2)} min/pz`}
+                            </td>
+                    ` : '';
+                    const badgeLotes = (conTiempos && (item.lotes || 0) > 1)
+                        ? `<span class="badge bg-light text-secondary border ms-1" title="Suma de ${item.lotes} reportes: la hora de inicio es la del primero y la de fin la del último.">${item.lotes} lotes</span>`
+                        : '';
                     return `
                         <tr class="modal-ref-item" data-search="${String(item.ref || '').toLowerCase()}">
-                            <td class="text-start fw-medium"><i class="fas fa-cube text-muted me-1"></i> ${item.ref}</td>
+                            <td class="text-start fw-medium"><i class="fas fa-cube text-muted me-1"></i> ${item.ref}${badgeLotes}</td>
                             <td><span class="badge bg-light text-dark border">${(item.cantidad || 0).toLocaleString()}</span></td>
+                            ${celdasTiempo}
                         </tr>
                     `;
                 }).join('');
+
+                const encabezadosTiempo = conTiempos ? `
+                                    <th class="text-nowrap">Hora inicio</th>
+                                    <th class="text-nowrap">Hora fin</th>
+                                    <th class="text-nowrap">Tiempo total</th>
+                                    <th class="text-nowrap">Prom. por pieza</th>
+                ` : '';
 
                 mixLines = `
                     <div class="table-responsive mt-3">
@@ -2219,6 +2438,7 @@ window.ModuloDashboard = (function () {
                                 <tr>
                                     <th class="text-start">Referencia</th>
                                     <th>Cantidad</th>
+                                    ${encabezadosTiempo}
                                 </tr>
                             </thead>
                             <tbody>

@@ -508,9 +508,35 @@ class PulidoService:
     # DETALLE POR REFERENCIA (modal de operaria)
     # ---------------------------------------------------------------
     @staticmethod
+    def _fmt_hora(dt) -> str:
+        """
+        Las horas de db_pulido ya se guardan en hora local de Colombia
+        (get_colombia_time), asi que se formatean tal cual: convertirlas en
+        el navegador con new Date() volveria a aplicar el offset y mostraria
+        horas corridas 5h -- el mismo desfase que ya se documento con el
+        picker de 12h en Modo Satelite.
+        """
+        if not dt:
+            return None
+        try:
+            return dt.strftime('%d/%m %H:%M')
+        except Exception:
+            return None
+
+    @staticmethod
     def get_detalle_por_referencia(desde=None, hasta=None) -> dict:
         """
-        Retorna: { "NOMBRE": { "REF": { cantidad_total, costo_unidad } } }
+        Retorna: {
+            "NOMBRE": {
+                "REF": {
+                    cantidad_total, costo_unidad,
+                    hora_inicio, hora_fin,   # 'dd/mm HH:MM' ya en hora Colombia
+                    minutos,                 # tiempo total trabajado en esa ref
+                    min_por_pieza,           # promedio min/pz (None si no hay tiempo)
+                    lotes                    # cuantos reportes componen la fila
+                }
+            }
+        }
         """
         try:
             params = {}
@@ -533,7 +559,18 @@ class PulidoService:
                                 '[^0-9.]', '', 'g'
                             ), ''
                         )::NUMERIC, 0
-                    ))                                                                  AS costo_u
+                    ))                                                                  AS costo_u,
+                    MIN(p.hora_inicio)                                                  AS hora_ini,
+                    MAX(p.hora_fin)                                                     AS hora_fin,
+                    SUM(COALESCE(p.tiempo_total_minutos, 0))                            AS minutos,
+                    -- El promedio min/pz solo puede dividir por las piezas de los
+                    -- lotes que SI tienen tiempo capturado; mezclar poblaciones
+                    -- (igual que en el ratio de eficiencia) hunde el promedio.
+                    SUM(
+                        CASE WHEN COALESCE(p.tiempo_total_minutos, 0) > 0
+                             THEN COALESCE(p.cantidad_real, 0) ELSE 0 END
+                    )                                                                   AS qty_con_tiempo,
+                    COUNT(*)                                                            AS lotes
                 FROM db_pulido p
                 LEFT JOIN db_costos c
                        ON {ref_norm} = {sql_normalizar_codigo_fr('c.referencia')}
@@ -549,13 +586,23 @@ class PulidoService:
                 ref   = str(r[1] or 'Sin Referencia').strip()
                 qty   = _num(r[2], int)
                 costo = _num(r[3], float)
+                minutos = _num(r[6], float)
+                qty_ct  = _num(r[7], int)
+                lotes   = _num(r[8], int)
                 if PulidoService._es_responsable_ignorado(resp):
                     continue
                 if resp not in refs_map:
                     refs_map[resp] = {}
                 refs_map[resp][ref] = {
                     "cantidad_total": qty,
-                    "costo_unidad":   costo
+                    "costo_unidad":   costo,
+                    "hora_inicio":    PulidoService._fmt_hora(r[4]),
+                    "hora_fin":       PulidoService._fmt_hora(r[5]),
+                    "minutos":        round(minutos, 1),
+                    # None (no 0) cuando no hay tiempo capturado: "sin dato" no
+                    # es lo mismo que "0 min por pieza".
+                    "min_por_pieza":  round(minutos / qty_ct, 2) if minutos > 0 and qty_ct > 0 else None,
+                    "lotes":          lotes
                 }
             return refs_map
 
