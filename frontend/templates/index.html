@@ -4398,6 +4398,9 @@
                     <button class="btn btn-outline-danger me-2" id="btn-ver-cartera-almacen" onclick="AlmacenModule.abrirModalCartera()">
                         <i class="fas fa-wallet"></i> Ver Cartera
                     </button>
+                    <button class="btn btn-outline-success me-2" id="btn-ver-empacado-almacen" onclick="AlmacenModule.abrirModalEmpacado()">
+                        <i class="fas fa-box-open"></i> Ver Empacado
+                    </button>
                     <button class="btn btn-primary" id="btn-refrescar-almacen" onclick="AlmacenModule.cargarPedidos()">
                         <i class="fas fa-sync"></i> Actualizar
                     </button>
@@ -4563,6 +4566,26 @@
                         <button class="btn btn-sm btn-outline-primary" onclick="AlmacenModule.irACarteraCompleta()">
                             <i class="fas fa-external-link-alt me-1"></i> Ver Cartera Completa
                         </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Modal Ver Empacado (plan 2026-09-02): vista rapida de lo ya
+                 empacado hoy, pedida por almacen para no tener que entrar al
+                 modulo de Empaque -- reutiliza el mismo endpoint/listado que
+                 ya usa ese modulo (GET /api/empaque/reportes), solo con
+                 puerta de entrada desde Gestion de Pedidos. -->
+            <div id="modalEmpacadoAlmacen" class="modal-overlay"
+                style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 11000; align-items: center; justify-content: center; backdrop-filter: blur(4px);">
+                <div class="modal-content"
+                    style="background: white; border-radius: 16px; width: 95%; max-width: 720px; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);">
+                    <div class="d-flex justify-content-between align-items-center p-3 border-bottom" style="flex-shrink: 0;">
+                        <h5 class="m-0 fw-bold"><i class="fas fa-box-open me-2 text-success"></i>Empacado Hoy</h5>
+                        <button class="btn-close" onclick="document.getElementById('modalEmpacadoAlmacen').style.display='none'"></button>
+                    </div>
+                    <p class="text-muted small px-3 pt-3 mb-2">Vista rápida de lo reportado hoy en el módulo de Empaque, sin tener que entrar ahí.</p>
+                    <div id="empacado-almacen-modal-body" style="overflow-y: auto; flex-grow: 1; padding: 0 15px 15px;">
+                        <div class="text-center py-4 text-muted"><i class="fas fa-spinner fa-spin fa-2x"></i></div>
                     </div>
                 </div>
             </div>

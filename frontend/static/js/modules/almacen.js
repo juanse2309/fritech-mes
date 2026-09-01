@@ -1581,6 +1581,84 @@ const AlmacenModule = {
         modal.style.display = 'flex';
     },
 
+    /**
+     * Vista rápida de lo empacado hoy (plan 2026-09-02, pedido de almacén):
+     * reutiliza el mismo endpoint que ya usa el módulo de Empaque
+     * (GET /api/empaque/reportes, por defecto solo hoy) -- aquí solo se le
+     * da una puerta de entrada desde Gestión de Pedidos, sin tener que
+     * entrar al módulo de Empaque. El resumen agrupado por referencia es
+     * lo principal (lo que de verdad piden ver "de un vistazo"); el detalle
+     * cronológico completo queda debajo por si hace falta.
+     */
+    abrirModalEmpacado: async function () {
+        const modal = document.getElementById('modalEmpacadoAlmacen');
+        const body = document.getElementById('empacado-almacen-modal-body');
+        if (!modal || !body) return;
+
+        modal.style.display = 'flex';
+        body.innerHTML = '<div class="text-center py-4 text-muted"><i class="fas fa-spinner fa-spin fa-2x"></i></div>';
+
+        try {
+            const res = await fetch('/api/empaque/reportes');
+            const data = await res.json();
+            const filas = data?.data || [];
+
+            if (!filas.length) {
+                body.innerHTML = `
+                    <div class="text-center py-4 text-muted">
+                        <i class="fas fa-box-open fa-2x mb-2" style="opacity:0.3;"></i>
+                        <p class="mb-0">Nada empacado todavía hoy.</p>
+                    </div>`;
+                return;
+            }
+
+            const porReferencia = {};
+            filas.forEach(r => {
+                const cod = r.id_codigo || 'Sin referencia';
+                if (!porReferencia[cod]) porReferencia[cod] = { total: 0, reportes: 0 };
+                porReferencia[cod].total += Number(r.cantidad) || 0;
+                porReferencia[cod].reportes += 1;
+            });
+            const resumen = Object.entries(porReferencia).sort((a, b) => b[1].total - a[1].total);
+
+            body.innerHTML = `
+                <table class="table table-sm table-hover align-middle mb-4">
+                    <thead class="table-light">
+                        <tr><th>Referencia</th><th class="text-center">Total Empacado</th><th class="text-center">Reportes</th></tr>
+                    </thead>
+                    <tbody>
+                        ${resumen.map(([cod, d]) => `
+                            <tr>
+                                <td class="fw-bold">${cod}</td>
+                                <td class="text-center"><span class="badge bg-success fs-6">${d.total}</span></td>
+                                <td class="text-center text-muted">${d.reportes}</td>
+                            </tr>`).join('')}
+                    </tbody>
+                </table>
+                <h6 class="text-muted small text-uppercase mb-2">Detalle de reportes</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr><th class="small">Hora</th><th class="small">Referencia</th><th class="small text-center">Cant.</th><th class="small">OP</th><th class="small">Responsable</th></tr>
+                        </thead>
+                        <tbody>
+                            ${filas.map(r => `
+                                <tr>
+                                    <td class="small text-muted">${(r.fecha_registro || '').slice(11)}</td>
+                                    <td class="small fw-bold">${r.id_codigo}</td>
+                                    <td class="small text-center"><span class="badge bg-primary">${r.cantidad}</span></td>
+                                    <td class="small"><code>${r.op_numero || '-'}</code></td>
+                                    <td class="small text-muted">${r.responsable || '-'}</td>
+                                </tr>`).join('')}
+                        </tbody>
+                    </table>
+                </div>`;
+        } catch (e) {
+            console.error('[Almacen] Error cargando empacado:', e);
+            body.innerHTML = '<div class="text-center text-danger py-4">No se pudo cargar la información de empacado.</div>';
+        }
+    },
+
     toggleDetalleCartera: async function (nit, idx) {
         const detalleDiv = document.getElementById(`detalle-cartera-${idx}`);
         const chevron = document.getElementById(`chevron-cartera-${idx}`);
