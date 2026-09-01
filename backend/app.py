@@ -293,7 +293,7 @@ def serve_manifest():
 # (cache-busting de CSS/JS en index.html, footer, loader). Distinta de
 # _APP_VERSION de abajo, que es el hash del deploy activo para detectar
 # frontend desactualizado -- no confundir ambas.
-RELEASE_VERSION = "1.8.36"
+RELEASE_VERSION = "1.8.37"
 
 # --- VERSION DEL DEPLOY ACTIVO ---
 # RENDER_GIT_COMMIT la puebla Render automaticamente en cada deploy (no hay

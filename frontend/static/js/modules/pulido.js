@@ -1613,6 +1613,40 @@ const ModuloPulido = {
     _intervalRefrescoSupervision: null,
     _intervalTimerSupervision: null,
 
+    _temaEstadoSupervision: {
+        TRABAJANDO:   { acento: '#16a34a', tinte: '#f0fdf4', badge: 'success' },
+        EN_PROCESO:   { acento: '#16a34a', tinte: '#f0fdf4', badge: 'success' },
+        PAUSADO:      { acento: '#d97706', tinte: '#fffbeb', badge: 'warning' },
+        PAUSADO_COLA: { acento: '#64748b', tinte: '#f8fafc', badge: 'secondary' },
+    },
+
+    // Ventanas de pausa programada (plan 2026-09-02): MISMAS horas exactas
+    // que ya descuenta PausasService al cerrar un reporte (ver
+    // _VENTANAS_PAUSAS_PROGRAMADAS en pausas_service.py) -- esto NO cambia
+    // el estado real ni toca la base de datos, es solo un aviso visual en
+    // el Panel de Supervisión para que quien supervisa sepa que alguien
+    // "sigue TRABAJANDO" en el sistema porque está en desayuno/almuerzo
+    // (que el sistema igual va a descontar solo al final), no porque haya
+    // dejado de trabajar sin avisar.
+    _VENTANAS_BREAK_SUPERVISION: [
+        { nombre: 'Desayuno', inicioMin: 9 * 60, finMin: 9 * 60 + 20 },
+        { nombre: 'Almuerzo', inicioMin: 13 * 60, finMin: 13 * 60 + 40 },
+    ],
+
+    _minutosColombiaAhora: function () {
+        const partes = new Intl.DateTimeFormat('es-CO', {
+            timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit', hour12: false
+        }).formatToParts(new Date());
+        const h = parseInt(partes.find(p => p.type === 'hour')?.value || '0', 10);
+        const m = parseInt(partes.find(p => p.type === 'minute')?.value || '0', 10);
+        return h * 60 + m;
+    },
+
+    _breakActualSupervision: function () {
+        const min = this._minutosColombiaAhora();
+        return this._VENTANAS_BREAK_SUPERVISION.find(v => min >= v.inicioMin && min < v.finMin) || null;
+    },
+
     abrirPanelSupervision: async function () {
         if (!this._puedeVerPanelSupervision()) return;
 
@@ -1776,12 +1810,7 @@ const ModuloPulido = {
         // Colores por estado: acento suave (barra/avatar/badge), no un borde
         // grueso de color puro -- así varias tarjetas verdes en fila no
         // compiten visualmente entre sí, y el estado se lee igual de claro.
-        const temaMap = {
-            TRABAJANDO:   { acento: '#16a34a', tinte: '#f0fdf4', badge: 'success' },
-            EN_PROCESO:   { acento: '#16a34a', tinte: '#f0fdf4', badge: 'success' },
-            PAUSADO:      { acento: '#d97706', tinte: '#fffbeb', badge: 'warning' },
-            PAUSADO_COLA: { acento: '#64748b', tinte: '#f8fafc', badge: 'secondary' },
-        };
+        const temaMap = this._temaEstadoSupervision;
 
         grid.innerHTML = this._sesionesSupervision.map((s) => {
             // Si esta tarjeta está en edición, no se regenera -- se preserva
@@ -1805,14 +1834,14 @@ const ModuloPulido = {
 
             return `
                 <div class="col-12 col-md-6 col-lg-4" id="card-sup-${s.id_pulido}" data-estado="${s.estado}" data-hora-inicio="${s.hora_inicio_dt || ''}" data-hora-pausa="${s.hora_pausa_dt || ''}" data-pausa-acumulada="${s.tiempo_pausa_acumulado || 0}">
-                    <div class="card shadow-sm h-100" style="border: none; border-top: 4px solid ${tema.acento}; border-radius: 14px; overflow: hidden;">
+                    <div class="card shadow-sm h-100" id="tarjeta-inner-sup-${s.id_pulido}" style="border: none; border-top: 4px solid ${tema.acento}; border-radius: 14px; overflow: hidden;">
                         <div class="card-body">
                             <div class="d-flex justify-content-between align-items-center mb-3">
                                 <div class="d-flex align-items-center gap-2">
-                                    <div class="d-flex align-items-center justify-content-center fw-800 text-white" style="width:34px; height:34px; border-radius:50%; background:${tema.acento}; font-size:0.9rem; flex-shrink:0;">${inicial}</div>
+                                    <div class="d-flex align-items-center justify-content-center fw-800 text-white" id="avatar-sup-${s.id_pulido}" style="width:34px; height:34px; border-radius:50%; background:${tema.acento}; font-size:0.9rem; flex-shrink:0;">${inicial}</div>
                                     <div class="fw-800" style="line-height:1.1;">${s.responsable || '—'}</div>
                                 </div>
-                                <span class="badge rounded-pill bg-${tema.badge}">${s.estado}</span>
+                                <span class="badge rounded-pill bg-${tema.badge}" id="badge-sup-${s.id_pulido}">${s.estado}</span>
                             </div>
                             <div class="d-flex align-items-center gap-3 p-2 mb-1" style="background:${tema.tinte}; border-radius:12px;">
                                 <div class="d-flex align-items-center justify-content-center shadow-sm" style="width:64px; height:64px; border-radius:10px; background:#ffffff; flex-shrink:0; overflow:hidden;">
@@ -1870,6 +1899,8 @@ const ModuloPulido = {
         const panel = document.getElementById('panel-supervision-pulido-fijo');
         if (!panel || panel.style.display === 'none') return;
 
+        const breakActual = this._breakActualSupervision();
+
         document.querySelectorAll('#grid-panel-supervision-pulido [id^="card-sup-"]').forEach(card => {
             const idPulido = card.id.replace('card-sup-', '');
             const timerEl = document.getElementById(`timer-sup-${idPulido}`);
@@ -1897,6 +1928,31 @@ const ModuloPulido = {
             const mins = String(Math.floor((safeDiff % 3600000) / 60000)).padStart(2, '0');
             const secs = String(Math.floor((safeDiff % 60000) / 1000)).padStart(2, '0');
             timerEl.innerText = `${hrs}:${mins}:${secs}`;
+
+            // Aviso visual de Break (plan 2026-09-02): solo tiene sentido
+            // mientras la tarjeta sigue TRABAJANDO -- si ya está PAUSADO de
+            // verdad (una pausa real, no la de horario), esa sigue siendo
+            // la información que importa mostrar, no se sobreescribe. No
+            // toca card.dataset.estado ni la base de datos, es puramente
+            // informativo para quien supervisa.
+            const badge = document.getElementById(`badge-sup-${idPulido}`);
+            const avatar = document.getElementById(`avatar-sup-${idPulido}`);
+            const tarjeta = document.getElementById(`tarjeta-inner-sup-${idPulido}`);
+            if (!badge) return;
+
+            const enTrabajo = estado === 'TRABAJANDO' || estado === 'EN_PROCESO';
+            if (enTrabajo && breakActual) {
+                badge.className = 'badge rounded-pill bg-dark';
+                badge.innerHTML = `<i class="fas fa-mug-hot me-1"></i>BREAK · ${breakActual.nombre}`;
+                if (avatar) avatar.style.background = '#3f3f46';
+                if (tarjeta) tarjeta.style.borderTopColor = '#3f3f46';
+            } else {
+                const tema = this._temaEstadoSupervision[estado] || this._temaEstadoSupervision.PAUSADO_COLA;
+                badge.className = `badge rounded-pill bg-${tema.badge}`;
+                badge.innerText = estado;
+                if (avatar) avatar.style.background = tema.acento;
+                if (tarjeta) tarjeta.style.borderTopColor = tema.acento;
+            }
         });
     },
 
