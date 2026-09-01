@@ -137,7 +137,7 @@ window.ModuloEmpaque = {
         card.style.display = 'block';
     },
 
-    reportar: async function () {
+    reportar: async function (forzar = false) {
         const codigo = this.referenciaSeleccionada || document.getElementById('empaque-buscador')?.value?.trim();
         const cantidad = parseInt(document.getElementById('empaque-cantidad')?.value || '0', 10);
         const observaciones = document.getElementById('empaque-observaciones')?.value?.trim();
@@ -145,32 +145,35 @@ window.ModuloEmpaque = {
         if (!codigo) return Swal.fire('Falta la referencia', 'Escribe o selecciona la referencia que armaste.', 'warning');
         if (!cantidad || cantidad <= 0) return Swal.fire('Cantidad inválida', 'La cantidad debe ser mayor a 0.', 'warning');
 
-        const confirmacion = await Swal.fire({
-            title: '¿Registrar empaque?',
-            html: `<b>${cantidad}</b> x <b>${codigo}</b><br><small class="text-muted">Se descontará el material de inventario.</small>`,
-            icon: 'question',
-            showCancelButton: true,
-            confirmButtonText: 'Sí, registrar',
-            cancelButtonText: 'Cancelar',
-            confirmButtonColor: '#0284c7'
-        });
-        if (!confirmacion.isConfirmed) return;
+        if (!forzar) {
+            const confirmacion = await Swal.fire({
+                title: '¿Registrar empaque?',
+                html: `<b>${cantidad}</b> x <b>${codigo}</b><br><small class="text-muted">Se descontará el material de inventario.</small>`,
+                icon: 'question',
+                showCancelButton: true,
+                confirmButtonText: 'Sí, registrar',
+                cancelButtonText: 'Cancelar',
+                confirmButtonColor: '#0284c7'
+            });
+            if (!confirmacion.isConfirmed) return;
+        }
 
+        // silent: si falta stock queremos leer el `code` del error y
+        // ofrecer forzar, no el toast genérico de fetchData.
         const res = await fetchData('/api/empaque/reportar', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id_codigo: codigo, cantidad, observaciones })
+            body: JSON.stringify({ id_codigo: codigo, cantidad, observaciones, forzar }),
+            silent: true
         });
 
-        // fetchData ya muestra el detalle del error (stock faltante por
-        // componente, ficha inexistente, etc.) -- aquí solo el camino feliz.
         if (res?.success) {
             Swal.fire({
-                icon: 'success',
-                title: 'Empaque registrado',
+                icon: res.data.forzado ? 'warning' : 'success',
+                title: res.data.forzado ? 'Empaque registrado (stock quedó negativo)' : 'Empaque registrado',
                 html: `${cantidad} x ${codigo}<div class="mt-2"><span class="badge bg-primary fs-6">OP asignada: ${res.data.op_numero}</span></div>`,
-                timer: 3600,
-                showConfirmButton: false
+                timer: res.data.forzado ? undefined : 3600,
+                showConfirmButton: !!res.data.forzado
             });
             document.getElementById('empaque-buscador').value = '';
             document.getElementById('empaque-cantidad').value = 1;
@@ -178,7 +181,29 @@ window.ModuloEmpaque = {
             this.referenciaSeleccionada = null;
             this.ocultarPreview();
             await this.cargarListado();
+            return;
         }
+
+        if (res?.code === 'STOCK_INSUFICIENTE' && !forzar) {
+            const forzarConfirm = await Swal.fire({
+                icon: 'warning',
+                title: 'Stock insuficiente',
+                html: `${res.error}<br><br>El material ya se armó y solo falta el registro -- se puede guardar igual y el inventario quedará en negativo hasta que se reponga.`,
+                showCancelButton: true,
+                confirmButtonText: 'Registrar de todas formas',
+                cancelButtonText: 'Cancelar',
+                confirmButtonColor: '#dc3545'
+            });
+            if (forzarConfirm.isConfirmed) {
+                return this.reportar(true);
+            }
+            return;
+        }
+
+        // Cualquier otro error (ficha inexistente, producto no encontrado
+        // en inventario, fallo de red, etc.) -- se muestra tal como antes
+        // hacía fetchData automáticamente.
+        mostrarNotificacion(`Error en la solicitud: ${res?.error || 'No se pudo registrar el empaque.'}`, 'error');
     },
 
     cargarListado: async function () {

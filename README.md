@@ -1,8 +1,11 @@
-# 🏭 FriTech MES - Sistema de Gestión de Producción e Inventario ![v1.8.44](https://img.shields.io/badge/versión-1.8.44--estable-green)
+# 🏭 FriTech MES - Sistema de Gestión de Producción e Inventario ![v1.8.45](https://img.shields.io/badge/versión-1.8.45--estable-green)
 
 FriTech MES (Manufacturing Execution System) es una plataforma full-stack diseñada específicamente para el control y automatización de procesos de producción, gestión de inventarios y sincronización con el ERP World Office de la planta de fabricación de bujes de FriParts.
 
 El sistema utiliza una **arquitectura 100% SQL-First**, empleando **PostgreSQL** en la nube como base de datos transaccional única. La dependencia histórica de Google Sheets ha sido completamente removida, conservando únicamente la API de Google Drive de manera opcional para el almacenamiento de reportes PDF generados.
+
+## ✨ Novedades Versión 1.8.45 (Estable)
+- **Empaque — stock insuficiente ya no bloquea el registro**: si al armar falta material, la operaria ahora puede confirmar "Registrar de todas formas" y el reporte se guarda igual (el armado físico ya ocurrió), dejando el almacén correspondiente en negativo con advertencia visible en vez de rechazar el reporte por completo.
 
 ## ✨ Novedades Versión 1.8.44 (Estable)
 - **Lanzamiento 2026-08-31**: numeración automática de OP (INY/ENS/EMP) con bloque dedicado, nuevo módulo de **Empaque** (descuenta componentes vía BOM con prelación P. TERMINADO → POR PULIR y acredita el muñeco armado) y **Panel de Supervisión** de Pulido para Administración con tarjetas en vivo por operaria.

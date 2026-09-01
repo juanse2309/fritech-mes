@@ -397,6 +397,12 @@ function mostrarLoading(mostrar) {
  * Fetch con manejo de errores
  */
 async function fetchData(url, options = {}) {
+    // silent=true: el caller quiere manejar él mismo un error de negocio
+    // esperado (p.ej. STOCK_INSUFICIENTE con su `code`) en vez de que se
+    // muestre el toast genérico y se pierda el body -- se le devuelve el
+    // JSON de error tal cual en vez de null. Solo aplica a errores HTTP con
+    // body JSON válido; fallas de red siguen el camino normal de abajo.
+    const silent = options.silent === true;
     try {
         // Inyectar Token de Autenticación
         const token = localStorage.getItem('pwa_token');
@@ -404,24 +410,28 @@ async function fetchData(url, options = {}) {
         if (token && !options.headers['Authorization']) {
             options.headers['Authorization'] = `Bearer ${token}`;
         }
-        
+
         console.log(`📡 [Fetching]: ${url}`);
         const response = await fetch(url, options);
 
         if (!response.ok) {
             let errorMsg = `HTTP ${response.status}: ${response.statusText}`;
+            let errorBody = null;
             try {
                 // Intentar extraer el detalle del error JSON (traceback)
-                const errorData = await response.json();
-                if (errorData.traceback) {
+                errorBody = await response.json();
+                if (errorBody.traceback) {
                     console.group(`❌ [Backend Error Detail] ${url}`);
-                    console.error('Message:', errorData.message || errorData.error);
-                    console.error('Traceback:\n', errorData.traceback);
+                    console.error('Message:', errorBody.message || errorBody.error);
+                    console.error('Traceback:\n', errorBody.traceback);
                     console.groupEnd();
                 }
-                errorMsg = errorData.message || errorData.error || errorMsg;
+                errorMsg = errorBody.message || errorBody.error || errorMsg;
             } catch (e) {
                 // Si no es JSON, fallar silenciosamente y usar el error original
+            }
+            if (silent && errorBody) {
+                return errorBody;
             }
             throw new Error(errorMsg);
         }

@@ -43,7 +43,7 @@ SEGUNDOS_VENTANA_DUPLICADO = 20
 class EmpaqueService:
 
     @staticmethod
-    def _plan_de_descuento(componentes):
+    def _plan_de_descuento(componentes, forzar=False):
         """
         Para cada componente del BOM, calcula de dónde sale (P. TERMINADO
         primero, POR PULIR si no alcanza) SIN escribir nada todavía.
@@ -51,8 +51,17 @@ class EmpaqueService:
         (solo loguea una advertencia) -- por eso esta verificación vive
         aquí, antes de tocar la base de datos.
 
-        Devuelve (plan, faltantes). Si faltantes no está vacío, plan se
-        descarta -- no se ejecuta ningún descuento parcial.
+        Devuelve (plan, faltantes). Si faltantes no está vacío y forzar es
+        False, plan se descarta -- no se ejecuta ningún descuento parcial.
+
+        Con forzar=True (la operaria vio la advertencia de "stock
+        insuficiente" y decidió seguir igual -- el armado físico ya
+        ocurrió, negarse a registrarlo no deshace eso) el faltante se
+        agrega igual al plan: se toma lo que haya y el resto se descuenta
+        de POR PULIR, profundizando el negativo. `faltantes` se sigue
+        devolviendo para que el caller pueda loguearlo. Un producto que ni
+        siquiera existe en inventario sigue bloqueando siempre -- no hay
+        almacén al que descontarle nada.
         """
         plan = []
         faltantes = []
@@ -76,9 +85,14 @@ class EmpaqueService:
             disp_terminado = float(producto.p_terminado or 0)
             disp_pulir = float(producto.por_pulir or 0)
 
-            de_terminado = min(necesario, disp_terminado)
+            # max(0, ...): si el almacén YA está en negativo, no hay nada
+            # "disponible" ahí que tomar -- tratarlo como negativo real
+            # restaría a de_terminado/de_pulir en vez de sumarles, y
+            # StockService.registrar_salida con un monto negativo termina
+            # SUMANDO stock en vez de descontarlo.
+            de_terminado = min(necesario, max(0.0, disp_terminado))
             resto = necesario - de_terminado
-            de_pulir = min(resto, disp_pulir)
+            de_pulir = min(resto, max(0.0, disp_pulir))
             resto -= de_pulir
 
             if resto > 0.0001:  # tolerancia de punto flotante
@@ -86,8 +100,11 @@ class EmpaqueService:
                     'codigo': codigo_inv, 'necesario': necesario,
                     'disponible': disp_terminado + disp_pulir, 'faltante': round(resto, 4)
                 })
-            else:
-                plan.append({'codigo': codigo_inv, 'de_terminado': de_terminado, 'de_pulir': de_pulir})
+                if not forzar:
+                    continue
+                de_pulir += resto  # overdraft forzado
+
+            plan.append({'codigo': codigo_inv, 'de_terminado': de_terminado, 'de_pulir': de_pulir})
 
         return plan, faltantes
 
@@ -132,7 +149,12 @@ class EmpaqueService:
 
         Puede lanzar ValueError (payload inválido), BomNoDisponibleException
         (la referencia no tiene ficha técnica) o StockInsuficienteException
-        (falta stock de algún componente -- no se descuenta nada).
+        (falta stock de algún componente -- no se descuenta nada). Con
+        data['forzar']=True se salta ese último bloqueo (el frontend lo usa
+        cuando la operaria confirma "registrar de todas formas" tras ver la
+        advertencia) y el faltante se descuenta igual, dejando el almacén en
+        negativo -- salvo que el componente ni siquiera exista en
+        inventario, que sigue bloqueando siempre.
 
         Anti-duplicado (ver SEGUNDOS_VENTANA_DUPLICADO): si en la ventana ya
         existe un reporte idéntico (misma referencia, cantidad y
@@ -155,6 +177,7 @@ class EmpaqueService:
 
         id_codigo = preservar_o_normalizar_prefijo(id_codigo_raw)
         observaciones = data.get('observaciones')
+        forzar = bool(data.get('forzar', False))
 
         fecha_str = data.get('fecha')
         if fecha_str:
@@ -191,13 +214,22 @@ class EmpaqueService:
         if not bom_res.get('success'):
             raise BomNoDisponibleException(bom_res.get('error') or f'BOM no disponible para {id_codigo}')
 
-        plan, faltantes = EmpaqueService._plan_de_descuento(bom_res['componentes'])
+        plan, faltantes = EmpaqueService._plan_de_descuento(bom_res['componentes'], forzar=forzar)
         if faltantes:
             detalle = '; '.join(
                 f"{f['codigo']}: faltan {f['faltante']} (necesita {f['necesario']}, hay {f['disponible']})"
                 for f in faltantes
             )
-            raise StockInsuficienteException(f"Stock insuficiente para armar {cantidad} x {id_codigo} -- {detalle}")
+            # Producto no encontrado en inventario NUNCA se puede forzar --
+            # no hay almacén al que descontarle nada. _plan_de_descuento ya
+            # dejó esos componentes fuera de `plan` en ese caso.
+            bloqueantes = [f for f in faltantes if f.get('motivo') == 'Producto no encontrado en inventario']
+            if not forzar or bloqueantes:
+                raise StockInsuficienteException(f"Stock insuficiente para armar {cantidad} x {id_codigo} -- {detalle}")
+            logger.warning(
+                f"⚠️ [Empaque] Registro forzado por {usuario_norm} con stock insuficiente: "
+                f"{cantidad} x {id_codigo} -- {detalle}"
+            )
 
         try:
             # Reserva perezosa: el primer reporte del día crea la OP EMP de
@@ -262,6 +294,7 @@ class EmpaqueService:
             'cantidad': cantidad,
             'op_numero': op_generada.numero_op,
             'componentes_descontados': plan,
+            'forzado': forzar and bool(faltantes),
         }
 
     @staticmethod
