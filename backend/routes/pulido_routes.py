@@ -6,7 +6,7 @@ import tempfile
 from backend.core.responses import api_success, api_error
 from backend.core import task_runner
 from backend.utils.auth_middleware import require_role, ROL_ADMINS, _obtener_usuario_activo
-from backend.models.sql_models import db, ProduccionPulido, PncInyeccion, PncPulido, PncEnsamble, BujeRevuelto, Producto, TrazabilidadLote, PulidoOverride
+from backend.models.sql_models import db, ProduccionPulido, PncInyeccion, PncPulido, PncEnsamble, BujeRevuelto, Producto, TrazabilidadLote, PulidoOverride, PulidoPendienteAutorizacion
 from backend.utils.formatters import normalizar_codigo, preservar_o_normalizar_prefijo, normalizar_codigo_sin_prefijo
 from backend.services.audit_service import AuditService, OwnershipMismatchException, TurnoInvalidoException
 from backend.services.pulido_service import PulidoService, FechaPulidoInvalidaException, CantidadExcedeInyectadoException
@@ -641,6 +641,135 @@ def listar_sesiones_pulido_admin():
         return api_success(data={'sesiones': PulidoService.listar_sesiones_activas()})
     except Exception as e:
         logger.error(f"❌ Error listando sesiones de Pulido (admin): {e}")
+        return api_error(str(e), status_code=500)
+
+
+# ────────────────────────────────────────────────────────────────────
+# COLA DE AUTORIZACIÓN (plan 2026-09-01): un reporte de Pulido bloqueado
+# (fecha distinta a hoy o cantidad que excede lo inyectado) para una
+# operaria normal antes simplemente se perdía si no había un ADMIN físico
+# en su tablet para autorizarlo. Ahora el intento se guarda con el payload
+# completo y cualquier ADMIN lo autoriza o rechaza desde el Panel de
+# Supervisión, desde su propio usuario -- ver PulidoPendienteAutorizacion.
+# ────────────────────────────────────────────────────────────────────
+
+@pulido_bp.route('/api/pulido/solicitar_autorizacion', methods=['POST'])
+@require_role(ROLES_PULIDO)
+def solicitar_autorizacion_pulido():
+    """Guarda un reporte bloqueado como pendiente en vez de descartarlo."""
+    try:
+        data = request.get_json() or {}
+        payload = data.get('payload')
+        if not payload or not payload.get('id_pulido'):
+            return api_error("Falta el payload del reporte bloqueado", status_code=400)
+
+        pendiente = PulidoPendienteAutorizacion(
+            id_pulido=payload.get('id_pulido'),
+            responsable=payload.get('responsable'),
+            codigo=payload.get('codigo_producto'),
+            orden_produccion=payload.get('orden_produccion'),
+            lote=payload.get('lote'),
+            cantidad_real=payload.get('cantidad_real'),
+            fecha_trabajo=payload.get('fecha_inicio'),
+            tipo_bloqueo=data.get('tipo_bloqueo', 'DESCONOCIDO'),
+            motivo_bloqueo=data.get('motivo_bloqueo'),
+            payload_json=json.dumps(payload, ensure_ascii=False),
+        )
+        db.session.add(pendiente)
+        db.session.commit()
+        return api_success(data={'id': pendiente.id}, status_code=201)
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"❌ Error guardando solicitud de autorización de Pulido: {e}")
+        return api_error(str(e), status_code=500)
+
+
+@pulido_bp.route('/api/pulido/admin/pendientes_autorizacion', methods=['GET'])
+@require_role(ROL_ADMINS)
+def listar_pendientes_autorizacion_pulido():
+    """Solo lo pueden ver/resolver ADMIN/Administración/Gerencia -- mismo
+    nivel que exige el backend para forzar un bloqueo (registrar_pulido)."""
+    try:
+        pendientes = PulidoPendienteAutorizacion.query.filter_by(estado='PENDIENTE') \
+            .order_by(PulidoPendienteAutorizacion.creado_en.asc()).all()
+        return api_success(data={'pendientes': [{
+            'id': p.id,
+            'id_pulido': p.id_pulido,
+            'responsable': p.responsable,
+            'codigo': p.codigo,
+            'orden_produccion': p.orden_produccion,
+            'lote': p.lote,
+            'cantidad_real': float(p.cantidad_real or 0),
+            'fecha_trabajo': p.fecha_trabajo,
+            'tipo_bloqueo': p.tipo_bloqueo,
+            'motivo_bloqueo': p.motivo_bloqueo,
+            'creado_en': p.creado_en.isoformat() if p.creado_en else None,
+        } for p in pendientes]})
+    except Exception as e:
+        logger.error(f"❌ Error listando pendientes de autorización de Pulido: {e}")
+        return api_error(str(e), status_code=500)
+
+
+@pulido_bp.route('/api/pulido/admin/autorizar_pendiente', methods=['POST'])
+@require_role(ROL_ADMINS)
+def autorizar_pendiente_pulido():
+    try:
+        data = request.get_json() or {}
+        id_pendiente = data.get('id')
+        motivo = (data.get('motivo') or '').strip()
+        if not motivo:
+            return api_error("El motivo es obligatorio para autorizar", status_code=400, code="MOTIVO_REQUERIDO")
+
+        pendiente = db.session.get(PulidoPendienteAutorizacion, id_pendiente)
+        if not pendiente or pendiente.estado != 'PENDIENTE':
+            return api_error("La solicitud no existe o ya fue resuelta", status_code=404)
+
+        payload = json.loads(pendiente.payload_json)
+        ahora = get_colombia_time()
+        usuario_activo = _obtener_usuario_activo()
+        registro = ProduccionPulido.query.filter_by(id_pulido=payload.get('id_pulido')).first()
+        responsable = payload.get('responsable')
+
+        resultado = _ejecutar_persistencia_pulido(
+            registro, payload, responsable, ahora,
+            forzar_bloqueo=True, motivo_forzado=motivo, autorizado_por=usuario_activo,
+        )
+
+        pendiente.estado = 'AUTORIZADO'
+        pendiente.resuelto_por = usuario_activo
+        pendiente.motivo_resolucion = motivo
+        pendiente.resuelto_en = ahora
+        db.session.commit()
+
+        return api_success(data=resultado)
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"❌ Error autorizando pendiente de Pulido: {e}")
+        return api_error(str(e), status_code=500)
+
+
+@pulido_bp.route('/api/pulido/admin/rechazar_pendiente', methods=['POST'])
+@require_role(ROL_ADMINS)
+def rechazar_pendiente_pulido():
+    try:
+        data = request.get_json() or {}
+        id_pendiente = data.get('id')
+        motivo = (data.get('motivo') or '').strip() or None
+
+        pendiente = db.session.get(PulidoPendienteAutorizacion, id_pendiente)
+        if not pendiente or pendiente.estado != 'PENDIENTE':
+            return api_error("La solicitud no existe o ya fue resuelta", status_code=404)
+
+        pendiente.estado = 'RECHAZADO'
+        pendiente.resuelto_por = _obtener_usuario_activo()
+        pendiente.motivo_resolucion = motivo
+        pendiente.resuelto_en = get_colombia_time()
+        db.session.commit()
+
+        return api_success()
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"❌ Error rechazando pendiente de Pulido: {e}")
         return api_error(str(e), status_code=500)
 
 

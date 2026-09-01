@@ -775,6 +775,35 @@ const ModuloPulido = {
         document.getElementById('pulido-main-timer').innerText = `${hrs}:${mins}:${secs}`;
     },
 
+    // Reintenta un fetch simple hasta 3 veces con una pausa corta entre
+    // intentos -- pausar/reanudar usaban un fetch() suelto y sin reintentos
+    // (a diferencia de lo que decía un comentario viejo en enviarAServidor,
+    // que en realidad tampoco reintenta: ver core/api-client.js). En wifi
+    // de planta, un solo tropiezo de red bastaba para que el operario viera
+    // "no se pudo pausar/reanudar" aunque el servidor sí hubiera alcanzado a
+    // procesar el cambio (hallazgo 2026-09-01, caso real de Yudi Montero:
+    // el reanudar mostró error pero el servidor ya había quedado en
+    // TRABAJANDO -- la petición sí llegó, solo se perdió la respuesta).
+    _fetchConReintentos: async function (url, body, intentos = 3) {
+        let ultimoError;
+        for (let i = 0; i < intentos; i++) {
+            try {
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const data = await res.json().catch(() => null);
+                if (res.ok && data) return data;
+                ultimoError = new Error(data?.error || `El servidor respondió ${res.status}`);
+            } catch (e) {
+                ultimoError = e;
+            }
+            if (i < intentos - 1) await new Promise(r => setTimeout(r, 800 * (i + 1)));
+        }
+        throw ultimoError;
+    },
+
     pausarCiclo: async function () {
         const btn = document.getElementById('btn-pausar-pulido');
         const horaPausa = new Date().toLocaleTimeString('es-CO', {
@@ -784,57 +813,40 @@ const ModuloPulido = {
             minute: '2-digit'
         });
         const estabaEnPausa = this.enPausa;
+        const idSesion = this.sessionId;
 
         mostrarLoading(true, estabaEnPausa ? 'Reanudando...' : 'Pausando...');
         try {
             if (!this.enPausa) {
                 console.log(`⏸️ [Pulido] Pausando a las ${horaPausa}...`);
-
-                // 2. Ejecutar la pausa en el servidor
-                const res = await fetch('/api/pulido/pausar', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        id_pulido: this.sessionId,
-                        hora_pausa: horaPausa
-                    })
-                });
-                if (res.ok) {
-                    this.enPausa = true;
-                    btn.innerHTML = '<i class="fas fa-play me-2"></i> Reanudar';
-                    btn.className = 'btn btn-info btn-lg p-3 shadow';
-                    document.getElementById('pulido-pausa-msg').style.display = 'block';
-                } else {
-                    throw new Error(`El servidor respondió ${res.status}`);
-                }
+                await this._fetchConReintentos('/api/pulido/pausar', { id_pulido: idSesion, hora_pausa: horaPausa });
+                this.enPausa = true;
+                btn.innerHTML = '<i class="fas fa-play me-2"></i> Reanudar';
+                btn.className = 'btn btn-info btn-lg p-3 shadow';
+                document.getElementById('pulido-pausa-msg').style.display = 'block';
             } else {
                 console.log(`▶️ [Pulido] Reanudando a las ${horaPausa}...`);
-                const res = await fetch('/api/pulido/reanudar', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        id_pulido: this.sessionId,
-                        hora_reanudar: horaPausa
-                    })
-                });
-                const data = await res.json();
-                if (data.success) {
-                    this.enPausa = false;
-                    this.totalPausaMs = (data.data?.acumulado || 0) * 1000;
-                    btn.innerHTML = '<i class="fas fa-pause me-2"></i> Pausar';
-                    btn.className = 'btn btn-warning btn-lg p-3 shadow';
-                    document.getElementById('pulido-pausa-msg').style.display = 'none';
-                } else {
-                    throw new Error(data.error || `El servidor respondió ${res.status}`);
-                }
+                const data = await this._fetchConReintentos('/api/pulido/reanudar', { id_pulido: idSesion, hora_reanudar: horaPausa });
+                this.enPausa = false;
+                this.totalPausaMs = (data.data?.acumulado || 0) * 1000;
+                btn.innerHTML = '<i class="fas fa-pause me-2"></i> Pausar';
+                btn.className = 'btn btn-warning btn-lg p-3 shadow';
+                document.getElementById('pulido-pausa-msg').style.display = 'none';
             }
             this.guardarEstadoLocal();
         } catch (error) {
             console.error('❌ [Pulido] Error en pausarCiclo:', error);
+            // Después de 3 intentos fallidos, no hay forma de saber desde el
+            // cliente si el servidor sí alcanzó a aplicar el cambio antes de
+            // perderse la respuesta -- en vez de asumir que no pasó nada
+            // (dejando el botón mintiendo sobre el estado real), se le
+            // vuelve a preguntar al servidor cuál es la verdad y se refleja
+            // eso, no lo que el botón mostraba antes del intento.
+            await this.verificarTrabajoActivo(idSesion);
             Swal.fire({
-                icon: 'error',
-                title: estabaEnPausa ? 'No se pudo reanudar' : 'No se pudo pausar',
-                text: 'No se pudo comunicar con el servidor. El botón sigue mostrando el estado anterior porque el cambio no quedó confirmado -- verifica tu conexión e intenta de nuevo.'
+                icon: 'warning',
+                title: 'No se pudo confirmar el cambio',
+                text: 'La conexión falló varias veces. Ya se revisó con el servidor cuál es el estado real y la pantalla se actualizó a eso -- revisa el botón antes de volver a intentar.'
             });
         } finally {
             mostrarLoading(false);
@@ -1608,6 +1620,7 @@ const ModuloPulido = {
         if (panel) panel.style.display = 'block';
 
         await this._cargarSesionesSupervision();
+        await this._cargarPendientesAutorizacion();
 
         // Auto-refresco de datos del servidor cada 15s (se salta el fetch,
         // sin detener el intervalo, mientras haya una tarjeta en edición
@@ -1618,6 +1631,7 @@ const ModuloPulido = {
             if (this._tarjetasEnEdicionSupervision.size === 0) {
                 this._cargarSesionesSupervision();
             }
+            this._cargarPendientesAutorizacion();
         }, 15000);
 
         if (this._intervalTimerSupervision) clearInterval(this._intervalTimerSupervision);
@@ -1632,6 +1646,90 @@ const ModuloPulido = {
         this._intervalRefrescoSupervision = null;
         this._intervalTimerSupervision = null;
         this._tarjetasEnEdicionSupervision.clear();
+    },
+
+    // Pendientes de autorización (plan 2026-09-01): solo ADMIN/Administración/
+    // Gerencia las ve y resuelve -- mismo nivel que exige el backend para
+    // forzar un bloqueo. Un Jefe de Pulido puede ver el resto del panel pero
+    // no esto, porque tampoco podría autorizar nada aquí.
+    _cargarPendientesAutorizacion: async function () {
+        const bloque = document.getElementById('bloque-pendientes-autorizacion-pulido');
+        if (!bloque) return;
+        if (!this._esAdminActivo()) {
+            bloque.style.display = 'none';
+            return;
+        }
+        try {
+            const res = await window.apiClient.get('/pulido/admin/pendientes_autorizacion');
+            const pendientes = res?.data?.pendientes || [];
+            document.getElementById('contador-pendientes-autorizacion').innerText = pendientes.length;
+            bloque.style.display = pendientes.length > 0 ? 'block' : 'none';
+
+            const lista = document.getElementById('lista-pendientes-autorizacion-pulido');
+            lista.innerHTML = pendientes.map(p => `
+                <div class="col-12 col-md-6 col-lg-4">
+                    <div class="card border-warning border-2 shadow-sm h-100">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start mb-1">
+                                <span class="fw-800">${p.responsable || '—'}</span>
+                                <span class="badge bg-warning text-dark">${p.tipo_bloqueo}</span>
+                            </div>
+                            <div class="small text-muted mb-2">${p.codigo || '—'} · Lote ${p.lote || '—'} · OP ${p.orden_produccion || 'SIN OP'} · ${p.cantidad_real} u. · fecha del trabajo: ${p.fecha_trabajo || '—'}</div>
+                            <div class="small mb-2" style="color:#92400e;">${p.motivo_bloqueo || ''}</div>
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-sm btn-success flex-fill" onclick="ModuloPulido._autorizarPendiente(${p.id})"><i class="fas fa-check me-1"></i>Autorizar</button>
+                                <button class="btn btn-sm btn-outline-danger flex-fill" onclick="ModuloPulido._rechazarPendiente(${p.id})"><i class="fas fa-times me-1"></i>Rechazar</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>`).join('');
+        } catch (error) {
+            console.error('[Pulido][Pendientes] Error cargando pendientes de autorización:', error);
+        }
+    },
+
+    _autorizarPendiente: async function (id) {
+        const { value: motivo } = await Swal.fire({
+            title: 'Autorizar reporte pendiente',
+            input: 'text',
+            inputLabel: 'Motivo de la autorización (obligatorio)',
+            inputPlaceholder: 'Ej: lote atrasado, se confirmó con planta',
+            showCancelButton: true,
+            confirmButtonText: 'Autorizar y guardar',
+            cancelButtonText: 'Cancelar',
+            confirmButtonColor: '#198754',
+            inputValidator: (val) => !val?.trim() ? 'El motivo es obligatorio' : undefined
+        });
+        if (!motivo) return;
+
+        try {
+            await window.apiClient.post('/pulido/admin/autorizar_pendiente', { id, motivo: motivo.trim() });
+            Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Reporte autorizado y guardado', showConfirmButton: false, timer: 2000 });
+            await this._cargarPendientesAutorizacion();
+            await this._cargarSesionesSupervision();
+        } catch (error) {
+            Swal.fire('Error', error.body?.error || 'No se pudo autorizar el reporte.', 'error');
+        }
+    },
+
+    _rechazarPendiente: async function (id) {
+        const confirmacion = await Swal.fire({
+            title: '¿Rechazar este reporte?',
+            text: 'No se guardará nada de este intento. La operaria deberá reportarlo de nuevo si corresponde.',
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonText: 'Sí, rechazar',
+            cancelButtonText: 'Cancelar',
+            confirmButtonColor: '#dc3545',
+        });
+        if (!confirmacion.isConfirmed) return;
+
+        try {
+            await window.apiClient.post('/pulido/admin/rechazar_pendiente', { id });
+            await this._cargarPendientesAutorizacion();
+        } catch (error) {
+            Swal.fire('Error', error.body?.error || 'No se pudo rechazar la solicitud.', 'error');
+        }
     },
 
     _cargarSesionesSupervision: async function () {
@@ -1650,6 +1748,22 @@ const ModuloPulido = {
         }
     },
 
+    // Busca la imagen del producto en el mismo catálogo que ya usa la
+    // pantalla normal de Pulido (mostrarFotoProducto) -- así la tarjeta de
+    // supervisión muestra el mismo buje que ve la operaria, no un ícono
+    // adivinado por convención de nombre de archivo.
+    _obtenerImagenProducto: function (codigo) {
+        if (!codigo || !this.productosData) return null;
+        const codigoNorm = this.normalizarCodigo(codigo);
+        const prod = this.productosData.find(p => this.normalizarCodigo(p.codigo_sistema) === codigoNorm);
+        if (!prod || !prod.imagen) return null;
+        let url = prod.imagen;
+        if (!url.startsWith('/') && !url.startsWith('http') && !url.startsWith('data:')) {
+            url = `/static/img/productos/${url}`;
+        }
+        return url;
+    },
+
     _renderGridSupervision: function () {
         const grid = document.getElementById('grid-panel-supervision-pulido');
         if (!grid) return;
@@ -1659,7 +1773,15 @@ const ModuloPulido = {
             return;
         }
 
-        const colorMap = { TRABAJANDO: 'success', EN_PROCESO: 'success', PAUSADO: 'warning', PAUSADO_COLA: 'secondary' };
+        // Colores por estado: acento suave (barra/avatar/badge), no un borde
+        // grueso de color puro -- así varias tarjetas verdes en fila no
+        // compiten visualmente entre sí, y el estado se lee igual de claro.
+        const temaMap = {
+            TRABAJANDO:   { acento: '#16a34a', tinte: '#f0fdf4', badge: 'success' },
+            EN_PROCESO:   { acento: '#16a34a', tinte: '#f0fdf4', badge: 'success' },
+            PAUSADO:      { acento: '#d97706', tinte: '#fffbeb', badge: 'warning' },
+            PAUSADO_COLA: { acento: '#64748b', tinte: '#f8fafc', badge: 'secondary' },
+        };
 
         grid.innerHTML = this._sesionesSupervision.map((s) => {
             // Si esta tarjeta está en edición, no se regenera -- se preserva
@@ -1669,28 +1791,39 @@ const ModuloPulido = {
                 if (existente) return existente.outerHTML;
             }
 
-            const color = colorMap[s.estado] || 'secondary';
+            const tema = temaMap[s.estado] || temaMap.PAUSADO_COLA;
             const enPausa = s.estado === 'PAUSADO' || s.estado === 'PAUSADO_COLA';
             const btnPausarReanudar = enPausa
                 ? `<button class="btn btn-sm btn-success flex-fill" onclick="ModuloPulido._accionPausarReanudarAdmin('${s.id_pulido}', false)"><i class="fas fa-play me-1"></i>Reanudar</button>`
-                : `<button class="btn btn-sm btn-warning flex-fill" onclick="ModuloPulido._accionPausarReanudarAdmin('${s.id_pulido}', true)"><i class="fas fa-pause me-1"></i>Pausar</button>`;
+                : `<button class="btn btn-sm flex-fill text-white" style="background:${tema.acento};" onclick="ModuloPulido._accionPausarReanudarAdmin('${s.id_pulido}', true)"><i class="fas fa-pause me-1"></i>Pausar</button>`;
+
+            const inicial = (s.responsable || '?').trim().charAt(0).toUpperCase();
+            const imagenUrl = this._obtenerImagenProducto(s.codigo);
+            const imagenHtml = imagenUrl
+                ? `<img src="${imagenUrl}" alt="${s.codigo}" style="width:100%; height:100%; object-fit:contain;" onerror="this.parentElement.innerHTML='<i class=\\'fas fa-image text-muted\\' style=\\'font-size:1.5rem;\\'></i>';">`
+                : `<i class="fas fa-cog text-muted" style="font-size:1.5rem;"></i>`;
 
             return `
                 <div class="col-12 col-md-6 col-lg-4" id="card-sup-${s.id_pulido}" data-estado="${s.estado}" data-hora-inicio="${s.hora_inicio_dt || ''}" data-hora-pausa="${s.hora_pausa_dt || ''}" data-pausa-acumulada="${s.tiempo_pausa_acumulado || 0}">
-                    <div class="card shadow-sm h-100 border-${color} border-2">
+                    <div class="card shadow-sm h-100" style="border: none; border-top: 4px solid ${tema.acento}; border-radius: 14px; overflow: hidden;">
                         <div class="card-body">
-                            <div class="d-flex justify-content-between align-items-start mb-2">
-                                <div>
-                                    <div class="fw-800">${s.responsable || '—'}</div>
-                                    <small class="text-muted">${s.codigo || '—'} · Lote ${s.lote || '—'}</small>
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <div class="d-flex align-items-center gap-2">
+                                    <div class="d-flex align-items-center justify-content-center fw-800 text-white" style="width:34px; height:34px; border-radius:50%; background:${tema.acento}; font-size:0.9rem; flex-shrink:0;">${inicial}</div>
+                                    <div class="fw-800" style="line-height:1.1;">${s.responsable || '—'}</div>
                                 </div>
-                                <span class="badge bg-${color}">${s.estado}</span>
+                                <span class="badge rounded-pill bg-${tema.badge}">${s.estado}</span>
                             </div>
-                            <div class="text-center my-2 py-2" style="background:#f8fafc; border-radius:10px;">
-                                <div class="fs-3 fw-900 font-monospace" id="timer-sup-${s.id_pulido}">--:--:--</div>
-                                <small class="text-muted">OP: ${s.orden_produccion || 'SIN OP'}</small>
+                            <div class="d-flex align-items-center gap-3 p-2 mb-1" style="background:${tema.tinte}; border-radius:12px;">
+                                <div class="d-flex align-items-center justify-content-center shadow-sm" style="width:64px; height:64px; border-radius:10px; background:#ffffff; flex-shrink:0; overflow:hidden;">
+                                    ${imagenHtml}
+                                </div>
+                                <div class="flex-grow-1 text-center">
+                                    <div class="fs-4 fw-900 font-monospace" id="timer-sup-${s.id_pulido}" style="letter-spacing:0.02em;">--:--:--</div>
+                                    <small class="text-muted">${s.codigo || '—'} · Lote ${s.lote || '—'} · OP ${s.orden_produccion || 'SIN OP'}</small>
+                                </div>
                             </div>
-                            <div class="d-flex gap-2 mb-2">
+                            <div class="d-flex gap-2 mb-2 mt-3">
                                 ${btnPausarReanudar}
                                 <button class="btn btn-sm btn-outline-primary flex-fill" onclick="ModuloPulido._toggleEdicionSupervision('${s.id_pulido}')"><i class="fas fa-pen me-1"></i>Corregir</button>
                             </div>
@@ -1842,14 +1975,37 @@ const ModuloPulido = {
         const mensaje = body?.error || 'El reporte fue bloqueado por una regla de negocio.';
 
         if (!this._esAdminActivo()) {
-            await Swal.fire({
-                title: '🔒 Reporte bloqueado',
-                html: `<p>${mensaje}</p><p style="margin-top:10px; font-size:0.9em; color:#666;">Si el lote es real, pide a un ADMIN que lo autorice desde su sesión.</p>`,
-                icon: 'warning',
-                confirmButtonText: 'Entendido',
-                confirmButtonColor: '#f59e0b'
-            });
-            // No se encola localmente: reintentar solo repetiría el mismo bloqueo.
+            // En vez de descartar el intento (hallazgo 2026-09-01: si no
+            // había un ADMIN físico en la tablet, el dato simplemente se
+            // perdía), se guarda como solicitud pendiente con el payload
+            // completo -- un ADMIN la autoriza o rechaza después, desde su
+            // propio usuario, sin tocar la sesión de la operaria.
+            try {
+                await window.apiClient.post('/pulido/solicitar_autorizacion', {
+                    payload: data, tipo_bloqueo: codigo, motivo_bloqueo: mensaje,
+                });
+                await Swal.fire({
+                    title: '📋 Reporte guardado, falta autorización',
+                    html: `<p>${mensaje}</p><p style="margin-top:10px; font-size:0.9em; color:#666;">Tu dato ya quedó guardado -- un ADMIN lo va a revisar y autorizar. No hace falta que hagas nada más ni que lo repitas.</p>`,
+                    icon: 'info',
+                    confirmButtonText: 'Entendido',
+                    confirmButtonColor: '#3b82f6'
+                });
+                this.terminarCiclo();
+                this.limpiarSesionLocal();
+                const modal = document.getElementById('modal-reporte-final');
+                if (modal) modal.style.display = 'none';
+                this.limpiarFormulario();
+            } catch (e) {
+                console.error('[Pulido] No se pudo guardar la solicitud de autorización:', e);
+                await Swal.fire({
+                    title: '🔒 Reporte bloqueado',
+                    html: `<p>${mensaje}</p><p style="margin-top:10px; font-size:0.9em; color:#666;">Además, no se pudo guardar la solicitud para el ADMIN (sin conexión). Avísale directamente por ahora.</p>`,
+                    icon: 'warning',
+                    confirmButtonText: 'Entendido',
+                    confirmButtonColor: '#f59e0b'
+                });
+            }
             return;
         }
 

@@ -246,6 +246,38 @@ class PulidoOverride(db.Model):
     creado_en       = db.Column(db.DateTime,    default=get_colombia_time)
 
 
+class PulidoPendienteAutorizacion(db.Model):
+    """
+    Cola de reportes de Pulido bloqueados (fecha distinta a hoy o cantidad
+    que excede lo inyectado) esperando que un ADMIN los autorice -- plan
+    2026-09-01. Antes, un reporte bloqueado para una operaria normal
+    simplemente se perdía (no quedaba guardado en ningún lado): si no había
+    un ADMIN físicamente en su tablet para autorizarlo en el momento, tocaba
+    que se acordara y avisara. Ahora el intento se guarda aquí con el
+    payload completo, y el ADMIN lo autoriza o rechaza desde el Panel de
+    Supervisión, desde su propio usuario, sin tocar la sesión de la operaria.
+    """
+    __tablename__ = 'db_pulido_pendientes_autorizacion'
+    __table_args__ = {'extend_existing': True}
+
+    id                  = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    id_pulido           = db.Column(db.String(100), index=True, nullable=False)
+    responsable         = db.Column(db.String(200), nullable=True)
+    codigo              = db.Column(db.String(100), nullable=True)
+    orden_produccion    = db.Column(db.String(100), nullable=True)
+    lote                = db.Column(db.String(100), nullable=True)
+    cantidad_real       = db.Column(db.Numeric(12, 2), nullable=True)
+    fecha_trabajo       = db.Column(db.String(20),  nullable=True)  # fecha que puso la operaria en el formulario
+    tipo_bloqueo        = db.Column(db.String(50),  nullable=False)  # ej. PULIDO_FECHA_BLOQUEADA / PULIDO_CANTIDAD_EXCEDE_INYECTADO
+    motivo_bloqueo      = db.Column(db.Text,        nullable=True)  # mensaje real que devolvio el backend
+    payload_json        = db.Column(db.Text,        nullable=False)  # payload completo, para poder re-enviarlo tal cual si se autoriza
+    estado              = db.Column(db.String(20),  default='PENDIENTE')  # PENDIENTE / AUTORIZADO / RECHAZADO
+    resuelto_por        = db.Column(db.String(150), nullable=True)
+    motivo_resolucion   = db.Column(db.Text,        nullable=True)
+    creado_en           = db.Column(db.DateTime,    default=get_colombia_time)
+    resuelto_en         = db.Column(db.DateTime,    nullable=True)
+
+
 class RawVentas(db.Model):
     __tablename__ = 'db_ventas'
     __table_args__ = {'extend_existing': True}
