@@ -306,21 +306,55 @@ class ProgramacionService:
     def cancelar(id_target):
         """
         Fase 1b: libera una máquina cancelando por ID. Polimórfico: intenta
-        primero en la cola de ProgramacionInyeccion y, si no está ahí, en
-        ProduccionInyeccion (trabajo ya en curso) — un mismo botón de
-        'cancelar' cubre ambos casos.
+        primero en la cola de ProgramacionInyeccion (PK entero) y, si no
+        está ahí, en ProduccionInyeccion -- el trabajo YA EN CURSO -- un
+        mismo botón de 'cancelar' cubre ambos casos.
+
+        id_target llega como STRING desde la URL (ver mes_cancelar): la cola
+        se identifica por PK entero (ProgramacionInyeccion.id), pero el
+        trabajo activo que manda 'Liberar Máquina' (mes_control.js) es
+        `trabajo_activo.id_inyeccion` -- la llave de NEGOCIO tipo
+        'INY-62DF93AD', no el id SQL. Un mismo id_inyeccion agrupa VARIAS
+        filas de ProduccionInyeccion (una por referencia del montaje, ver
+        obtener_dashboard_mes) así que liberar el trabajo activo borra
+        TODAS las filas de ese id_inyeccion, no solo una -- dejar el resto
+        vivo re-marcaría la máquina como ocupada apenas se refresque el
+        dashboard.
+
+        Corrección 2026-09-02 (hallazgo en vivo): antes la ruta era
+        `<int:id_target>`, que rechazaba el id_inyeccion con 404 ANTES de
+        llegar aquí -- 'Liberar Máquina' cancelaba bien la cola pero
+        siempre terminaba en error al intentar soltar el trabajo activo.
         """
         try:
             encontrado = False
-            prog = db.session.get(ProgramacionInyeccion, id_target)
-            if prog:
-                db.session.delete(prog)
-                encontrado = True
+
+            id_entero = None
+            try:
+                id_entero = int(id_target)
+            except (TypeError, ValueError):
+                pass
+
+            if id_entero is not None:
+                prog = db.session.get(ProgramacionInyeccion, id_entero)
+                if prog:
+                    db.session.delete(prog)
+                    encontrado = True
+
+                if not encontrado:
+                    inyeccion = db.session.get(ProduccionInyeccion, id_entero)
+                    if inyeccion:
+                        db.session.delete(inyeccion)
+                        encontrado = True
 
             if not encontrado:
-                inyeccion = db.session.get(ProduccionInyeccion, id_target)
-                if inyeccion:
-                    db.session.delete(inyeccion)
+                # id_inyeccion (string): borra TODO el lote, no una sola fila.
+                filas_lote = db.session.query(ProduccionInyeccion).filter(
+                    ProduccionInyeccion.id_inyeccion == id_target
+                ).all()
+                if filas_lote:
+                    for fila in filas_lote:
+                        db.session.delete(fila)
                     encontrado = True
 
             if not encontrado:

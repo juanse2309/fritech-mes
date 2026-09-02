@@ -101,10 +101,17 @@ def mes_retomar():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@programacion_bp.route('/api/mes/cancelar/<int:id_target>', methods=['POST'])
+@programacion_bp.route('/api/mes/cancelar/<id_target>', methods=['POST'])
 @require_role(ROLES_PLANTA)
 def mes_cancelar(id_target):
-    """Fase 1b: libera máquina cancelando por ID (Programación o Producción activa)."""
+    """
+    Fase 1b: libera máquina cancelando por ID (Programación o Producción
+    activa). Sin convertidor <int:...> a propósito: el trabajo activo se
+    identifica por id_inyeccion (string tipo 'INY-62DF93AD'), no por PK
+    entero -- ver ProgramacionService.cancelar para el porqué. Con
+    <int:...> este endpoint devolvía 404 antes de ejecutar nada cada vez
+    que 'Liberar Máquina' intentaba soltar el trabajo en curso.
+    """
     try:
         ProgramacionService.cancelar(id_target)
         return jsonify({'success': True}), 200

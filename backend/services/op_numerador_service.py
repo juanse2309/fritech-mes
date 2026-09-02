@@ -32,6 +32,7 @@ WO -- decision explicita de la jefa: "seguir con ese, para todo,
 inyeccion ensamble y empaque, con los OP seguidos como ya estan".
 """
 import logging
+import os
 from datetime import date as date_cls
 
 from sqlalchemy import text
@@ -140,6 +141,71 @@ class OpNumeradorService:
         return int(fila) if fila is not None else 0
 
     @staticmethod
+    def _piso_wo_en_vivo():
+        """
+        Consulta EN VIVO (no el espejo db_op_wo_staging) el maximo
+        Numero_de_Documento ocupado en el bloque activo de WO -- de
+        CUALQUIER Tipo_de_Documento, no solo 'OP'.
+
+        Nace de la colision real 2026-09-01/02: db_op_wo_staging solo se
+        actualiza cuando corre el agente sincronizador, asi que puede
+        quedar desactualizado varias horas frente a lo que ya existe en
+        WO. Ademas solo persiste documentos tipo 'OP' -- si otro tipo de
+        documento ocupa un numero dentro del bloque activo, el espejo
+        nunca se entera. Esta consulta lee la fuente real, sin ese punto
+        ciego.
+
+        Best-effort a proposito: pyodbc y el driver de SQL Server NO son
+        dependencia del deploy web (requirements.txt no lo incluye -- solo
+        lo usan los agentes on-premise agente_wo*.py), y el servidor de WO
+        solo es alcanzable desde la red local de la planta. Si algo falla
+        (modulo ausente, sin red, credenciales, timeout) se devuelve
+        (None, motivo) en vez de tumbar el diagnostico: es una
+        verificacion adicional, no un reemplazo de _piso_wo() ni algo de
+        lo que dependa reservar una OP real (ver obtener_o_reservar) --
+        ese camino no debe depender de la disponibilidad de otra red.
+        """
+        try:
+            import pyodbc
+        except ImportError:
+            return None, "pyodbc no esta instalado en este servidor (solo esta disponible donde corren los agentes on-premise)"
+
+        driver = os.getenv("WO_DB_DRIVER", "{ODBC Driver 17 for SQL Server}")
+        server = os.getenv("WO_SERVER")
+        database = os.getenv("WO_DB")
+        uid = os.getenv("WO_USER")
+        pwd = os.getenv("WO_PASSWORD")
+        if not all([server, database, uid, pwd]):
+            return None, "Credenciales de WO (WO_SERVER/WO_DB/WO_USER/WO_PASSWORD) no configuradas en este servidor"
+
+        conn_str = (
+            f"DRIVER={driver};SERVER={server};DATABASE={database};"
+            f"UID={uid};PWD={pwd};Timeout=6;"
+        )
+        try:
+            conn = pyodbc.connect(conn_str, timeout=6)
+        except Exception as e:
+            logger.warning(f"[OpNumerador] No se pudo conectar a WO en vivo para el diagnostico: {e}")
+            return None, f"No se pudo conectar a WO en vivo: {e}"
+
+        try:
+            cur = conn.cursor()
+            cur.execute(f"""
+                SELECT MAX(Numero_de_Documento)
+                FROM [{database}].[dbo].[Vista_Tabla_Encabezados]
+                WHERE Numero_de_Documento BETWEEN {BLOQUE_ACTIVO_MIN} AND {BLOQUE_ACTIVO_MAX}
+                  AND Anulado = 0
+            """)
+            fila = cur.fetchone()
+            valor = int(fila[0]) if fila and fila[0] is not None else 0
+            return valor, None
+        except Exception as e:
+            logger.warning(f"[OpNumerador] Fallo la consulta en vivo a WO para el diagnostico: {e}")
+            return None, f"Fallo la consulta en vivo a WO: {e}"
+        finally:
+            conn.close()
+
+    @staticmethod
     def _siguiente_consecutivo():
         """
         max(piso_wo, piso_local) + 1 + offset. Serie global: no distingue
@@ -216,14 +282,24 @@ class OpNumeradorService:
                 estado='RESERVADA',
                 creado_por=usuario,
             )
-            db.session.add(nueva)
             try:
-                db.session.flush()
+                # SAVEPOINT (begin_nested), no db.session.rollback(): un
+                # rollback de sesion completa deshace TODO lo que el
+                # llamador ya hubiera escrito antes de pedir la OP dentro
+                # de esta misma transaccion (hallazgo 2026-09-02, probado
+                # en vivo con rollback: al forzar una colision, un
+                # ROLLBACK de sesion borro silenciosamente reservas previas
+                # de la misma transaccion). Ningun llamador real escribe
+                # antes de obtener_o_reservar hoy, pero el metodo no debe
+                # depender de que eso se mantenga asi para siempre. El
+                # advisory lock no se ve afectado por un rollback a
+                # SAVEPOINT (solo lo libera el fin de la transaccion real),
+                # asi que tampoco hace falta re-adquirirlo entre intentos.
+                with db.session.begin_nested():
+                    db.session.add(nueva)
+                    db.session.flush()
                 return nueva
             except IntegrityError as e:
-                db.session.rollback()
-                # Re-adquirir el lock tras el rollback (el rollback lo libera).
-                db.session.execute(text("SELECT pg_advisory_xact_lock(hashtext('op_numerador:global'))"))
                 ultimo_error = e
                 logger.warning(
                     f"[OpNumerador] Colision al reservar {numero_op!r} "
@@ -263,10 +339,22 @@ class OpNumeradorService:
         Solo lectura: expone el estado del numerador sin reservar nada.
         Pensado para GET /api/wo/op/numerador/diagnostico y para verificar
         manualmente que piso_wo coincide con lo que se ve en WO.
+
+        Incluye ademas _piso_wo_en_vivo() -- una lectura directa a WO, no al
+        espejo -- que entra en el calculo de piso_efectivo/siguiente_consecutivo
+        cuando esta disponible y es mayor que lo que ya se sabia. Asi el
+        numero que este endpoint recomienda no depende de que el agente
+        sincronizador haya corrido recientemente (causa real de la colision
+        2026-09-01/02: el espejo seguia en 304176 mientras WO ya iba mas
+        adelante). Si la consulta en vivo falla (sin red a la planta, sin
+        pyodbc, etc.) simplemente no participa del calculo -- ver
+        piso_wo_en_vivo_error para el motivo.
         """
         piso_wo = OpNumeradorService._piso_wo()
         piso_local = OpNumeradorService._piso_local()
-        piso = max(piso_wo, piso_local, 0)
+        piso_wo_vivo, error_vivo = OpNumeradorService._piso_wo_en_vivo()
+
+        piso = max(piso_wo, piso_local, piso_wo_vivo or 0, 0)
         offset = OpNumeradorService._offset_seguridad()
         siguiente = piso + 1 + offset
 
@@ -281,6 +369,9 @@ class OpNumeradorService:
         return {
             'piso_wo_staging': piso_wo,
             'piso_local_generadas': piso_local,
+            'piso_wo_en_vivo': piso_wo_vivo,
+            'piso_wo_en_vivo_error': error_vivo,
+            'espejo_desactualizado': bool(piso_wo_vivo is not None and piso_wo_vivo > piso_wo),
             'piso_efectivo': piso,
             'offset_seguridad': offset,
             'siguiente_consecutivo': siguiente,
