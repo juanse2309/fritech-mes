@@ -1856,6 +1856,15 @@ window.ModuloDashboard = (function () {
             return Object.keys(refs).reduce((acc, r) => acc + (refs[r].cantidad_total || 0), 0);
         });
 
+        // Techo del eje X con margen extra a propósito ("hipódromo"): la meta
+        // se dibuja en el borde derecho del área del gráfico, así que si el
+        // máximo del eje coincidiera con la barra más larga, la meta quedaría
+        // pegada a quien va ganando. Con ~30% de aire (o 20 puntos extra en
+        // modo %), la meta se ve "casi alcanzable" pero ninguna barra real
+        // llega a tocarla -- pedido del usuario 2026-09-02.
+        const maxTotalOp = Math.max(1, ...totalPorOp);
+        const axisMax = enPorcentaje ? 120 : Math.ceil(maxTotalOp * 1.3 / 100) * 100;
+
         const valorDe = (nombreOp, idxOp, refsDeLaSerie) => {
             const refs = opRef[nombreOp] || {};
             const qty = refsDeLaSerie.reduce((acc, r) => acc + ((refs[r] || {}).cantidad_total || 0), 0);
@@ -1925,7 +1934,7 @@ window.ModuloDashboard = (function () {
                     x: {
                         stacked: true,
                         beginAtZero: true,
-                        max: enPorcentaje ? 100 : undefined,
+                        max: axisMax,
                         grid: { color: 'rgba(0,0,0,0.05)' },
                         ticks: { callback: (v) => enPorcentaje ? `${v}%` : v.toLocaleString() },
                         title: {
@@ -1984,7 +1993,22 @@ window.ModuloDashboard = (function () {
         const offsetX = canvasRect.left - overlayRect.left;
         const offsetY = canvasRect.top - overlayRect.top;
 
-        let html = '';
+        // Pista de hipódromo: línea de salida (borde izquierdo del área de
+        // dibujo) y meta con bandera (borde derecho) -- el techo del eje X
+        // (ver axisMax en renderChartPulidoMixReferencias) ya deja aire
+        // suficiente para que la meta nunca quede pegada a la barra líder.
+        const area = chart.chartArea;
+        const salidaX = area.left + offsetX;
+        const metaX = area.right + offsetX;
+        const pistaTop = area.top + offsetY;
+        const pistaAlto = area.bottom - area.top;
+
+        let html = `
+            <div style="position:absolute; left:${salidaX}px; top:${pistaTop}px; width:0; height:${pistaAlto}px; border-left:2px dashed rgba(148,163,184,0.55);"></div>
+            <div style="position:absolute; left:${metaX}px; top:${pistaTop}px; width:0; height:${pistaAlto}px; border-left:2px dashed rgba(100,116,139,0.6);"></div>
+            <div class="mix-race-meta" style="left:${metaX - 9}px; top:${pistaTop - 22}px;">🏁<span>META</span></div>
+        `;
+
         for (let i = 0; i < totalOps; i++) {
             const el = primerMeta.data[i];
             if (!el) continue;
@@ -1992,8 +2016,15 @@ window.ModuloDashboard = (function () {
             const x = xScale.getPixelForValue(valorTotal) + offsetX + 4;
             const y = el.y + offsetY;
             const color = colorCalorPorRango(i, totalOps);
-            // Más caliente = pulso más rápido (0.7s el líder, hasta ~1.6s el último).
-            const duracion = (0.7 + (totalOps > 1 ? (i / (totalOps - 1)) : 0) * 0.9).toFixed(2);
+            // Pedido del usuario 2026-09-02: el líder debe verse claramente
+            // más rápido (0.45s, fijo), y de ahí en adelante cada puesto un
+            // 10% más lento que el anterior (no un rango lineal fijo) -- así
+            // se ajusta solo sin importar cuántas operarias haya. Con tope en
+            // 1.35s para que ninguna se vea "congelada" aunque la lista sea
+            // larga (probado hasta 10 operarias, ver slice(0,10) en ops).
+            const duracion = i === 0
+                ? '0.45'
+                : Math.min(1.35, 0.9 * Math.pow(1.10, i - 1)).toFixed(2);
             html += `<span class="pulido-mix-race-icon" style="left:${x}px; top:${y}px; --heat-color:${color}; animation-duration:${duracion}s;">🐎</span>`;
         }
         overlay.innerHTML = html;
@@ -2266,6 +2297,130 @@ window.ModuloDashboard = (function () {
         });
     }
 
+    // Secciones saltables desde el índice rápido -- pedido del usuario
+    // 2026-09-02: el Dashboard IA es larguísimo, y en vez de scrollear todo
+    // quiere poder dar clic e ir directo a la parte que le interesa. IDs
+    // tomados de los que ya existía cada fila (dashboard-section-*) o,
+    // donde no había ninguno, uno nuevo agregado solo para esto
+    // (dash-nav-*) -- ver frontend/templates/index.html.
+    const SECCIONES_DASHBOARD_NAV = [
+        { id: 'dashboard-section-metrics-admin', label: 'Resumen', icon: 'fa-bolt' },
+        { id: 'dash-nav-comparativo-anual', label: 'Comparativo Anual', icon: 'fa-chart-area' },
+        { id: 'dash-nav-rendimiento-mensual', label: 'Rendimiento Mensual', icon: 'fa-chart-bar' },
+        { id: 'dashboard-section-incumplimiento', label: 'Backorder', icon: 'fa-history' },
+        { id: 'dash-nav-top-productos', label: 'Top Productos', icon: 'fa-star' },
+        { id: 'dashboard-section-sin-rotacion', label: 'Sin Rotación', icon: 'fa-boxes' },
+        { id: 'dashboard-section-inyeccion', label: 'Inyección', icon: 'fa-industry' },
+        { id: 'dashboard-section-tendencia', label: 'Tendencia', icon: 'fa-chart-line' },
+        { id: 'dash-nav-scrap-pnc', label: 'Scrap y PNC', icon: 'fa-dumpster' },
+        { id: 'dashboard-section-pulido-kpis', label: 'Ranking Pulido', icon: 'fa-medal' },
+        { id: 'dashboard-section-pulido-mix', label: 'Mix de Producción', icon: 'fa-layer-group' },
+        { id: 'dashboard-section-pulido-table', label: 'Tabla Pulido', icon: 'fa-table' }
+    ];
+
+    /**
+     * "Pinea" el índice rápido arriba del viewport al scrollear más allá de
+     * su posición natural -- a mano con JS y position:fixed, NO con
+     * position:sticky (ver comentario largo en dashboard.css sobre por qué
+     * #main-content rompe sticky aquí: tiene overflow:auto pero nunca
+     * scrollea internamente, así que sticky se calcula contra un scroll que
+     * no cambia y el pill se queda pegado a su ancestro en vez de quedar
+     * fijo en pantalla).
+     */
+    function activarPinIndiceRapido(cont) {
+        const placeholder = document.getElementById('dashboard-indice-rapido-placeholder');
+        const main = document.getElementById('main-content');
+        if (!placeholder || !main) return;
+
+        let anclaNatural = null;
+
+        function medirPosicionNatural() {
+            if (cont.classList.contains('pinned')) return;
+            anclaNatural = cont.getBoundingClientRect().top + window.scrollY;
+        }
+        medirPosicionNatural();
+
+        function actualizarPin() {
+            if (anclaNatural === null) return;
+            const mainRect = main.getBoundingClientRect();
+            if (window.scrollY >= anclaNatural) {
+                if (!cont.classList.contains('pinned')) {
+                    placeholder.style.height = `${cont.getBoundingClientRect().height}px`;
+                    placeholder.classList.add('active');
+                    cont.classList.add('pinned');
+                }
+                cont.style.left = `${mainRect.left}px`;
+                cont.style.width = `${mainRect.width}px`;
+            } else if (cont.classList.contains('pinned')) {
+                cont.classList.remove('pinned');
+                placeholder.classList.remove('active');
+                cont.style.left = '';
+                cont.style.width = '';
+                medirPosicionNatural();
+            }
+        }
+
+        window.addEventListener('scroll', actualizarPin, { passive: true });
+        window.addEventListener('resize', () => { medirPosicionNatural(); actualizarPin(); });
+        actualizarPin();
+    }
+
+    /**
+     * Construye el índice rápido: solo incluye secciones que existen y que
+     * aplicarPermisosVisuales() (ya corrida justo antes) dejó visibles --
+     * así un pill nunca apunta a una sección oculta por rol. Se ejecuta una
+     * sola vez (iniciar() está guardado por isInitialized), así que no hace
+     * falta reconstruirlo en cada refresco de datos.
+     */
+    function inicializarIndiceRapidoDashboard() {
+        const cont = document.getElementById('dashboard-indice-rapido');
+        if (!cont) return;
+
+        const disponibles = SECCIONES_DASHBOARD_NAV.filter(s => {
+            const el = document.getElementById(s.id);
+            return el && getComputedStyle(el).display !== 'none';
+        });
+
+        if (disponibles.length === 0) {
+            cont.innerHTML = '';
+            return;
+        }
+
+        cont.innerHTML = disponibles.map(s => `
+            <button type="button" class="dashboard-quicknav-item" data-target="${s.id}">
+                <i class="fas ${s.icon} me-1"></i>${s.label}
+            </button>
+        `).join('');
+
+        cont.querySelectorAll('.dashboard-quicknav-item').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const target = document.getElementById(btn.dataset.target);
+                if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            });
+        });
+
+        activarPinIndiceRapido(cont);
+
+        // Resalta el pill de la sección visible en pantalla mientras se hace
+        // scroll -- puramente cosmético, si IntersectionObserver no existe
+        // el índice sigue funcionando igual (solo sin el resaltado).
+        if ('IntersectionObserver' in window) {
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (!entry.isIntersecting) return;
+                    const btn = cont.querySelector(`[data-target="${entry.target.id}"]`);
+                    if (!btn) return;
+                    cont.querySelectorAll('.dashboard-quicknav-item.active').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                });
+            }, { rootMargin: '-96px 0px -70% 0px', threshold: 0 });
+            disponibles.forEach(s => {
+                const el = document.getElementById(s.id);
+                if (el) observer.observe(el);
+            });
+        }
+    }
+
 
     // Sincroniza el filtro global de fechas del dashboard (inputs + localStorage +
     // recarga de datos) de forma programatica, sin depender de que el usuario haga
@@ -2300,6 +2455,7 @@ window.ModuloDashboard = (function () {
         }
 
         aplicarPermisosVisuales();
+        inicializarIndiceRapidoDashboard();
 
         // Filtros de Incumplimiento (Interactive)
         const inputBusca = document.getElementById('buscador-incumplimiento');

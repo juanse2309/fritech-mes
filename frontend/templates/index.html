@@ -900,6 +900,14 @@
                     </div>
                 </header>
 
+                <!-- Índice rápido: en vez de scrollear toda la página, un clic salta
+                     directo a la sección (pedido del usuario 2026-09-02). Los pills se
+                     generan y filtran en JS (dashboard.js) contra las secciones reales
+                     de esta página -- así uno oculto por rol (data-role-access) no deja
+                     un pill muerto en la barra. -->
+                <div id="dashboard-indice-rapido" class="dashboard-quicknav"></div>
+                <div id="dashboard-indice-rapido-placeholder" class="dashboard-quicknav-placeholder"></div>
+
                 <div class="container-fluid py-4" style="background-color: #f8fafc; min-height: calc(100vh - 80px);">
 
                     <!-- Fila Superior: Insights IA, Medidor Principal y Calidad -->
@@ -1033,7 +1041,7 @@
                     <!-- NUEVOS PANELES DE JEFATURA (Reordenado: Prioridad Gerencia) -->
                     <div id="dashboard-section-jefatura" data-role-access="ADMIN,GERENCIA,COMERCIAL">
                         <!-- Row 1: Rendimiento Mensual -->
-                        <div class="row g-4 mb-4 mt-2">
+                        <div class="row g-4 mb-4 mt-2" id="dash-nav-comparativo-anual">
                             <div class="col-12">
                                 <div class="card h-100 shadow-sm border-0 rounded-4">
                                     <div
@@ -1067,7 +1075,7 @@
                         </div>
 
                         <!-- Row 1.5: Rendimiento Mensual Nuevo (Ventas vs Pedidos) -->
-                        <div class="row g-4 mb-4 mt-2">
+                        <div class="row g-4 mb-4 mt-2" id="dash-nav-rendimiento-mensual">
                             <div class="col-12 col-md-8">
                                 <div class="card h-100 shadow-sm border-0 rounded-4">
                                     <div class="card-header bg-white border-bottom-0 pb-0 d-flex justify-content-between align-items-center mt-3 mx-2">
@@ -1237,7 +1245,7 @@
                         </div>
 
                         <!-- Row 2: Top Productos (Mejores y Peores) -->
-                        <div class="row g-4 mb-4">
+                        <div class="row g-4 mb-4" id="dash-nav-top-productos">
                             <!-- Top 10 Mejores -->
                             <div class="col-12 col-lg-6">
                                 <div class="card h-100 shadow-sm border-0 rounded-4">
@@ -1411,7 +1419,7 @@
                         </div>
                     </div>
 
-                    <div class="row g-4 mb-4">
+                    <div class="row g-4 mb-4" id="dash-nav-scrap-pnc">
                         <!-- Scrap / PNC Pareteo Breakdown -->
                         <div class="col-12">
                             <div class="card shadow-sm border-0 h-100" style="border-radius: 16px;">

@@ -5,6 +5,78 @@
     margin-top: 20px;
 }
 
+/* Índice rápido del Dashboard IA: fila de pills que se "pega" arriba al
+   scrollear, para saltar directo a una sección sin scrollear toda la
+   página -- pedido del usuario 2026-09-02. Contenido generado por
+   inicializarIndiceRapidoDashboard() en dashboard.js.
+
+   NO se usa position:sticky: #main-content (el <main> real) tiene
+   `overflow: hidden auto` -- por spec CSS eso lo convierte en el
+   "contenedor de scroll" de cualquier sticky descendiente, aunque en la
+   práctica quien scrollea de verdad es la ventana (main-content.scrollTop
+   se queda siempre en 0). Con eso, sticky se calcula contra un scroll que
+   nunca cambia y el pill queda pegado a su ancestro en vez de al viewport
+   -- por eso el pin real se hace a mano con JS (position:fixed +
+   left/width leídos de #main-content, recalculados en cada scroll/resize
+   para seguir el sidebar colapsable). Ver actualizarPinIndiceRapido. */
+.dashboard-quicknav {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 10px 4px;
+    background: #f8fafc;
+}
+
+.dashboard-quicknav:empty {
+    padding: 0;
+}
+
+.dashboard-quicknav.pinned {
+    position: fixed;
+    top: 0;
+    z-index: 900;
+    margin: 0;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+.dashboard-quicknav-placeholder {
+    display: none;
+}
+
+.dashboard-quicknav-placeholder.active {
+    display: block;
+}
+
+.dashboard-quicknav::-webkit-scrollbar {
+    height: 4px;
+}
+
+.dashboard-quicknav-item {
+    flex-shrink: 0;
+    padding: 6px 14px;
+    border-radius: 999px;
+    background: white;
+    border: 1px solid #e2e8f0;
+    color: #475569;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.dashboard-quicknav-item:hover {
+    background: #eff6ff;
+    border-color: #93c5fd;
+    color: #1d4ed8;
+}
+
+.dashboard-quicknav-item.active {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: white;
+}
+
 .dashboard-card {
     background: white;
     border: 1px solid #e5e7eb;
@@ -259,9 +331,12 @@
     animation: pulido-race-crown-glow 1.4s ease-in-out infinite;
 }
 
+/* scaleX(-1) al final: el emoji 🐎 mira de fábrica hacia la izquierda, así
+   que sin espejo el caballo corre en sentido contrario a como crecen las
+   barras -- pedido del usuario 2026-09-02. */
 @keyframes pulido-race-gallop {
-    0%, 100% { transform: translateY(-50%) rotate(-8deg); }
-    50% { transform: translateY(calc(-50% - 3px)) rotate(8deg); }
+    0%, 100% { transform: translateY(-50%) rotate(-8deg) scaleX(-1); }
+    50% { transform: translateY(calc(-50% - 3px)) rotate(8deg) scaleX(-1); }
 }
 
 .pulido-race-icon-horse {
@@ -282,15 +357,43 @@
     animation-iteration-count: infinite;
 }
 
+/* Mismo salto/rebote que pulido-race-gallop (pedido del usuario 2026-09-02:
+   quiere ese movimiento en las dos gráficas, no el pulso de escala que
+   tenía antes) + scaleX(-1) para correr hacia la meta. El color de calor
+   por puesto se conserva vía drop-shadow, con brillo fijo -- la intensidad
+   por puesto ya la da la velocidad de la animación (animation-duration,
+   calculada en JS), no falta que el glow también pulse. */
 @keyframes pulido-mix-heat {
     0%, 100% {
-        transform: translateY(-50%) scale(1);
-        filter: drop-shadow(0 0 2px var(--heat-color, #f59e0b)) drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25));
+        transform: translateY(-50%) rotate(-8deg) scaleX(-1);
+        filter: drop-shadow(0 0 3px var(--heat-color, #f59e0b)) drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25));
     }
     50% {
-        transform: translateY(-50%) scale(1.18);
-        filter: drop-shadow(0 0 9px var(--heat-color, #f59e0b)) drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25));
+        transform: translateY(calc(-50% - 3px)) rotate(8deg) scaleX(-1);
+        filter: drop-shadow(0 0 3px var(--heat-color, #f59e0b)) drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25));
     }
+}
+
+/* Meta del "hipódromo": bandera + etiqueta en el borde derecho del área de
+   dibujo, más allá de donde puede llegar cualquier barra real (ver axisMax
+   en renderChartPulidoMixReferencias) -- se ve alcanzable pero nunca se
+   toca. Posición (left/top) la calcula posicionarIconosCarreraMix. */
+.mix-race-meta {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    font-size: 1.05rem;
+    line-height: 1;
+    pointer-events: none;
+}
+
+.mix-race-meta span {
+    font-size: 0.55rem;
+    font-weight: 700;
+    color: #64748b;
+    letter-spacing: 0.05em;
 }
 
 /* RESPONSIVE */
