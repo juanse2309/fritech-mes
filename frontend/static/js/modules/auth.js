@@ -73,6 +73,10 @@ const AuthModule = {
         'JEFE ALMACEN': ['inventario', 'inyeccion', 'facturacion', 'almacen', 'pedidos', 'asistencia', 'exportacion-wo'],
         'JEFE ALISTAMIENTO': ['inventario', 'inyeccion', 'ensamble', 'empaque', 'facturacion', 'almacen', 'pedidos', 'asistencia', 'exportacion-wo'],
         'AUXILIAR INVENTARIO': ['inventario', 'inyeccion', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc', 'historial', 'asistencia'],
+        // Antes no tenía entrada propia: sobrevivía solo por la coincidencia
+        // parcial de getPagesForRole ("JEFE AUXILIAR INVENTARIO".includes("AUXILIAR INVENTARIO"))
+        // -- funcionaba, pero dependía frágilmente del orden de iteración del objeto.
+        'JEFE AUXILIAR INVENTARIO': ['inventario', 'inyeccion', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc', 'historial', 'asistencia'],
         'JEFE INYECCION': ['dashboard', 'inyeccion', 'simulador', 'mezcla', 'asistencia', 'exportacion-wo'],
         'INYECCION': ['dashboard', 'inyeccion', 'mezcla', 'asistencia'],
         'JEFE PULIDO': ['dashboard', 'pulido', 'historial', 'asistencia', 'exportacion-wo'],
