@@ -11,6 +11,7 @@ from backend.utils.formatters import normalizar_codigo, preservar_o_normalizar_p
 from backend.services.audit_service import AuditService, OwnershipMismatchException, TurnoInvalidoException
 from backend.services.pulido_service import PulidoService, FechaPulidoInvalidaException, CantidadExcedeInyectadoException
 from backend.services.pausas_service import PausasService
+from backend.services.programacion_pulido_service import ProgramacionPulidoService
 from backend.utils.time_utils import get_colombia_time
 import uuid
 from datetime import datetime
@@ -408,6 +409,20 @@ def _ejecutar_persistencia_pulido(registro, data, responsable, ahora,
             logger.debug(f"🧪 [SANDBOX] Lote de prueba {registro.id_pulido}. Se ignoró impacto en inventario.")
     except Exception as err:
         logger.error(f"Error actualizando inventario directo en pulido: {err}")
+
+    # ── Sincronización con la Programación de Pulido (plan 2026-09-02) ──
+    # Silenciosa a propósito: un fallo acá jamás debe tumbar el guardado
+    # real del reporte, solo dejar la tarjeta programada desincronizada
+    # (se puede corregir a mano desde el panel de Programación).
+    try:
+        id_programacion_pulido = data.get('id_programacion_pulido')
+        if id_programacion_pulido:
+            ProgramacionPulidoService.vincular_inicio(id_programacion_pulido, registro.id_pulido)
+        ProgramacionPulidoService.marcar_finalizada_si_corresponde(registro.id_pulido, registro.estado)
+    except Exception as err_prog:
+        logger.warning(
+            f"⚠️ [PROGRAMACION-PULIDO] No se pudo sincronizar la tarjeta programada de {registro.id_pulido}: {err_prog}"
+        )
 
     for tipo_bloqueo, detalle_bloqueo in overrides_aplicados:
         db.session.add(PulidoOverride(

@@ -278,6 +278,34 @@ class PulidoPendienteAutorizacion(db.Model):
     resuelto_en         = db.Column(db.DateTime,    nullable=True)
 
 
+class ProgramacionPulido(db.Model):
+    """
+    Programación diaria de Pulido (plan 2026-09-02): el ADMIN arma, por
+    operaria, la cola de qué pulir hoy y en qué orden (OP + referencia +
+    cantidad objetivo + prioridad). Separada de ProduccionPulido (la
+    ejecución real, con horas/cantidad real/PNC) -- mismo patrón ya
+    probado en Inyección (ver ProgramacionInyeccion / ProduccionInyeccion):
+    la fila de programación es el plan, `id_pulido` la vincula con la fila
+    de ejecución real una vez que la operaria le da "Iniciar".
+    """
+    __tablename__ = 'db_programacion_pulido'
+    __table_args__ = {'extend_existing': True}
+
+    id                  = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    fecha               = db.Column(db.Date, index=True, nullable=False)
+    orden_produccion    = db.Column(db.String(100), index=True, nullable=False)
+    codigo              = db.Column(db.String(100), index=True, nullable=False)
+    lote                = db.Column(db.String(100), nullable=True)  # lo que diga la bolsa física, junto a OP/referencia
+    cantidad_objetivo   = db.Column(db.Numeric(18, 2), default=0)
+    operaria            = db.Column(db.String(200), index=True, nullable=False)
+    orden_prioridad     = db.Column(db.Integer, default=1)
+    estado              = db.Column(db.String(30), default='PROGRAMADO')  # PROGRAMADO / EN_PROCESO / FINALIZADO
+    responsable_planta  = db.Column(db.String(150), nullable=True)  # ADMIN que armó la cola
+    observaciones       = db.Column(db.Text, nullable=True)
+    id_pulido           = db.Column(db.String(100), index=True, nullable=True)  # vínculo con db_pulido tras iniciar
+    creado_en           = db.Column(db.DateTime, default=get_colombia_time)
+
+
 class RawVentas(db.Model):
     __tablename__ = 'db_ventas'
     __table_args__ = {'extend_existing': True}

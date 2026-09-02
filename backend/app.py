@@ -200,6 +200,7 @@ from backend.routes.dashboard_routes import dashboard_bp
 from backend.routes.admin_routes import admin_bp
 from backend.routes.inyeccion_routes import inyeccion_bp
 from backend.routes.pulido_routes import pulido_bp
+from backend.routes.programacion_pulido_routes import programacion_pulido_bp
 from backend.routes.asistencia_routes import asistencia_bp
 from backend.routes.productos_routes import productos_bp
 from backend.routes.historial_routes import historial_bp
@@ -244,6 +245,7 @@ app.register_blueprint(comercial_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(inyeccion_bp)
 app.register_blueprint(pulido_bp)
+app.register_blueprint(programacion_pulido_bp)
 app.register_blueprint(asistencia_bp, url_prefix='/api/asistencia')
 app.register_blueprint(ensamble_bp)
 app.register_blueprint(empaque_bp)
@@ -293,7 +295,7 @@ def serve_manifest():
 # (cache-busting de CSS/JS en index.html, footer, loader). Distinta de
 # _APP_VERSION de abajo, que es el hash del deploy activo para detectar
 # frontend desactualizado -- no confundir ambas.
-RELEASE_VERSION = "1.8.45"
+RELEASE_VERSION = "1.8.48"
 
 # --- VERSION DEL DEPLOY ACTIVO ---
 # RENDER_GIT_COMMIT la puebla Render automaticamente en cada deploy (no hay

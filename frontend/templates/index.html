@@ -2461,9 +2461,16 @@
                          pensado para cuando varias trabajen en tablets compartidas.
                          Oculto por defecto -- ModuloPulido.inicializar() lo muestra
                          según el rol de la sesión activa. -->
-                    <button type="button" id="btn-panel-supervision-pulido" class="btn btn-sm btn-outline-dark rounded-pill"
-                        style="display:none;" onclick="ModuloPulido.abrirPanelSupervision()">
+                    <button type="button" id="btn-panel-supervision-pulido" class="btn btn-sm btn-pulido-header-action"
+                        style="display:none; background: linear-gradient(135deg,#0ea5e9,#0369a1);" onclick="ModuloPulido.abrirPanelSupervision()">
                         <i class="fas fa-eye me-1"></i> Supervisión
+                    </button>
+                    <!-- Programación de Pulido (plan 2026-09-02): solo ADMIN -- arma la cola
+                         diaria de cada operaria. Oculto por defecto, igual que Supervisión --
+                         ModuloPulido.inicializar() lo muestra según el rol de la sesión activa. -->
+                    <button type="button" id="btn-panel-programacion-pulido" class="btn btn-sm btn-pulido-header-action"
+                        style="display:none; background: linear-gradient(135deg,#8b5cf6,#6d28d9);" onclick="ModuloPulido.abrirPanelProgramacion()">
+                        <i class="fas fa-calendar-days me-1"></i> Programación
                     </button>
                     <span id="badge-auto-refresh-supervision" class="badge rounded-pill text-bg-light border" style="display:none; font-size: 0.65rem;" title="Se refresca solo cada 15s">
                         <i class="fas fa-sync-alt me-1"></i><span id="badge-auto-refresh-cuenta">15</span>s
@@ -2475,12 +2482,16 @@
                 </div>
             </header>
 
-            <div class="mode-selector-container px-4 py-2 bg-light border-bottom d-flex justify-content-center align-items-center gap-3 flex-wrap">
-                <span class="text-muted fw-bold small"><i class="fas fa-satellite me-1"></i> MODO SATÉLITE</span>
-                <div class="form-check form-switch custom-switch-lg">
-                    <input class="form-check-input" type="checkbox" id="toggle-pulido-mode" onchange="ModuloPulido.cambiarModo(this.checked)" checked>
-                </div>
-                <span class="text-primary fw-bold small"><i class="fas fa-microchip me-1"></i> MODO PLANTA (PRO)</span>
+            <div class="mode-selector-container px-4 py-3 bg-light border-bottom d-flex justify-content-center align-items-center gap-2 flex-wrap">
+                <button type="button" id="btn-modo-satelite" class="btn btn-modo-pulido" onclick="ModuloPulido.cambiarModo('satelite')">
+                    <i class="fas fa-satellite"></i> Modo Satélite
+                </button>
+                <button type="button" id="btn-modo-pro" class="btn btn-modo-pulido" onclick="ModuloPulido.cambiarModo('pro')">
+                    <i class="fas fa-microchip"></i> Modo Planta PRO
+                </button>
+                <button type="button" id="btn-modo-programado" class="btn btn-modo-pulido" onclick="ModuloPulido.cambiarModo('programado')">
+                    <i class="fas fa-list-check"></i> Modo Programado
+                </button>
             </div>
 
             <!-- Panel de Supervisión de Pulido (rediseño 2026-08-31): vista fija de
@@ -2687,11 +2698,128 @@
                     </div>
                 </div>
 
+                <!-- PANEL C: MODO PROGRAMADO (plan 2026-09-02) -->
+                <div id="panel-pulido-programado" style="display: none;">
+                    <div id="programado-vacio" class="text-center py-5" style="display:none;">
+                        <i class="fas fa-clipboard-check text-muted mb-3" style="font-size: 3rem;"></i>
+                        <h5 class="text-dark fw-700" id="programado-vacio-titulo">No tienes tareas programadas hoy</h5>
+                        <p class="text-muted small" id="programado-vacio-subtitulo">Cuando te armen la cola del día, aparecerá aquí.</p>
+                    </div>
+                    <div id="programado-lista-tareas" class="d-flex flex-column gap-3"></div>
+                </div>
+
             </div>
 
 
 
         </div>
+        </div>
+
+        <!-- PANEL DE PROGRAMACIÓN DE PULIDO (plan 2026-09-02): pantalla de pantalla
+             completa para el ADMIN -- arma la cola diaria por operaria a partir del
+             saldo real por pulir. Mismo patrón de overlay fijo que Supervisión. -->
+        <div id="panel-programacion-pulido-fijo" style="display:none; position: fixed; inset: 0; z-index: 1050; background: #f8fafc; overflow-y: auto; overflow-x: hidden;">
+            <div class="d-flex justify-content-between align-items-center px-4 py-3 bg-white border-bottom shadow-sm sticky-top">
+                <h5 class="mb-0 fw-800"><i class="fas fa-calendar-days me-2 text-primary"></i>Programación de Pulido</h5>
+                <div class="d-flex align-items-center gap-2">
+                    <input type="date" id="programacion-fecha-input" class="form-control form-control-sm" style="width: 160px;" onchange="ModuloPulido.cargarPanelProgramacion()">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="ModuloPulido.cargarPanelProgramacion()" title="Refrescar">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                    <button type="button" class="btn btn-sm btn-dark" onclick="ModuloPulido.cerrarPanelProgramacion()">
+                        <i class="fas fa-arrow-left me-1"></i> Volver a Mi Trabajo
+                    </button>
+                </div>
+            </div>
+
+            <div class="p-4">
+                <!-- Saldo disponible por OP/referencia -->
+                <div class="card border-0 shadow-sm mb-4">
+                    <div class="card-body">
+                        <h6 class="fw-800 mb-3"><i class="fas fa-cubes me-2 text-primary"></i>Saldo disponible por pulir</h6>
+                        <div class="table-responsive" style="max-height: 260px; overflow-y: auto;">
+                            <table class="table table-sm table-hover align-middle mb-0">
+                                <thead class="sticky-top bg-white">
+                                    <tr class="text-muted small text-uppercase">
+                                        <th>OP</th>
+                                        <th>Referencia</th>
+                                        <th class="text-end">Inyectado</th>
+                                        <th class="text-end">Pulido</th>
+                                        <th class="text-end">Ya asignado</th>
+                                        <th class="text-end">Disponible</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="programacion-saldo-tbody">
+                                    <tr><td colspan="6" class="text-center text-muted py-3">Cargando...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row g-4">
+                    <!-- Formulario para agregar tareas a la cola de una operaria -->
+                    <div class="col-12 col-lg-5">
+                        <div class="card border-0 shadow-sm">
+                            <div class="card-body">
+                                <h6 class="fw-800 mb-3"><i class="fas fa-plus-circle me-2 text-primary"></i>Asignar tarea</h6>
+                                <p class="text-muted small mb-3">Copia lo que dice la bolsa física: referencia, OP y lote. El orden lo da el orden en que las vayas agregando abajo.</p>
+                                <div class="mb-2">
+                                    <label class="form-label small fw-bold">Operaria</label>
+                                    <select id="programacion-operaria-select" class="form-select form-select-sm" onchange="ModuloPulido._alCambiarOperariaProgramacion()"></select>
+                                </div>
+                                <div class="row g-2 mb-2">
+                                    <div class="col-6 position-relative">
+                                        <label class="form-label small fw-bold">Referencia</label>
+                                        <input type="text" id="programacion-referencia-input" class="form-control form-control-sm" placeholder="Ej: FR-9304" autocomplete="off">
+                                        <div id="programacion-referencia-suggestions" class="autocomplete-suggestions" style="top: 100%; left: 0.75rem; right: 0.75rem; width: auto; z-index: 1000;"></div>
+                                    </div>
+                                    <div class="col-6 position-relative">
+                                        <label class="form-label small fw-bold">OP</label>
+                                        <input type="text" id="programacion-op-input" class="form-control form-control-sm" placeholder="Ej: 30130" autocomplete="off">
+                                        <div id="programacion-op-suggestions" class="autocomplete-suggestions" style="top: 100%; left: 0.75rem; right: 0.75rem; width: auto; z-index: 1000;"></div>
+                                    </div>
+                                </div>
+                                <div id="programacion-saldo-hint" class="small mb-2"></div>
+                                <div class="row g-2 mb-2">
+                                    <div class="col-6">
+                                        <label class="form-label small fw-bold">Lote (opcional)</label>
+                                        <input type="date" id="programacion-lote-input" class="form-control form-control-sm">
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label small fw-bold">Cantidad objetivo</label>
+                                        <input type="number" id="programacion-cantidad-input" class="form-control form-control-sm" min="0">
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label small fw-bold">Observaciones (opcional)</label>
+                                    <textarea id="programacion-observaciones-input" class="form-control form-control-sm" rows="2"></textarea>
+                                </div>
+                                <button type="button" class="btn btn-sm btn-outline-primary w-100 mb-2" onclick="ModuloPulido.agregarItemBorradorProgramacion()">
+                                    <i class="fas fa-list-ol me-1"></i> Agregar a la cola del día
+                                </button>
+                                <div id="programacion-borrador-lista" class="d-flex flex-column gap-2 mb-3"></div>
+                                <button type="button" class="btn btn-primary w-100 fw-bold" onclick="ModuloPulido.guardarProgramacion()">
+                                    <i class="fas fa-cloud-upload-alt me-1"></i> Guardar programación
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Cola del día por operaria -->
+                    <div class="col-12 col-lg-7">
+                        <div class="card border-0 shadow-sm h-100">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-center mb-3">
+                                    <h6 class="fw-800 mb-0"><i class="fas fa-list-check me-2 text-primary"></i>Cola del día</h6>
+                                    <select id="programacion-ver-operaria-select" class="form-select form-select-sm" style="width: 220px;" onchange="ModuloPulido.renderColaOperariaAdmin()"></select>
+                                </div>
+                                <div id="programacion-cola-operaria-vista" class="d-flex flex-column gap-2"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- MODAL DE REPORTE FINAL (PARA MODO PRO) -->

@@ -94,6 +94,7 @@ const ModuloPulido = {
         await this.verificarTrabajoActivo(); // Rehidratar desde SQL
         this.cargarEstadoLocal(); // Fallback/Sync local
         this._actualizarVisibilidadPanelSupervision();
+        this._actualizarVisibilidadPanelProgramacion();
 
         // Verificación de reportes pendientes por fallo de red previo
         this.verificarReportesPendientes();
@@ -104,11 +105,10 @@ const ModuloPulido = {
         // Keep-Alive: Ping al servidor cada 5 min para evitar que Render se duerma
         this.iniciarPingServidor();
 
-        // Sync default mode state based on switch
-        const switchEl = document.getElementById('toggle-pulido-mode');
-        if (switchEl) {
-            this.cambiarModo(switchEl.checked);
-        }
+        // Modo por defecto: PRO (mismo default que tenía el switch legacy,
+        // checked=true). Si ya hay una sesión activa restaurada de SQL,
+        // igual se muestra el panel PRO -- es el único con cronómetro.
+        this.cambiarModo('pro');
 
         // Si cambia el usuario en el mismo navegador (tablet compartida),
         // cortar intervalos y cargar estado del nuevo operario.
@@ -118,6 +118,7 @@ const ModuloPulido = {
             this.cargarCacheUI();
             this.verificarTrabajoActivo().then(() => this.cargarEstadoLocal());
             this._actualizarVisibilidadPanelSupervision();
+            this._actualizarVisibilidadPanelProgramacion();
         };
         document.addEventListener('user-ready', onUserReady);
     },
@@ -374,25 +375,44 @@ const ModuloPulido = {
         }
     },
 
-    cambiarModo: function (isPro) {
-        console.log("🔄 Cambiando a Modo:", isPro ? "PRO (Planta)" : "MANUAL (Satélite)");
+    // modo: 'satelite' | 'pro' | 'programado'. Reemplaza el switch binario
+    // (plan 2026-09-02) por 3 botones tipo segmented-control -- ver
+    // #btn-modo-satelite/#btn-modo-pro/#btn-modo-programado en index.html.
+    // Si hay una sesión activa (venga o no de una tarjeta programada), el
+    // tab "Programado" reusa el panel PRO en vez de la lista de tarjetas:
+    // el motor de cronómetro es uno solo, no hay dos timers corriendo.
+    cambiarModo: function (modo) {
+        if (modo === true || modo === false) modo = modo ? 'pro' : 'satelite'; // compat legacy
+        if (modo === 'programado' && this.sesionActiva) modo = 'pro';
+
+        console.log("🔄 Cambiando a Modo:", modo);
         const panelManual = document.getElementById('panel-pulido-manual');
         const panelPro = document.getElementById('panel-pulido-pro');
+        const panelProgramado = document.getElementById('panel-pulido-programado');
         const panelLotes = document.getElementById('panel-pulido-lotes');
         const btnVoz = document.getElementById('btn-dictar-voz');
+        const seccionCompartida = document.getElementById('shared-pulido-section');
 
-        // Ocultar Panel C cuando se usa el toggle legacy
+        // Ocultar Panel de lotes (dictado por voz) al cambiar de modo
         if (panelLotes) panelLotes.style.display = 'none';
 
-        if (isPro) {
-            panelManual.style.display = 'none';
-            panelPro.style.display = 'block';
-            if(btnVoz) btnVoz.style.display = 'none';
-        } else {
-            panelManual.style.display = 'block';
-            panelPro.style.display = 'none';
-            if(btnVoz) btnVoz.style.display = 'inline-flex';
-        }
+        panelManual.style.display = modo === 'satelite' ? 'block' : 'none';
+        panelPro.style.display = modo === 'pro' ? 'block' : 'none';
+        if (panelProgramado) panelProgramado.style.display = modo === 'programado' ? 'block' : 'none';
+        if (btnVoz) btnVoz.style.display = modo === 'satelite' ? 'inline-flex' : 'none';
+        // "Modo Programado" en reposo es solo tarjetas (como Supervisión) --
+        // el formulario compartido (Fecha/Responsable/Referencia/OP/Lote) no
+        // pinta nada ahí, solo aplica cuando de verdad se está reportando
+        // (Satélite/PRO, o Programado ya redirigido a PRO por sesión activa).
+        if (seccionCompartida) seccionCompartida.style.display = modo === 'programado' ? 'none' : 'block';
+
+        ['satelite', 'pro', 'programado'].forEach(m => {
+            const btn = document.getElementById(`btn-modo-${m}`);
+            if (btn) btn.classList.toggle('activo', m === modo);
+        });
+
+        this._modoActivo = modo;
+        if (modo === 'programado') this.cargarColaProgramada();
     },
 
 
@@ -742,6 +762,13 @@ const ModuloPulido = {
             fecha_inicio: fechaInicioStr
         };
 
+        // Si esta jornada arrancó desde una tarjeta de "Modo Programado",
+        // el backend usa esto UNA sola vez para vincular la tarjeta con
+        // esta sesión (ver ProgramacionPulidoService.vincular_inicio).
+        if (this.idProgramacionPulidoActiva) {
+            data.id_programacion_pulido = this.idProgramacionPulidoActiva;
+        }
+
         try {
             await fetch('/api/pulido', {
                 method: 'POST',
@@ -751,6 +778,8 @@ const ModuloPulido = {
             console.log("✅ [Pulido] Inicio persistido en SQL inmediatamente.");
         } catch (e) {
             console.error("Error persistencia inmediata:", e);
+        } finally {
+            this.idProgramacionPulidoActiva = null;
         }
     },
 
@@ -2262,6 +2291,29 @@ const ModuloPulido = {
             inputOP.addEventListener('input', mostrarSugerenciasOP);
         }
 
+        // Referencia/OP del panel de Programación (plan 2026-09-02 v3): mismo
+        // componente de sugerencias que el resto del módulo -- antes usaban
+        // <datalist>, que en varios navegadores se pinta como un cuadro
+        // nativo feo y sin estilo propio. Escribir cualquiera de los dos
+        // campos sugiere filas reales de this._saldoProgramacion; elegir una
+        // llena Referencia Y OP a la vez (identifican una sola fila).
+        const inputRefProg = document.getElementById('programacion-referencia-input');
+        const suggRefProg = document.getElementById('programacion-referencia-suggestions');
+        if (inputRefProg && suggRefProg) {
+            inputRefProg.addEventListener('input', () => {
+                this._mostrarSugerenciasProgramacion(inputRefProg, suggRefProg);
+                this._actualizarHintSaldoProgramacion();
+            });
+        }
+        const inputOpProg = document.getElementById('programacion-op-input');
+        const suggOpProg = document.getElementById('programacion-op-suggestions');
+        if (inputOpProg && suggOpProg) {
+            inputOpProg.addEventListener('input', () => {
+                this._mostrarSugerenciasProgramacion(inputOpProg, suggOpProg);
+                this._actualizarHintSaldoProgramacion();
+            });
+        }
+
         // Click outside suggestions. El campo OP abre su lista en 'focus' (no
         // en 'input', como los otros dos) -- el mismo click que dispara el
         // foco burbujea hasta aquí un instante después y, sin este guard,
@@ -2269,12 +2321,50 @@ const ModuloPulido = {
         // el input, no un descendiente de .autocomplete-suggestions).
         document.addEventListener('click', (e) => {
             const esInputConSugerencias = e.target.matches(
-                '#responsable-pulido-input, #buscador-productos, #orden-produccion-pulido'
+                '#responsable-pulido-input, #buscador-productos, #orden-produccion-pulido, ' +
+                '#programacion-referencia-input, #programacion-op-input'
             );
             if (!esInputConSugerencias && !e.target.closest('.autocomplete-suggestions')) {
                 document.querySelectorAll('.autocomplete-suggestions').forEach(el => el.classList.remove('active'));
             }
         });
+    },
+
+    // Sugerencias de Referencia/OP del panel de Programación: busca en
+    // this._saldoProgramacion (ya cargado por _cargarSaldoProgramacion) por
+    // coincidencia en cualquiera de los dos campos -- una fila identifica
+    // ambos a la vez, así que elegirla llena los dos inputs de una.
+    _filtrarSaldoProgramacion: function (query) {
+        const q = String(query || '').trim().toUpperCase();
+        if (!q) return [];
+        return (this._saldoProgramacion || [])
+            .filter(f => String(f.referencia).toUpperCase().includes(q) || String(f.orden_produccion).toUpperCase().includes(q))
+            .sort((a, b) => b.disponible - a.disponible)
+            .slice(0, 8);
+    },
+
+    _mostrarSugerenciasProgramacion: function (inputEl, containerEl) {
+        const resultados = this._filtrarSaldoProgramacion(inputEl.value);
+        if (!resultados.length) { containerEl.classList.remove('active'); return; }
+
+        containerEl.innerHTML = resultados.map(f => `
+            <div class="suggestion-item p-2 border-bottom" style="cursor:pointer;">
+                <span class="fw-bold text-dark">${f.referencia}</span>
+                <span class="text-muted" style="font-size:0.8em; margin-left:8px;">OP ${f.orden_produccion}</span>
+                <span class="${f.disponible > 0 ? 'text-success' : 'text-danger'}" style="font-size:0.8em; margin-left:8px;">disp: ${f.disponible}</span>
+            </div>
+        `).join('');
+
+        containerEl.querySelectorAll('.suggestion-item').forEach((div, idx) => {
+            div.addEventListener('click', () => {
+                const f = resultados[idx];
+                document.getElementById('programacion-referencia-input').value = f.referencia;
+                document.getElementById('programacion-op-input').value = f.orden_produccion;
+                containerEl.classList.remove('active');
+                this._actualizarHintSaldoProgramacion();
+            });
+        });
+        containerEl.classList.add('active');
     },
 
     renderSuggestions: function (container, items, onSelect) {
@@ -3263,6 +3353,404 @@ const ModuloPulido = {
                 text: 'No se pudo conectar con el servidor. Por favor intente más tarde.',
                 icon: 'error'
             });
+        }
+    },
+
+    // ════════════════════════════════════════════════════════════════
+    // MODO PROGRAMADO (plan 2026-09-02): tarjetas con la cola que el ADMIN
+    // armó para la operaria hoy -- ella solo Inicia (reutiliza el motor de
+    // cronómetro de Modo Planta PRO), Pausa y Termina como siempre. El
+    // orden es una instrucción, no un bloqueo: todas las tarjetas quedan
+    // disponibles para iniciar (decisión explícita del usuario -- si falta
+    // material para la #1, no debe trabarse toda la cola).
+    // ════════════════════════════════════════════════════════════════
+    idProgramacionPulidoActiva: null,
+
+    cargarColaProgramada: async function () {
+        // Prioriza la identidad de la sesión autenticada -- "Modo Programado"
+        // en reposo no muestra el campo Responsable (ver cambiarModo), así
+        // que no puede depender de que alguien lo haya llenado a mano.
+        const responsable = this.getOperarioActual();
+        const lista = document.getElementById('programado-lista-tareas');
+        const vacio = document.getElementById('programado-vacio');
+        const vacioTitulo = document.getElementById('programado-vacio-titulo');
+        if (!lista || !vacio) return;
+
+        if (!responsable) {
+            lista.innerHTML = '';
+            vacioTitulo.textContent = 'Inicia sesión para ver tu cola programada';
+            vacio.style.display = 'block';
+            return;
+        }
+
+        // Mantener el campo (oculto en este modo) sincronizado, para que si
+        // pasa a Satélite/PRO ya lo encuentre lleno.
+        const rInput = document.getElementById('responsable-pulido-input');
+        if (rInput && !rInput.value) rInput.value = responsable;
+
+        try {
+            const res = await fetch(`/api/pulido/programacion/cola?responsable=${encodeURIComponent(responsable)}`);
+            const data = await res.json();
+            const tareas = data.data?.tareas || [];
+
+            if (!tareas.length) {
+                lista.innerHTML = '';
+                vacioTitulo.textContent = 'No tienes tareas programadas hoy';
+                document.getElementById('programado-vacio-subtitulo').textContent =
+                    'Cuando te armen la cola del día, aparecerá aquí. Si te cae algo urgente sin programar, repórtalo por Modo Satélite o Modo Planta PRO.';
+                vacio.style.display = 'block';
+                return;
+            }
+
+            vacio.style.display = 'none';
+            lista.innerHTML = tareas.map((t, idx) => `
+                <div class="tarjeta-programada d-flex justify-content-between align-items-center">
+                    <div>
+                        <span class="badge rounded-pill bg-secondary me-2">#${idx + 1}</span>
+                        <span class="fw-bold fs-6">${t.codigo}</span>
+                        ${t.estado === 'EN_PROCESO' ? '<span class="badge bg-success ms-2">EN CURSO</span>' : ''}
+                        <div class="text-muted small mt-1">
+                            OP: ${t.orden_produccion || 'N/A'} &middot; Objetivo: ${t.cantidad_objetivo} pz
+                            ${t.lote ? ` &middot; Lote: ${t.lote}` : ''}
+                            ${t.observaciones ? ` &middot; ${t.observaciones}` : ''}
+                        </div>
+                    </div>
+                    <button class="btn btn-sm btn-primary fw-bold px-3" onclick='ModuloPulido.iniciarTareaProgramada(${JSON.stringify(t).replace(/'/g, "&#39;")})'>
+                        <i class="fas fa-play me-1"></i> Iniciar
+                    </button>
+                </div>
+            `).join('');
+        } catch (e) {
+            console.error('[Pulido] Error cargando cola programada:', e);
+            lista.innerHTML = '<div class="text-center text-muted py-3">No se pudo cargar tu cola programada.</div>';
+        }
+    },
+
+    iniciarTareaProgramada: function (item) {
+        if (this.sesionActiva) {
+            Swal.fire({
+                title: 'Ya tienes un trabajo en curso',
+                text: 'Termina o pausa el trabajo activo antes de iniciar otra tarea de tu cola.',
+                icon: 'info',
+                confirmButtonColor: '#3b82f6'
+            });
+            return;
+        }
+
+        const r = document.getElementById('responsable-pulido-input');
+        const p = document.getElementById('buscador-productos');
+        const o = document.getElementById('orden-produccion-pulido');
+        const l = document.getElementById('lote-pulido');
+        // En reposo "Modo Programado" oculta el campo Responsable (ver
+        // cambiarModo) -- iniciarCiclo() lo lee directo del input, así que
+        // si nunca se tocó, se llena aquí desde la sesión antes de arrancar.
+        if (r && !r.value) r.value = this.getOperarioActual();
+        if (p) p.value = item.codigo;
+        if (o) o.value = item.orden_produccion;
+        // "Lote" es un date-picker (ver docstring de ProduccionPulido.lote) --
+        // si viene vacío, iniciarCiclo() bloquea el arranque pidiéndolo. Se
+        // precarga con el lote que puso el ADMIN al programar, o con hoy si
+        // la tarea no traía uno.
+        if (l) l.value = item.lote || new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Bogota' });
+
+        this.idProgramacionPulidoActiva = item.id;
+
+        // Reutiliza el motor de cronómetro ya probado de Modo Planta PRO --
+        // ella sigue viendo el mismo Iniciar/Pausar/Terminar de siempre.
+        this.cambiarModo('pro');
+        this.iniciarCiclo();
+    },
+
+    _puedeVerPanelProgramacion: function () {
+        const rol = (window.AuthModule?.currentUser?.rol || '').toUpperCase();
+        return ['ADMIN', 'ADMINISTRACION', 'ADMINISTRADOR', 'GERENCIA'].includes(rol);
+    },
+
+    _actualizarVisibilidadPanelProgramacion: function () {
+        const btn = document.getElementById('btn-panel-programacion-pulido');
+        if (btn) btn.style.display = this._puedeVerPanelProgramacion() ? '' : 'none';
+    },
+
+    // ── Pantalla de ADMIN: armar la cola diaria por operaria ───────────
+    _saldoProgramacion: [],
+    _borradorProgramacion: [],
+    _colaAdminProgramacion: {},
+
+    abrirPanelProgramacion: async function () {
+        if (!this._puedeVerPanelProgramacion()) return;
+        const panel = document.getElementById('panel-programacion-pulido-fijo');
+        if (panel) panel.style.display = 'block';
+
+        const fechaInput = document.getElementById('programacion-fecha-input');
+        if (fechaInput && !fechaInput.value) {
+            fechaInput.value = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Bogota' });
+        }
+
+        this._borradorProgramacion = [];
+        await this._cargarOperariasProgramacion();
+        await this.cargarPanelProgramacion();
+    },
+
+    cerrarPanelProgramacion: function () {
+        const panel = document.getElementById('panel-programacion-pulido-fijo');
+        if (panel) panel.style.display = 'none';
+    },
+
+    _cargarOperariasProgramacion: async function () {
+        try {
+            const res = await fetch('/api/obtener_responsables?rol=PULIDO');
+            const lista = await res.json();
+            const nombres = (Array.isArray(lista) ? lista : []).map(r => (typeof r === 'string' ? r : r.nombre || r.responsable)).filter(Boolean);
+
+            const selectAsignar = document.getElementById('programacion-operaria-select');
+            const selectVer = document.getElementById('programacion-ver-operaria-select');
+            const opciones = nombres.map(n => `<option value="${n}">${n}</option>`).join('');
+            if (selectAsignar) selectAsignar.innerHTML = opciones || '<option value="">Sin operarias registradas</option>';
+            if (selectVer) selectVer.innerHTML = opciones || '<option value="">Sin operarias registradas</option>';
+        } catch (e) {
+            console.error('[Pulido] Error cargando operarias:', e);
+        }
+    },
+
+    cargarPanelProgramacion: async function () {
+        await Promise.all([this._cargarSaldoProgramacion(), this._cargarColaAdminProgramacion()]);
+        this.renderColaOperariaAdmin();
+        this._recalcularSiguienteOrdenProgramacion();
+    },
+
+    _cargarSaldoProgramacion: async function () {
+        const tbody = document.getElementById('programacion-saldo-tbody');
+        try {
+            const res = await fetch('/api/pulido/programacion/saldo');
+            const data = await res.json();
+            const todoElSaldo = data.data?.saldo || [];
+            // La tabla de referencia solo muestra lo que de verdad queda por
+            // pulir (ruido cero). El selector de abajo, en cambio, NO se
+            // filtra: la validación de saldo es blanda (advertencia, no
+            // bloqueo) -- si se filtrara aquí, el ADMIN quedaría sin forma de
+            // elegir una OP con saldo en 0 aunque sepa que quiere forzarla.
+            this._saldoProgramacion = todoElSaldo;
+            const conBacklog = todoElSaldo.filter(f => f.disponible > 0);
+
+            if (!conBacklog.length) {
+                if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No hay saldo pendiente por pulir.</td></tr>';
+            } else if (tbody) {
+                tbody.innerHTML = conBacklog.map(f => `
+                    <tr>
+                        <td class="small">${f.orden_produccion}</td>
+                        <td class="small fw-bold">${f.referencia}</td>
+                        <td class="text-end small">${f.inyectado}</td>
+                        <td class="text-end small">${f.pulido}</td>
+                        <td class="text-end small text-muted">${f.ya_asignado}</td>
+                        <td class="text-end small fw-bold text-primary">${f.disponible}</td>
+                    </tr>
+                `).join('');
+            }
+
+            // Las sugerencias de Referencia/OP (ver _mostrarSugerenciasProgramacion)
+            // leen directo de this._saldoProgramacion, ya seteado arriba --
+            // nada que precargar aquí.
+        } catch (e) {
+            console.error('[Pulido] Error cargando saldo de programación:', e);
+            if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger py-3">Error al cargar el saldo.</td></tr>';
+        }
+    },
+
+    _cargarColaAdminProgramacion: async function () {
+        try {
+            const fecha = document.getElementById('programacion-fecha-input')?.value || '';
+            const res = await fetch(`/api/pulido/programacion/admin?fecha=${encodeURIComponent(fecha)}`);
+            const data = await res.json();
+            this._colaAdminProgramacion = data.data?.operarias || {};
+        } catch (e) {
+            console.error('[Pulido] Error cargando cola admin de programación:', e);
+            this._colaAdminProgramacion = {};
+        }
+    },
+
+    // Feedback informativo (no bloqueante) mientras se escribe Referencia/OP:
+    // busca coincidencia exacta contra el saldo real del sistema y muestra
+    // qué tan disponible está -- sin impedir seguir escribiendo algo distinto.
+    _actualizarHintSaldoProgramacion: function () {
+        const hint = document.getElementById('programacion-saldo-hint');
+        if (!hint) return;
+        const op = document.getElementById('programacion-op-input')?.value?.trim();
+        const ref = document.getElementById('programacion-referencia-input')?.value?.trim().toUpperCase();
+        if (!op || !ref) { hint.innerHTML = ''; return; }
+
+        const match = (this._saldoProgramacion || []).find(f =>
+            String(f.orden_produccion || '').trim() === op &&
+            String(f.referencia || '').trim().toUpperCase() === ref
+        );
+
+        if (match) {
+            const claseDisp = match.disponible <= 0 ? 'text-danger' : 'text-success';
+            hint.innerHTML = `<i class="fas fa-circle-info me-1"></i>Sistema: inyectado <b>${match.inyectado}</b> · pulido <b>${match.pulido}</b> · disponible <b class="${claseDisp}">${match.disponible}</b>`;
+        } else {
+            hint.innerHTML = `<i class="fas fa-triangle-exclamation me-1 text-warning"></i><span class="text-warning">Sin dato en el sistema para esa OP/referencia -- se guardará igual.</span>`;
+        }
+    },
+
+    // El orden que ve la operaria es simplemente el orden en que se van
+    // agregando tareas a la lista (como Inyección) -- no hay un campo de
+    // prioridad que llenar a mano. Se calcula UNA vez al abrir el panel o
+    // al cambiar de operaria (continúa después de lo que ya tenga
+    // programado hoy) y de ahí en adelante cada "Agregar" solo añade al
+    // arreglo; el número final se calcula recién al guardar (ver
+    // guardarProgramacion), así que quitar un item de la lista nunca deja
+    // huecos ni números viejos dando vueltas.
+    _siguienteOrdenBorrador: 1,
+
+    _recalcularSiguienteOrdenProgramacion: function () {
+        const operaria = document.getElementById('programacion-operaria-select')?.value;
+        const existentes = this._colaAdminProgramacion[operaria] || [];
+        const maxExistente = existentes.reduce((m, it) => Math.max(m, it.orden_prioridad || 0), 0);
+        this._siguienteOrdenBorrador = maxExistente + 1;
+    },
+
+    _alCambiarOperariaProgramacion: function () {
+        // Cambiar de operaria a mitad de un borrador sin guardar reasignaría
+        // en silencio tareas ya armadas para otra persona -- mejor limpiar y
+        // que la jefa de planta rearme la lista para la operaria correcta.
+        if (this._borradorProgramacion.length) {
+            this._borradorProgramacion = [];
+            this._renderBorradorProgramacion();
+        }
+        this._recalcularSiguienteOrdenProgramacion();
+    },
+
+    renderColaOperariaAdmin: function () {
+        const operaria = document.getElementById('programacion-ver-operaria-select')?.value;
+        const cont = document.getElementById('programacion-cola-operaria-vista');
+        if (!cont) return;
+
+        const items = this._colaAdminProgramacion[operaria] || [];
+        if (!items.length) {
+            cont.innerHTML = '<div class="text-center text-muted py-3">Sin tareas programadas para esta operaria hoy.</div>';
+            return;
+        }
+
+        const temaEstado = { PROGRAMADO: 'secondary', EN_PROCESO: 'success', FINALIZADO: 'primary' };
+        cont.innerHTML = items.map((t, idx) => `
+            <div class="d-flex justify-content-between align-items-center p-2 border rounded-3">
+                <div>
+                    <span class="badge rounded-pill bg-light text-dark border me-2">#${idx + 1}</span>
+                    <span class="fw-bold">${t.codigo}</span>
+                    <span class="text-muted small ms-1">OP: ${t.orden_produccion || 'N/A'} &middot; ${t.cantidad_objetivo} pz${t.lote ? ` &middot; Lote: ${t.lote}` : ''}</span>
+                </div>
+                <span class="badge bg-${temaEstado[t.estado] || 'secondary'}">${t.estado}</span>
+            </div>
+        `).join('');
+    },
+
+    agregarItemBorradorProgramacion: function () {
+        const codigo = document.getElementById('programacion-referencia-input')?.value?.trim();
+        const orden_produccion = document.getElementById('programacion-op-input')?.value?.trim();
+        const lote = document.getElementById('programacion-lote-input')?.value || '';
+        const cantidad_objetivo = parseFloat(document.getElementById('programacion-cantidad-input')?.value || '0');
+        const observaciones = document.getElementById('programacion-observaciones-input')?.value || '';
+
+        if (!orden_produccion || !codigo) {
+            Swal.fire('Falta OP/Referencia', 'Escribe la referencia y la OP tal como están en la bolsa.', 'warning');
+            return;
+        }
+        if (!cantidad_objetivo || cantidad_objetivo <= 0) {
+            Swal.fire('Cantidad inválida', 'Indica una cantidad objetivo mayor a 0.', 'warning');
+            return;
+        }
+
+        // Sin orden_prioridad todavía: la posición final se calcula recién
+        // al guardar, a partir del orden en que quedan en este arreglo (ver
+        // guardarProgramacion) -- así quitar un item nunca deja huecos.
+        this._borradorProgramacion.push({ orden_produccion, codigo, lote, cantidad_objetivo, observaciones });
+
+        document.getElementById('programacion-referencia-input').value = '';
+        document.getElementById('programacion-op-input').value = '';
+        document.getElementById('programacion-lote-input').value = '';
+        document.getElementById('programacion-cantidad-input').value = '';
+        document.getElementById('programacion-observaciones-input').value = '';
+        document.getElementById('programacion-saldo-hint').innerHTML = '';
+        document.getElementById('programacion-referencia-suggestions')?.classList.remove('active');
+        document.getElementById('programacion-op-suggestions')?.classList.remove('active');
+
+        this._renderBorradorProgramacion();
+    },
+
+    _renderBorradorProgramacion: function () {
+        const cont = document.getElementById('programacion-borrador-lista');
+        if (!cont) return;
+        if (!this._borradorProgramacion.length) {
+            cont.innerHTML = '';
+            return;
+        }
+        // El número mostrado es la posición dentro de esta lista (lo único
+        // que le importa a la jefa de planta: en qué orden las va agregando),
+        // no el orden_prioridad real que se calcula al guardar.
+        cont.innerHTML = this._borradorProgramacion.map((item, idx) => `
+            <div class="d-flex justify-content-between align-items-center p-2 bg-light rounded-3 small">
+                <span><b>#${idx + 1}</b> ${item.codigo} (OP ${item.orden_produccion})${item.lote ? ' · Lote ' + item.lote : ''} &middot; ${item.cantidad_objetivo} pz</span>
+                <button class="btn btn-sm btn-link text-danger p-0" onclick="ModuloPulido._quitarItemBorradorProgramacion(${idx})">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        `).join('');
+    },
+
+    _quitarItemBorradorProgramacion: function (idx) {
+        this._borradorProgramacion.splice(idx, 1);
+        this._renderBorradorProgramacion();
+    },
+
+    guardarProgramacion: async function () {
+        const operaria = document.getElementById('programacion-operaria-select')?.value;
+        const fecha = document.getElementById('programacion-fecha-input')?.value;
+
+        if (!operaria) {
+            Swal.fire('Falta la operaria', 'Selecciona a quién se le asigna la cola.', 'warning');
+            return;
+        }
+        if (!this._borradorProgramacion.length) {
+            Swal.fire('Cola vacía', 'Agrega al menos una tarea antes de guardar.', 'warning');
+            return;
+        }
+
+        // El orden final se calcula justo aquí, a partir de la posición de
+        // cada item en la lista que se fue armando -- lo único que la jefa
+        // de planta controló fue en qué orden las agregó.
+        const base = this._siguienteOrdenBorrador || 1;
+        const items = this._borradorProgramacion.map((item, i) => ({ ...item, orden_prioridad: base + i }));
+
+        mostrarLoading(true, 'Guardando programación...');
+        try {
+            const res = await fetch('/api/pulido/programacion', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ operaria, fecha, items })
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                const advertencias = data.data?.advertencias || [];
+                this._borradorProgramacion = [];
+                this._renderBorradorProgramacion();
+                await this.cargarPanelProgramacion();
+                this._recalcularSiguienteOrdenProgramacion();
+
+                Swal.fire({
+                    title: 'Programación guardada',
+                    html: advertencias.length
+                        ? `Se guardó, pero revisa:<br><small>${advertencias.join('<br>')}</small>`
+                        : `Cola asignada a ${operaria}.`,
+                    icon: advertencias.length ? 'warning' : 'success'
+                });
+            } else {
+                Swal.fire('No se pudo guardar', data.error || 'Error del servidor.', 'error');
+            }
+        } catch (e) {
+            console.error('[Pulido] Error guardando programación:', e);
+            Swal.fire('Error de conexión', 'No se pudo guardar la programación.', 'error');
+        } finally {
+            mostrarLoading(false);
         }
     }
 };

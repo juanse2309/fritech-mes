@@ -23,6 +23,78 @@
     border-color: #2563eb;
 }
 
+/* Botones de acción del header (Supervisión / Programación): pills con
+   gradiente propio para que salten a la vista, en vez de la pill outline
+   discreta que tenían antes -- plan 2026-09-02. */
+.btn-pulido-header-action {
+    color: #fff !important;
+    border: none;
+    border-radius: 999px;
+    padding: 0.45rem 1.1rem;
+    font-weight: 700;
+    box-shadow: 0 4px 10px -2px rgb(0 0 0 / 0.25);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.btn-pulido-header-action:hover {
+    color: #fff;
+    transform: translateY(-1px);
+    box-shadow: 0 6px 14px -2px rgb(0 0 0 / 0.3);
+}
+
+/* Selector de 3 modos (Satélite / Planta PRO / Programado), reemplaza el
+   switch binario -- segmented control tipo "pill group". */
+.btn-modo-pulido {
+    background: #ffffff;
+    border: 2px solid #e2e8f0;
+    color: #64748b;
+    font-weight: 700;
+    font-size: 0.85rem;
+    border-radius: 999px;
+    padding: 0.55rem 1.25rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    transition: all 0.15s ease;
+}
+
+.btn-modo-pulido:hover {
+    border-color: #94a3b8;
+    color: #334155;
+}
+
+.btn-modo-pulido.activo {
+    color: #fff;
+    border-color: transparent;
+    box-shadow: 0 4px 10px -2px rgb(0 0 0 / 0.25);
+}
+
+#btn-modo-satelite.activo {
+    background: linear-gradient(135deg, #0ea5e9, #0369a1);
+}
+
+#btn-modo-pro.activo {
+    background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+}
+
+#btn-modo-programado.activo {
+    background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+}
+
+/* Tarjetas de "Modo Programado" */
+.tarjeta-programada {
+    background: #fff;
+    border-radius: 14px;
+    border: none;
+    border-left: 5px solid #8b5cf6;
+    box-shadow: 0 2px 8px -2px rgb(0 0 0 / 0.12);
+    padding: 1rem 1.25rem;
+}
+
+.tarjeta-programada.fuera-de-orden {
+    border-left-color: #f59e0b;
+}
+
 /* Styled Form Context */
 #panel-pulido-manual .styled-form {
     background: #ffffff;
