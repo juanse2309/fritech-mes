@@ -118,9 +118,9 @@ def mes_cancelar(id_target):
 @programacion_bp.route('/api/mes/programaciones/<maquina>', methods=['GET'])
 @require_role(ROLES_PLANTA)
 def mes_get_programaciones(maquina):
-    """Obtiene programaciones activas desde SQL (db_programacion)."""
+    """Obtiene programaciones activas desde SQL (db_programacion), para la fecha ?fecha=YYYY-MM-DD (hoy por defecto)."""
     try:
-        return jsonify(ProgramacionService.obtener_programaciones_activas(maquina)), 200
+        return jsonify(ProgramacionService.obtener_programaciones_activas(maquina, request.args.get('fecha'))), 200
     except Exception as e:
         logger.error(f"❌ Error en mes_get_programaciones SQL: {e}")
         return jsonify([]), 200
@@ -129,9 +129,9 @@ def mes_get_programaciones(maquina):
 @programacion_bp.route('/api/mes/dashboard', methods=['GET'])
 @require_role(ROLES_PLANTA)
 def mes_dashboard():
-    """Estado completo de las máquinas (MES)."""
+    """Estado completo de las máquinas (MES), para la fecha ?fecha=YYYY-MM-DD (hoy por defecto)."""
     try:
-        return jsonify({'maquinas': ProgramacionService.obtener_dashboard_mes()}), 200
+        return jsonify({'maquinas': ProgramacionService.obtener_dashboard_mes(request.args.get('fecha'))}), 200
     except Exception as e:
         logger.error(f"❌ Error en mes_dashboard SQL: {e}")
         return jsonify({'maquinas': []}), 200

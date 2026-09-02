@@ -215,6 +215,16 @@ class ProgramacionService:
             raise
 
     @staticmethod
+    def _parse_fecha_o_hoy(fecha_str):
+        """'YYYY-MM-DD' -> date; None, vacío o formato inválido caen a hoy."""
+        if fecha_str:
+            try:
+                return datetime.strptime(fecha_str, '%Y-%m-%d').date()
+            except ValueError:
+                pass
+        return date.today()
+
+    @staticmethod
     def retomar_programacion(maquinas, fecha_str, responsable):
         """
         Fase 1c: repite para la fecha destino (hoy por defecto) la última
@@ -227,13 +237,7 @@ class ProgramacionService:
         destino se omite, para no pisar algo que ya se ajustó a mano.
         """
         try:
-            if fecha_str:
-                try:
-                    fecha_obj = datetime.strptime(fecha_str, '%Y-%m-%d').date()
-                except ValueError:
-                    fecha_obj = date.today()
-            else:
-                fecha_obj = date.today()
+            fecha_obj = ProgramacionService._parse_fecha_o_hoy(fecha_str)
 
             objetivo = [str(m).strip().upper() for m in (maquinas or []) if str(m).strip()]
             if not objetivo:
@@ -331,18 +335,34 @@ class ProgramacionService:
             raise
 
     @staticmethod
-    def obtener_programaciones_activas(maquina):
-        """Cola de trabajo activa (PROGRAMADO/EN_PROCESO) desde hoy en adelante, opcionalmente filtrada por máquina."""
+    def obtener_programaciones_activas(maquina, fecha_str=None):
+        """
+        Cola de trabajo, opcionalmente filtrada por máquina, para la fecha
+        que el Jefe de Planta tenga seleccionada (por defecto hoy).
+
+        Fecha exacta (no ">= hoy" como antes) para que "mañana" salga limpio
+        si no hay nada programado ahí -- ese es justo el pedido del usuario.
+        Se filtra también el EN_PROCESO por fecha (no solo el PROGRAMADO):
+        hay filas viejas en db_programacion con estado EN_PROCESO que nunca
+        se limpiaron (~100 al 2026-09-02, ver ProgramacionInyeccion.estado
+        que solo pasa a COMPLETADO en un flujo puntual de inyeccion_service);
+        sin este filtro de fecha inundarían la cola de trabajo todos los
+        días. El estado real y en vivo de cada máquina (¿está ocupada
+        AHORA?) no sale de aquí sino de obtener_dashboard_mes, que sí lee
+        ProduccionInyeccion sin filtrar por fecha -- por eso el Reporte de
+        Máquina nunca muestra "libre" una máquina realmente ocupada aunque
+        se esté mirando otra fecha.
+        """
         maquina_upper = maquina.upper()
-        today_date = date.today()
+        fecha_obj = ProgramacionService._parse_fecha_o_hoy(fecha_str)
 
         query = db.session.query(ProgramacionInyeccion).filter(
             ProgramacionInyeccion.estado.in_(['PROGRAMADO', 'EN_PROCESO']),
-            ProgramacionInyeccion.fecha >= today_date
+            ProgramacionInyeccion.fecha == fecha_obj
         )
         lotes = query.all()
 
-        logger.info(f"DEBUG: Cargando {len(lotes)} lotes para la cola de trabajo del {today_date.strftime('%Y-%m-%d')}")
+        logger.info(f"DEBUG: Cargando {len(lotes)} lotes para la cola de trabajo del {fecha_obj.strftime('%Y-%m-%d')}")
 
         if maquina_upper != 'TODAS':
             lotes = [r for r in lotes if (r.maquina or '').upper() == maquina_upper]
@@ -363,15 +383,27 @@ class ProgramacionService:
         ]
 
     @staticmethod
-    def obtener_dashboard_mes():
-        """Estado completo de las máquinas: trabajo activo (ProduccionInyeccion EN_PROCESO) + cola (ProgramacionInyeccion PROGRAMADO), agrupado por máquina."""
+    def obtener_dashboard_mes(fecha_str=None):
+        """
+        Estado completo de las máquinas: trabajo activo (ProduccionInyeccion
+        EN_PROCESO, siempre visible sin importar la fecha) + cola
+        (ProgramacionInyeccion PROGRAMADO) para la fecha seleccionada
+        (por defecto hoy) -- así "Reporte de Máquina" cambia junto con
+        "Programación" y no arrastra la cola de otro día. Ver criterio de
+        EN_PROCESO en obtener_programaciones_activas.
+        """
         maquinas_sql = db.session.query(Maquina).filter(Maquina.activa == True).all()
         maquinas_set = [m.nombre for m in maquinas_sql]
         if not maquinas_set:
             maquinas_set = ['MAQUINA No.1', 'MAQUINA No.2', 'MAQUINA No.3', 'MAQUINA No.4']
 
+        fecha_obj = ProgramacionService._parse_fecha_o_hoy(fecha_str)
+
         en_proceso = db.session.query(ProduccionInyeccion).filter(ProduccionInyeccion.estado == 'EN_PROCESO').all()
-        programaciones = db.session.query(ProgramacionInyeccion).filter(ProgramacionInyeccion.estado == 'PROGRAMADO').all()
+        programaciones = db.session.query(ProgramacionInyeccion).filter(
+            ProgramacionInyeccion.estado == 'PROGRAMADO',
+            ProgramacionInyeccion.fecha == fecha_obj
+        ).all()
 
         resultado = []
         for maquina_nom in maquinas_set:

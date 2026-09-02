@@ -138,13 +138,21 @@ window.ModuloMes = {
         }
     },
 
+    /** Fecha de trabajo compartida (barra sobre las pestañas) -- gobierna tanto
+     * la Cola de Trabajo como el Reporte de Máquina. Vacía = hoy, tanto aquí
+     * como en el backend (ProgramacionService._parse_fecha_o_hoy). */
+    obtenerFechaVista: function () {
+        return document.getElementById('mes-prog-fecha')?.value || '';
+    },
+
     /**
      * Carga el dashboard de 4 máquinas desde /api/mes/dashboard
      * y renderiza las tarjetas en la Vista 2.
      */
     cargarDashboard: async function () {
         try {
-            const data = await fetchData('/api/mes/dashboard');
+            const fecha = this.obtenerFechaVista();
+            const data = await fetchData(`/api/mes/dashboard${fecha ? `?fecha=${fecha}` : ''}`);
             if (data && data.maquinas) {
                 this.dashboardData = data.maquinas;
                 this.renderDashboardMaquinas(data.maquinas);
@@ -705,6 +713,16 @@ window.ModuloMes = {
             });
         });
 
+        // Fecha de trabajo compartida: al cambiarla, refrescar Cola de Trabajo
+        // y Reporte de Máquina para que ambas pestañas queden mirando el mismo día.
+        const fechaVista = document.getElementById('mes-prog-fecha');
+        if (fechaVista) {
+            fechaVista.addEventListener('change', () => {
+                this.actualizarColaProgramacion();
+                this.cargarDashboard();
+            });
+        }
+
         // Form Programar
         const formProg = document.getElementById('form-mes-programar');
         if (formProg) {
@@ -1065,7 +1083,8 @@ window.ModuloMes = {
     actualizarColaProgramacion: async function () {
         try {
             console.log('🔄 [MES] Actualizando cola de programación...');
-            const data = await fetchData('/api/mes/programaciones/TODAS');
+            const fecha = this.obtenerFechaVista();
+            const data = await fetchData(`/api/mes/programaciones/TODAS${fecha ? `?fecha=${fecha}` : ''}`);
             this.programacionesActivas = data || [];
             this.renderCardsProgramacion();
         } catch (error) {
@@ -1081,7 +1100,7 @@ window.ModuloMes = {
             container.innerHTML = `
                 <div class="col-12 text-center py-5 opacity-50">
                     <i class="fas fa-calendar-check fa-3x mb-3"></i>
-                    <p>No hay programaciones activas en este momento.</p>
+                    <p>No hay nada programado para esta fecha.</p>
                 </div>`;
             return;
         }
@@ -1110,9 +1129,14 @@ window.ModuloMes = {
 
         const todasClaves = Object.keys(porBloque);
 
-        // Priorizar hoy y ordenar máquinas vacías al final
+        // Priorizar la fecha seleccionada (no necesariamente "hoy" real) y
+        // ordenar máquinas vacías al final. El servidor ya filtra la cola a
+        // esta misma fecha exacta (ver obtenerFechaVista/
+        // obtener_programaciones_activas), así que en la práctica todo
+        // termina con la misma fecha -- esto solo ordena qué máquina va
+        // primero.
         const tzOffset = new Date().getTimezoneOffset() * 60000;
-        const todayStr = new Date(Date.now() - tzOffset).toISOString().split('T')[0];
+        const todayStr = this.obtenerFechaVista() || new Date(Date.now() - tzOffset).toISOString().split('T')[0];
 
         todasClaves.sort((a, b) => {
             const aParts = a.split('|');
