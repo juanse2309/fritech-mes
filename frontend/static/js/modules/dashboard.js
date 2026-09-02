@@ -1753,6 +1753,12 @@ window.ModuloDashboard = (function () {
             const clase = esLider ? 'pulido-race-icon-crown' : 'pulido-race-icon-horse';
             html += `<span class="pulido-race-icon ${clase}" style="left:${x}px; top:${y}px;">${icono}</span>`;
         }
+
+        // Igual que en posicionarIconosCarreraMix: solo tocar el DOM si el
+        // layout cambió de verdad, para no reiniciar la animación CSS en
+        // cada redraw por hover/tooltip (eso se veía como "trabado").
+        if (overlay.dataset.firma === html) return;
+        overlay.dataset.firma = html;
         overlay.innerHTML = html;
     }
 
@@ -1859,11 +1865,19 @@ window.ModuloDashboard = (function () {
         // Techo del eje X con margen extra a propósito ("hipódromo"): la meta
         // se dibuja en el borde derecho del área del gráfico, así que si el
         // máximo del eje coincidiera con la barra más larga, la meta quedaría
-        // pegada a quien va ganando. Con ~30% de aire (o 20 puntos extra en
-        // modo %), la meta se ve "casi alcanzable" pero ninguna barra real
-        // llega a tocarla -- pedido del usuario 2026-09-02.
+        // pegada a quien va ganando.
+        // Meta mínima diaria pedida por planta 2026-09-02: 2000 piezas fijas
+        // mientras nadie las alcance (la meta NO se achica solo porque el
+        // rango filtrado tenga pocos datos); una vez el líder llega/supera
+        // esa meta, ahí sí empieza a subir un 30% por encima del real -- el
+        // comportamiento "casi alcanzable" que ya teníamos.
+        const META_DIARIA_PIEZAS = 2000;
         const maxTotalOp = Math.max(1, ...totalPorOp);
-        const axisMax = enPorcentaje ? 120 : Math.ceil(maxTotalOp * 1.3 / 100) * 100;
+        const axisMax = enPorcentaje
+            ? 120
+            : (maxTotalOp >= META_DIARIA_PIEZAS
+                ? Math.ceil(maxTotalOp * 1.3 / 100) * 100
+                : META_DIARIA_PIEZAS);
 
         const valorDe = (nombreOp, idxOp, refsDeLaSerie) => {
             const refs = opRef[nombreOp] || {};
@@ -2027,6 +2041,18 @@ window.ModuloDashboard = (function () {
                 : Math.min(1.35, 0.9 * Math.pow(1.10, i - 1)).toFixed(2);
             html += `<span class="pulido-mix-race-icon" style="left:${x}px; top:${y}px; --heat-color:${color}; animation-duration:${duracion}s;">🐎</span>`;
         }
+
+        // afterDatasetsDraw se dispara en CADA redraw del chart, incluyendo
+        // los que Chart.js hace por simple hover/tooltip (con el mouse cerca
+        // del gráfico puede ser varias veces por segundo). Reescribir el
+        // innerHTML ahí destruye y recrea los <span>, reiniciando su
+        // animación CSS desde el frame 0 cada vez -- eso es el "delay" o
+        // trabado que reportó el usuario 2026-09-02, no su dispositivo.
+        // Solución: solo tocar el DOM si el layout calculado cambió de
+        // verdad (resize real, o cambio de datos), nunca en un redraw
+        // idéntico por hover.
+        if (overlay.dataset.firma === html) return;
+        overlay.dataset.firma = html;
         overlay.innerHTML = html;
     }
 
