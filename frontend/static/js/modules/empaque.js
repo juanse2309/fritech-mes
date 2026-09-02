@@ -7,14 +7,45 @@
 
 window.ModuloEmpaque = {
     productosData: [],
+    responsablesData: [],
     referenciaSeleccionada: null,
     _debouncePreview: null,
 
     inicializar: async function () {
         console.log('📦 [Empaque] Inicializando módulo...');
-        await this.cargarProductos();
+        await Promise.all([this.cargarProductos(), this.cargarResponsables()]);
         this.configurarEventos();
         await this.cargarListado();
+    },
+
+    cargarResponsables: async function () {
+        // Solo Alistamiento (operaria/jefe) puede figurar como quien armó
+        // -- coincide con ROLES_RESPONSABLE_EMPAQUE en el backend, que
+        // revalida esto mismo así que no basta con ocultar opciones aquí.
+        const select = document.getElementById('empaque-responsable');
+        if (!select) return;
+
+        try {
+            const res = await fetchData('/api/obtener_responsables?rol=alistamiento');
+            this.responsablesData = Array.isArray(res) ? res : (res?.data || []);
+        } catch (e) {
+            console.warn('[Empaque] No se pudo cargar responsables:', e);
+            this.responsablesData = [];
+        }
+
+        if (!this.responsablesData.length) {
+            select.innerHTML = '<option value="">Sin responsables disponibles</option>';
+            return;
+        }
+
+        select.innerHTML = this.responsablesData.map(r =>
+            `<option value="${r.username}">${r.nombre}</option>`
+        ).join('');
+
+        // Preseleccionar a quien esté logueado, si aparece en la lista.
+        const usuarioActual = window.AuthModule?.getUsuarioActual?.() || '';
+        const match = this.responsablesData.find(r => r.username === usuarioActual || r.nombre === usuarioActual);
+        if (match) select.value = match.username;
     },
 
     cargarProductos: async function () {
@@ -138,10 +169,12 @@ window.ModuloEmpaque = {
     },
 
     reportar: async function (forzar = false) {
+        const responsable = document.getElementById('empaque-responsable')?.value;
         const codigo = this.referenciaSeleccionada || document.getElementById('empaque-buscador')?.value?.trim();
         const cantidad = parseInt(document.getElementById('empaque-cantidad')?.value || '0', 10);
         const observaciones = document.getElementById('empaque-observaciones')?.value?.trim();
 
+        if (!responsable) return Swal.fire('Falta el responsable', 'Selecciona quién armó el pedido.', 'warning');
         if (!codigo) return Swal.fire('Falta la referencia', 'Escribe o selecciona la referencia que armaste.', 'warning');
         if (!cantidad || cantidad <= 0) return Swal.fire('Cantidad inválida', 'La cantidad debe ser mayor a 0.', 'warning');
 
@@ -163,7 +196,7 @@ window.ModuloEmpaque = {
         const res = await fetchData('/api/empaque/reportar', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id_codigo: codigo, cantidad, observaciones, forzar }),
+            body: JSON.stringify({ id_codigo: codigo, cantidad, observaciones, forzar, responsable }),
             silent: true
         });
 

@@ -22,7 +22,7 @@ import logging
 from datetime import datetime, date as date_cls, timedelta
 
 from backend.core.sql_database import db
-from backend.models.sql_models import ProduccionEmpaque, Producto
+from backend.models.sql_models import ProduccionEmpaque, Producto, Usuario
 from backend.services.bom_service import calcular_descuentos_ensamble
 from backend.services.ensamble_service import BomNoDisponibleException, StockInsuficienteException
 from backend.services.op_numerador_service import OpNumeradorService
@@ -38,6 +38,12 @@ logger = logging.getLogger(__name__)
 # que nada lo note. Lo bastante corto para no confundir dos reportes
 # legítimos y distintos de la misma referencia el mismo día.
 SEGUNDOS_VENTANA_DUPLICADO = 20
+
+# Quién puede figurar como responsable de un reporte de Empaque (selector
+# del frontend, ver empaque.js): la operaria que arma o su jefe -- nunca
+# quien esté logueado si esa persona no es de esta área (ej. un admin
+# reportando por soporte). Valores reales de Usuario.rol en minúsculas.
+ROLES_RESPONSABLE_EMPAQUE = ('alistamiento', 'jefe alistamiento')
 
 
 class EmpaqueService:
@@ -109,6 +115,30 @@ class EmpaqueService:
         return plan, faltantes
 
     @staticmethod
+    def _resolver_responsable(responsable_input, usuario_activo):
+        """
+        El formulario manda quién armó (selector restringido a Alistamiento
+        en el frontend) -- se revalida aquí mismo, no basta con que el
+        frontend oculte las opciones, porque el body del POST se puede
+        armar a mano. Sin ese responsable explícito (llamadas viejas de API
+        o scripts), se cae al usuario logueado como antes.
+        """
+        responsable_input = str(responsable_input or '').strip()
+        if not responsable_input:
+            return str(usuario_activo or '').strip()
+
+        valido = Usuario.query.filter(
+            Usuario.activo == True,
+            Usuario.username == responsable_input,
+            Usuario.rol.in_(ROLES_RESPONSABLE_EMPAQUE),
+        ).first()
+        if not valido:
+            raise ValueError(
+                f"Responsable inválido: {responsable_input!r} no es una operaria o jefe de Alistamiento activa."
+            )
+        return valido.username
+
+    @staticmethod
     def previsualizar_ficha(id_codigo, cantidad=1):
         """
         Vista previa (GET /api/empaque/ficha/<codigo>): qué componentes se
@@ -160,6 +190,13 @@ class EmpaqueService:
         existe un reporte idéntico (misma referencia, cantidad y
         responsable), se asume que es el mismo envío repetido y se devuelve
         ese reporte sin volver a descontar ni acreditar stock.
+
+        `usuario` es quien está logueado (auditoría: queda como creador de
+        la OP). `data['responsable']` es quien armó, elegido en el selector
+        del formulario (ver _resolver_responsable) -- se valida que sea una
+        operaria o jefe de Alistamiento activa, y ES lo que se guarda en
+        ProduccionEmpaque.responsable. Si no viene (llamadas de API sin
+        selector), se cae al usuario logueado.
         """
         if not data:
             raise ValueError('No se recibieron datos')
@@ -188,18 +225,19 @@ class EmpaqueService:
         else:
             fecha = get_colombia_time().date()
 
-        usuario_norm = str(usuario or '').strip()
+        responsable_final = EmpaqueService._resolver_responsable(data.get('responsable'), usuario)
+
         ventana = get_colombia_time() - timedelta(seconds=SEGUNDOS_VENTANA_DUPLICADO)
         duplicado = ProduccionEmpaque.query.filter(
             ProduccionEmpaque.id_codigo == id_codigo,
             ProduccionEmpaque.cantidad == cantidad,
-            ProduccionEmpaque.responsable == usuario_norm,
+            ProduccionEmpaque.responsable == responsable_final,
             ProduccionEmpaque.fecha_registro >= ventana,
         ).order_by(ProduccionEmpaque.id.desc()).first()
         if duplicado:
             logger.warning(
                 f"⚠️ [ANTI-DUPLICADO] Empaque: reenvío detectado para "
-                f"{id_codigo}/{usuario_norm} ({cantidad} u.) -- se devuelve "
+                f"{id_codigo}/{responsable_final} ({cantidad} u.) -- se devuelve "
                 f"{duplicado.id_empaque} sin volver a tocar stock."
             )
             return {
@@ -227,7 +265,7 @@ class EmpaqueService:
             if not forzar or bloqueantes:
                 raise StockInsuficienteException(f"Stock insuficiente para armar {cantidad} x {id_codigo} -- {detalle}")
             logger.warning(
-                f"⚠️ [Empaque] Registro forzado por {usuario_norm} con stock insuficiente: "
+                f"⚠️ [Empaque] Registro forzado por {responsable_final} (logueado: {usuario}) con stock insuficiente: "
                 f"{cantidad} x {id_codigo} -- {detalle}"
             )
 
@@ -274,7 +312,7 @@ class EmpaqueService:
                 fecha_registro=get_colombia_time(),
                 id_codigo=id_codigo,
                 cantidad=cantidad,
-                responsable=usuario,
+                responsable=responsable_final,
                 op_numero=op_generada.numero_op,
                 observaciones=observaciones,
             )
