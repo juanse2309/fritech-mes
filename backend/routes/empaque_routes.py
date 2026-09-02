@@ -17,7 +17,7 @@ from backend.services.ensamble_service import BomNoDisponibleException, StockIns
 empaque_bp = Blueprint('empaque_bp', __name__)
 logger = logging.getLogger(__name__)
 
-ROLES_EMPAQUE = ROL_ADMINS + ['JEFE ALISTAMIENTO', 'ALISTAMIENTO']
+ROLES_EMPAQUE = ROL_ADMINS + ['JEFE ALISTAMIENTO', 'ALISTAMIENTO', 'JEFE AUXILIAR INVENTARIO']
 
 
 @empaque_bp.route('/api/empaque/reportar', methods=['POST'])
