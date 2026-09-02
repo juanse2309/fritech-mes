@@ -377,6 +377,74 @@ def listar_productos():
         logger.error(f"❌ Error en /api/productos/listar (JOIN Costos): {e}")
         return jsonify([]), 200
 
+@productos_bp.route('/comprometidos/<codigo_sistema>', methods=['GET'])
+@require_login
+def listar_comprometidos(codigo_sistema):
+    """
+    Desglose por pedido del valor 'COMPROMETIDO' de un producto -- drill-down
+    para la columna COMPROMETIDO en Productos y Existencias (antes solo
+    mostraba el número, sin poder ver qué pedidos lo componen).
+
+    Mismo cálculo de pendiente (cantidad - cant_alistada) que ya usa
+    detalle_producto() más arriba, solo que aquí se expone la lista completa
+    en vez del total agregado -- pero el filtro de "pedido activo" es el de
+    VentasRepository.get_pedidos_pendientes() (exclusión de estados cerrados),
+    no el de detalle_producto(): ese usa una lista fija de estados
+    ('PENDIENTE', 'ABIERTO', 'Alistamiento', 'ALISTADO') que no existen en los
+    datos reales de producción (los estados reales son 'LISTO PARA DESPACHO',
+    'EN ALISTAMIENTO', 'DESPACHO PARCIAL', 'EXPORTADO_WO', etc.) y por eso
+    nunca hace match -- confirmado en vivo 2026-09-02, devolvía 0 pedidos para
+    cualquier producto con comprometido > 0.
+    """
+    try:
+        import re
+        from backend.models.sql_models import Pedido
+
+        codigo_raw = str(codigo_sistema).strip().upper()
+        codigo_numerico = re.sub(r'^[A-Z]+-', '', codigo_raw).strip()
+
+        ESTADOS_CERRADOS = ['COMPLETADO', 'DESPACHADO', 'ENTREGADO', 'FACTURADO', 'CANCELADO']
+        pedidos = Pedido.query.filter(
+            (Pedido.id_codigo == codigo_raw) | (Pedido.id_codigo == codigo_numerico),
+            Pedido.estado.isnot(None),
+            sql_db.func.upper(Pedido.estado).notin_(ESTADOS_CERRADOS)
+        ).order_by(Pedido.fecha.asc()).all()
+
+        items = []
+        for p in pedidos:
+            try:
+                cant = float(re.sub(r'[^0-9.]', '', str(p.cantidad or '0')) or 0)
+            except (ValueError, TypeError):
+                cant = 0.0
+            try:
+                alistada = float(re.sub(r'[^0-9.]', '', str(p.cant_alistada or '0')) or 0)
+            except (ValueError, TypeError):
+                alistada = 0.0
+            pendiente = max(0.0, cant - alistada)
+            if pendiente <= 0:
+                continue
+            items.append({
+                'id_pedido': p.id_pedido,
+                'cliente': p.cliente,
+                'fecha': p.fecha.strftime('%Y-%m-%d') if p.fecha else '',
+                'estado': p.estado,
+                'cantidad': cant,
+                'cant_alistada': alistada,
+                'pendiente': pendiente,
+                'wo_consecutivo': p.wo_consecutivo
+            })
+
+        total = sum(i['pendiente'] for i in items)
+        return jsonify({
+            'status': 'success', 'success': True,
+            'items': items,
+            'total_comprometido': total
+        }), 200
+    except Exception as e:
+        logger.error(f"Error listando comprometidos de {codigo_sistema}: {e}")
+        return jsonify({'status': 'error', 'success': False, 'message': str(e)}), 200
+
+
 @productos_bp.route('/historial/<codigo>', methods=['GET'])
 @require_login
 def historial_producto(codigo):

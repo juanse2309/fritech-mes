@@ -84,6 +84,23 @@ def mes_programar():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@programacion_bp.route('/api/mes/retomar', methods=['POST'])
+@require_role(ROLES_PLANTA)
+def mes_retomar():
+    """Fase 1c: repite la última programación conocida para una máquina, varias, o todas ('Retomar General')."""
+    data = request.json or {}
+    try:
+        resultado = ProgramacionService.retomar_programacion(
+            maquinas=data.get('maquinas', []),
+            fecha_str=data.get('fecha'),
+            responsable=session.get('user', 'SISTEMA'),
+        )
+        return jsonify({'success': True, **resultado}), 200
+    except Exception as e:
+        logger.error(f"Error en mes_retomar SQL: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @programacion_bp.route('/api/mes/cancelar/<int:id_target>', methods=['POST'])
 @require_role(ROLES_PLANTA)
 def mes_cancelar(id_target):

@@ -602,6 +602,12 @@ class PulidoService:
                     # None (no 0) cuando no hay tiempo capturado: "sin dato" no
                     # es lo mismo que "0 min por pieza".
                     "min_por_pieza":  round(minutos / qty_ct, 2) if minutos > 0 and qty_ct > 0 else None,
+                    # Segundos/pieza calculado desde 'minutos' crudo (no desde
+                    # min_por_pieza ya redondeado a 2 decimales) -- pedido del
+                    # usuario 2026-09-02: el frontend lo muestra en seg/pz y
+                    # multiplicar el redondeo intermedio de minutos perdía
+                    # precisión (~0.6s de error por el redondeo previo).
+                    "seg_por_pieza":  round((minutos * 60) / qty_ct, 1) if minutos > 0 and qty_ct > 0 else None,
                     "lotes":          lotes
                 }
             return refs_map

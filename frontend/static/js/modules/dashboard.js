@@ -1714,8 +1714,46 @@ window.ModuloDashboard = (function () {
                     },
                     y: { grid: { display: false }, ticks: { font: { weight: 'bold' } } }
                 }
-            }
+            },
+            plugins: [{
+                id: 'iconosCarreraPulido',
+                afterDatasetsDraw: (chart) => posicionarIconosCarreraPulido(chart, ops.length)
+            }]
         });
+    }
+
+    /**
+     * Pedido del jefe de planta 2026-09-02: el ranking de operarias cambia de
+     * líder en vivo durante el día ("la guerra diaria") a medida que van
+     * reportando -- una corona en la punta de la barra que va primera y un
+     * caballo en las demás, como si fuera una carrera, funciona como
+     * motivación visual. Se dibuja como overlay HTML (no en el canvas) para
+     * poder animarlo con CSS puro -- ver .pulido-race-icon-* en dashboard.css.
+     * Las posiciones se recalculan en cada draw del chart (afterDatasetsDraw),
+     * así siguen la animación de crecimiento inicial de las barras.
+     */
+    function posicionarIconosCarreraPulido(chart, totalOps) {
+        const overlay = document.getElementById('pulido-ranking-icons');
+        if (!overlay) return;
+
+        const meta = chart.getDatasetMeta(0);
+        const canvasRect = chart.canvas.getBoundingClientRect();
+        const overlayRect = overlay.getBoundingClientRect();
+        const offsetX = canvasRect.left - overlayRect.left;
+        const offsetY = canvasRect.top - overlayRect.top;
+
+        let html = '';
+        for (let i = 0; i < totalOps; i++) {
+            const el = meta.data[i];
+            if (!el) continue;
+            const x = el.x + offsetX + 4;
+            const y = el.y + offsetY;
+            const esLider = i === 0;
+            const icono = esLider ? '👑' : '🐎';
+            const clase = esLider ? 'pulido-race-icon-crown' : 'pulido-race-icon-horse';
+            html += `<span class="pulido-race-icon ${clase}" style="left:${x}px; top:${y}px;">${icono}</span>`;
+        }
+        overlay.innerHTML = html;
     }
 
 
@@ -1898,8 +1936,67 @@ window.ModuloDashboard = (function () {
                     },
                     y: { stacked: true, grid: { display: false }, ticks: { font: { weight: 'bold' } } }
                 }
-            }
+            },
+            plugins: [{
+                id: 'iconosCarreraMix',
+                afterDatasetsDraw: (chart) => posicionarIconosCarreraMix(chart, ops.length, totalPorOp, enPorcentaje)
+            }]
         });
+    }
+
+    // Colores del "calor" de la carrera: rojo intenso para el 1er lugar,
+    // enfriando hacia gris azulado para el último -- interpolación RGB simple.
+    const COLOR_CALOR_TOP = [239, 68, 68];    // #ef4444
+    const COLOR_CALOR_BOTTOM = [148, 163, 184]; // #94a3b8
+
+    function colorCalorPorRango(idx, total) {
+        const t = total > 1 ? idx / (total - 1) : 0;
+        const [r1, g1, b1] = COLOR_CALOR_TOP;
+        const [r2, g2, b2] = COLOR_CALOR_BOTTOM;
+        const r = Math.round(r1 + (r2 - r1) * t);
+        const g = Math.round(g1 + (g2 - g1) * t);
+        const b = Math.round(b1 + (b2 - b1) * t);
+        return `rgb(${r}, ${g}, ${b})`;
+    }
+
+    /**
+     * Pedido del jefe de planta 2026-09-02 (boceto anexado): en la punta de
+     * cada barra del Mix de Producción, un caballito corriendo con un efecto
+     * de "efervescencia"/calor que varía de intensidad según el puesto en la
+     * carrera -- más caliente (rojo, pulso rápido) para quien va primero, más
+     * frío (gris azulado, pulso lento) para quien va más abajo. Igual que en
+     * el ranking de piezas, se dibuja como overlay HTML sobre el canvas para
+     * poder animarlo con CSS puro -- ver .pulido-mix-race-icon en dashboard.css.
+     * La posición X se calcula con la escala X del chart sobre el TOTAL real
+     * de cada operaria (totalPorOp), no leyendo el último segmento apilado:
+     * con "Ver en %" activo, o cuando la referencia más pequeña de una
+     * operaria vale 0, el último dataset no siempre queda posicionado en la
+     * punta real de la barra -- la escala sí es exacta siempre.
+     */
+    function posicionarIconosCarreraMix(chart, totalOps, totalPorOp, enPorcentaje) {
+        const overlay = document.getElementById('mix-race-icons');
+        const xScale = chart.scales && chart.scales.x;
+        if (!overlay || !xScale) return;
+
+        const primerMeta = chart.getDatasetMeta(0);
+        const canvasRect = chart.canvas.getBoundingClientRect();
+        const overlayRect = overlay.getBoundingClientRect();
+        const offsetX = canvasRect.left - overlayRect.left;
+        const offsetY = canvasRect.top - overlayRect.top;
+
+        let html = '';
+        for (let i = 0; i < totalOps; i++) {
+            const el = primerMeta.data[i];
+            if (!el) continue;
+            const valorTotal = enPorcentaje ? 100 : (totalPorOp[i] || 0);
+            const x = xScale.getPixelForValue(valorTotal) + offsetX + 4;
+            const y = el.y + offsetY;
+            const color = colorCalorPorRango(i, totalOps);
+            // Más caliente = pulso más rápido (0.7s el líder, hasta ~1.6s el último).
+            const duracion = (0.7 + (totalOps > 1 ? (i / (totalOps - 1)) : 0) * 0.9).toFixed(2);
+            html += `<span class="pulido-mix-race-icon" style="left:${x}px; top:${y}px; --heat-color:${color}; animation-duration:${duracion}s;">🐎</span>`;
+        }
+        overlay.innerHTML = html;
     }
 
     function initToggleMixPulido() {
@@ -1963,8 +2060,11 @@ window.ModuloDashboard = (function () {
                     ini: refs[r].hora_inicio || null,
                     fin: refs[r].hora_fin || null,
                     min: refs[r].minutos || 0,
-                    // null (no 0) = la operaria no capturó tiempo en esa referencia
-                    mpz: (refs[r].min_por_pieza === null || refs[r].min_por_pieza === undefined) ? null : refs[r].min_por_pieza,
+                    // null (no 0) = la operaria no capturó tiempo en esa referencia.
+                    // spz viene ya calculado en el backend desde 'minutos' crudo (no
+                    // desde min_por_pieza, que está redondeado a 2 decimales) -- ver
+                    // PulidoService.get_detalle_por_referencia.
+                    spz: (refs[r].seg_por_pieza === null || refs[r].seg_por_pieza === undefined) ? null : refs[r].seg_por_pieza,
                     lotes: refs[r].lotes || 0
                 })).sort((a, b) => b.cantidad - a.cantidad);
                 detalleMixStr = encodeURIComponent(JSON.stringify(arr));
@@ -2413,7 +2513,7 @@ window.ModuloDashboard = (function () {
 
                 // Solo Pulido envía tiempos; si el DTO no los trae (otros
                 // procesos) se conserva la tabla corta de siempre.
-                const conTiempos = arr.some(i => i.ini || i.fin || i.mpz !== null && i.mpz !== undefined);
+                const conTiempos = arr.some(i => i.ini || i.fin || i.spz !== null && i.spz !== undefined);
 
                 const fmtDuracion = (mins) => {
                     const m = Math.round(Number(mins) || 0);
@@ -2424,11 +2524,11 @@ window.ModuloDashboard = (function () {
 
                 const filasHtml = arr.map(item => {
                     const celdasTiempo = conTiempos ? `
-                            <td class="text-nowrap small text-muted">${item.ini || '—'}</td>
-                            <td class="text-nowrap small text-muted">${item.fin || '—'}</td>
-                            <td class="text-nowrap small">${fmtDuracion(item.min)}</td>
-                            <td class="text-nowrap fw-bold ${item.mpz === null || item.mpz === undefined ? 'text-muted' : 'text-primary'}" style="font-family: 'JetBrains Mono', monospace;">
-                                ${item.mpz === null || item.mpz === undefined ? '—' : `${Number(item.mpz).toFixed(2)} min/pz`}
+                            <td class="text-nowrap text-muted">${item.ini || '—'}</td>
+                            <td class="text-nowrap text-muted">${item.fin || '—'}</td>
+                            <td class="text-nowrap">${fmtDuracion(item.min)}</td>
+                            <td class="text-nowrap fw-bold ${item.spz === null || item.spz === undefined ? 'text-muted' : 'text-primary'}" style="font-family: 'JetBrains Mono', monospace;">
+                                ${item.spz === null || item.spz === undefined ? '—' : `${Number(item.spz).toFixed(1)} seg/pz`}
                             </td>
                     ` : '';
                     const badgeLotes = (conTiempos && (item.lotes || 0) > 1)
@@ -2436,8 +2536,8 @@ window.ModuloDashboard = (function () {
                         : '';
                     return `
                         <tr class="modal-ref-item" data-search="${String(item.ref || '').toLowerCase()}">
-                            <td class="text-start fw-medium"><i class="fas fa-cube text-muted me-1"></i> ${item.ref}${badgeLotes}</td>
-                            <td><span class="badge bg-light text-dark border">${(item.cantidad || 0).toLocaleString()}</span></td>
+                            <td class="text-start fw-bold fs-6"><i class="fas fa-cube text-muted me-1"></i> ${item.ref}${badgeLotes}</td>
+                            <td><span class="badge bg-light text-dark border fs-6 px-3 py-2">${(item.cantidad || 0).toLocaleString()}</span></td>
                             ${celdasTiempo}
                         </tr>
                     `;
@@ -2452,9 +2552,9 @@ window.ModuloDashboard = (function () {
 
                 mixLines = `
                     <div class="table-responsive mt-3">
-                        <table class="table table-sm table-hover text-center align-middle" style="font-size: 0.85rem;">
+                        <table class="table table-hover text-center align-middle" style="font-size: 1rem;">
                             <thead class="table-light text-secondary">
-                                <tr>
+                                <tr style="font-size: 0.8rem;">
                                     <th class="text-start">Referencia</th>
                                     <th>Cantidad</th>
                                     ${encabezadosTiempo}
@@ -2480,7 +2580,7 @@ window.ModuloDashboard = (function () {
                             <input type="text" id="modal-search-ref" class="form-control border-0 px-1 shadow-none" placeholder="Buscar ref..." style="font-size: 0.8rem;">
                         </div>
                     </h6>
-                    <div class="bg-white rounded-3 shadow-sm border p-2" style="max-height: 280px; overflow-y: auto;">
+                    <div class="bg-white rounded-3 shadow-sm border p-2" style="max-height: 360px; overflow-y: auto;">
                         ${mixLines}
                         <div id="modal-ref-empty" class="text-center py-4 text-muted d-none">
                             <i class="fas fa-box-open fs-3 mb-2 opacity-50"></i>
@@ -2741,6 +2841,32 @@ window.ModuloDashboard = (function () {
     const formatCOP = (num) => new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(num);
     const formatNumber = (num) => new Intl.NumberFormat('es-CO').format(num);
 
+    /**
+     * Pinta el nodo '#total-consolidado-anual' con el total de AMBOS años
+     * (no solo el actual) más el % de crecimiento/decrecimiento entre ellos --
+     * pedido del usuario 2026-09-02. Compartido por renderChartMensual y
+     * renderChartMonthlyPerformance: ambos repintan el mismo <canvas
+     * id="chartMensual"> y por lo tanto el mismo total.
+     */
+    function renderTotalConsolidadoAnual(yearActual, totalActual, yearPrev, totalPrev, fmt) {
+        const totalNode = document.getElementById('total-consolidado-anual');
+        if (!totalNode) return;
+
+        let crecimientoHtml = '';
+        if (totalPrev > 0) {
+            const pct = ((totalActual - totalPrev) / totalPrev) * 100;
+            const esCrecimiento = pct >= 0;
+            const claseTrend = esCrecimiento ? 'kpi-trend-up' : 'kpi-trend-down';
+            const icono = esCrecimiento ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down';
+            crecimientoHtml = ` <span class="${claseTrend}"><i class="fas ${icono} me-1"></i>${Math.abs(pct).toFixed(1)}%</span>`;
+        }
+
+        totalNode.innerHTML = `Total ${yearActual}: ${fmt(totalActual)}` +
+            `<span class="text-muted fw-normal mx-2">|</span>` +
+            `Total ${yearPrev}: ${fmt(totalPrev)}` +
+            crecimientoHtml;
+    }
+
     function renderChartMensual(datosMensuales, mode = 'money') {
         const ctx = document.getElementById('chartMensual');
         if (!ctx || !Array.isArray(datosMensuales) || datosMensuales.length === 0) return;
@@ -2783,10 +2909,9 @@ window.ModuloDashboard = (function () {
 
             // Suma consolidada del año actual (nodo DOM, cero texto estático embebido en el canvas)
             const totalConsolidadoActual = dataActualVentas.reduce((acc, v) => acc + v, 0);
-            const totalNode = document.getElementById('total-consolidado-anual');
-            if (totalNode) {
-                totalNode.innerText = `Total ${yearActual}: ${isMoney ? formatCOP(totalConsolidadoActual) : formatNumber(totalConsolidadoActual) + ' unds'}`;
-            }
+            const totalConsolidadoPrev = dataPrevVentas.reduce((acc, v) => acc + v, 0);
+            const fmt = isMoney ? formatCOP : (v => formatNumber(v) + ' unds');
+            renderTotalConsolidadoAnual(yearActual, totalConsolidadoActual, yearPrev, totalConsolidadoPrev, fmt);
 
             // Destruir cualquier Chart.js atado a este canvas, sin importar qué función
             // lo haya creado (renderChartMensual o renderChartMonthlyPerformance comparten
@@ -4114,10 +4239,8 @@ window.ModuloDashboard = (function () {
             // esta función es la que realmente repinta el canvas al cambiar el filtro
             // de fechas, así que el total debe actualizarse aquí también).
             const totalConsolidadoActual = ventasAct.reduce((acc, v) => acc + v, 0);
-            const totalNode = document.getElementById('total-consolidado-anual');
-            if (totalNode) {
-                totalNode.innerText = `Total ${yearActual}: ${_fmtCOP(totalConsolidadoActual)}`;
-            }
+            const totalConsolidadoPrev = ventasPrev.reduce((acc, v) => acc + v, 0);
+            renderTotalConsolidadoAnual(yearActual, totalConsolidadoActual, yearPrev, totalConsolidadoPrev, _fmtCOP);
 
             _monthlyChartInstances[containerId] = new Chart(ctx, {
                 type: 'bar',

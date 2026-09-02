@@ -215,6 +215,90 @@ class ProgramacionService:
             raise
 
     @staticmethod
+    def retomar_programacion(maquinas, fecha_str, responsable):
+        """
+        Fase 1c: repite para la fecha destino (hoy por defecto) la última
+        programación conocida de una o varias máquinas -- mismo molde,
+        productos y cavidades -- para el caso común en que la máquina sigue
+        con el mismo montaje y el Jefe de Planta no tiene nada que cambiar.
+
+        `maquinas` vacío/None = todas las máquinas activas ("Retomar General").
+        Una máquina que ya tenga programación o producción activa en la fecha
+        destino se omite, para no pisar algo que ya se ajustó a mano.
+        """
+        try:
+            if fecha_str:
+                try:
+                    fecha_obj = datetime.strptime(fecha_str, '%Y-%m-%d').date()
+                except ValueError:
+                    fecha_obj = date.today()
+            else:
+                fecha_obj = date.today()
+
+            objetivo = [str(m).strip().upper() for m in (maquinas or []) if str(m).strip()]
+            if not objetivo:
+                objetivo = [m.upper() for m in ProgramacionService.obtener_maquinas_activas()]
+
+            resultado = {'retomadas': [], 'omitidas': []}
+
+            for maquina in objetivo:
+                ya_tiene = db.session.query(ProgramacionInyeccion.id).filter(
+                    ProgramacionInyeccion.maquina == maquina,
+                    ProgramacionInyeccion.fecha == fecha_obj
+                ).first()
+                if not ya_tiene:
+                    # Comparación case-insensitive a propósito: obtener_dashboard_mes ya
+                    # demostró que ProduccionInyeccion.maquina no siempre llega en el mismo
+                    # formato de mayúsculas que ProgramacionInyeccion.maquina -- un match
+                    # exacto aquí dejaría pasar como "libre" una máquina realmente ocupada.
+                    ya_tiene = db.session.query(ProduccionInyeccion.id_inyeccion).filter(
+                        db.func.upper(ProduccionInyeccion.maquina) == maquina,
+                        ProduccionInyeccion.estado.in_(['EN_PROCESO', 'ABIERTO'])
+                    ).first()
+                if ya_tiene:
+                    resultado['omitidas'].append({'maquina': maquina, 'motivo': 'Ya tiene programación o producción activa en esa fecha'})
+                    continue
+
+                ultima = db.session.query(ProgramacionInyeccion).filter(
+                    ProgramacionInyeccion.maquina == maquina,
+                    ProgramacionInyeccion.fecha < fecha_obj
+                ).order_by(ProgramacionInyeccion.fecha.desc(), ProgramacionInyeccion.id.desc()).first()
+
+                if not ultima:
+                    resultado['omitidas'].append({'maquina': maquina, 'motivo': 'Sin historial previo de programación'})
+                    continue
+
+                # Bloque completo del último montaje (mismo día+molde+OP) --
+                # multi-SKU, ver crear_programacion/obtener_status_maquina.
+                bloque = db.session.query(ProgramacionInyeccion).filter(
+                    ProgramacionInyeccion.maquina == maquina,
+                    ProgramacionInyeccion.fecha == ultima.fecha,
+                    ProgramacionInyeccion.molde == ultima.molde,
+                    ProgramacionInyeccion.op_world_office == ultima.op_world_office
+                ).all()
+
+                productos = [
+                    {'codigo': b.codigo_sistema, 'cavidades': b.cavidades, 'cantidad': float(b.cantidad or 0)}
+                    for b in bloque
+                ]
+
+                ProgramacionService.crear_programacion(
+                    maquina=maquina,
+                    fecha_str=fecha_obj.strftime('%Y-%m-%d'),
+                    productos=productos,
+                    responsable=responsable,
+                    observaciones=f'Retomado automáticamente de la programación del {ultima.fecha}',
+                    molde_capacidad=ultima.molde
+                )
+                resultado['retomadas'].append({'maquina': maquina, 'molde': ultima.molde, 'productos': len(productos)})
+
+            ProgramacionService.clear_mes_cache()
+            return resultado
+        except Exception as e:
+            logger.error(f"Error en ProgramacionService.retomar_programacion: {e}")
+            raise
+
+    @staticmethod
     def cancelar(id_target):
         """
         Fase 1b: libera una máquina cancelando por ID. Polimórfico: intenta
@@ -385,7 +469,7 @@ class ProgramacionService:
         maquina_upper = str(maquina).strip().upper()
 
         activos = db.session.query(ProduccionInyeccion).filter(
-            ProduccionInyeccion.maquina == maquina_upper,
+            db.func.upper(ProduccionInyeccion.maquina) == maquina_upper,
             ProduccionInyeccion.estado.in_(['EN_PROCESO', 'ABIERTO'])
         ).all()
 
@@ -407,13 +491,13 @@ class ProgramacionService:
             }
 
         primer_programado = db.session.query(ProgramacionInyeccion).filter(
-            ProgramacionInyeccion.maquina == maquina_upper,
+            db.func.upper(ProgramacionInyeccion.maquina) == maquina_upper,
             ProgramacionInyeccion.estado == 'PROGRAMADO'
         ).order_by(ProgramacionInyeccion.id.asc()).first()
 
         if primer_programado:
             programados_bloque = db.session.query(ProgramacionInyeccion).filter(
-                ProgramacionInyeccion.maquina == maquina_upper,
+                db.func.upper(ProgramacionInyeccion.maquina) == maquina_upper,
                 ProgramacionInyeccion.fecha == primer_programado.fecha,
                 ProgramacionInyeccion.molde == primer_programado.molde,
                 ProgramacionInyeccion.op_world_office == primer_programado.op_world_office,
@@ -451,7 +535,7 @@ class ProgramacionService:
             maquina_nom = prog_trigger.maquina
 
             activos = db.session.query(ProduccionInyeccion).filter(
-                ProduccionInyeccion.maquina == maquina_nom,
+                db.func.upper(ProduccionInyeccion.maquina) == str(maquina_nom).strip().upper(),
                 ProduccionInyeccion.estado.in_(['ABIERTO', 'EN_PROCESO'])
             ).first()
             if activos:

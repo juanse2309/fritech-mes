@@ -231,6 +231,68 @@
     animation: pulse 1.5s infinite;
 }
 
+/* RANKING DE PRODUCCIÓN (PIEZAS): corona/caballo animados en la punta de
+   cada barra de operaria -- la "carrera" cambia de líder en vivo a medida
+   que reportan durante el día, esto es solo el efecto motivacional visual.
+   Posición (left/top) la calcula renderChartPulidoRanking en dashboard.js
+   a partir de las coordenadas reales del gráfico; aquí solo la animación. */
+.pulido-race-icon {
+    position: absolute;
+    transform: translateY(-50%);
+    font-size: 1.05rem;
+    line-height: 1;
+    filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25));
+}
+
+@keyframes pulido-race-crown-glow {
+    0%, 100% {
+        transform: translateY(-50%) scale(1);
+        filter: drop-shadow(0 0 2px rgba(250, 204, 21, 0.9)) drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25));
+    }
+    50% {
+        transform: translateY(-50%) scale(1.15);
+        filter: drop-shadow(0 0 6px rgba(250, 204, 21, 1)) drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25));
+    }
+}
+
+.pulido-race-icon-crown {
+    animation: pulido-race-crown-glow 1.4s ease-in-out infinite;
+}
+
+@keyframes pulido-race-gallop {
+    0%, 100% { transform: translateY(-50%) rotate(-8deg); }
+    50% { transform: translateY(calc(-50% - 3px)) rotate(8deg); }
+}
+
+.pulido-race-icon-horse {
+    animation: pulido-race-gallop 0.9s ease-in-out infinite;
+}
+
+/* MIX DE PRODUCCIÓN: caballito con efecto de calor/efervescencia en la
+   punta de cada barra, cuya intensidad (color + velocidad de pulso) varía
+   según el puesto en la carrera -- ver posicionarIconosCarreraMix en
+   dashboard.js, que calcula --heat-color y animation-duration por fila. */
+.pulido-mix-race-icon {
+    position: absolute;
+    transform: translateY(-50%);
+    font-size: 1.1rem;
+    line-height: 1;
+    animation-name: pulido-mix-heat;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+}
+
+@keyframes pulido-mix-heat {
+    0%, 100% {
+        transform: translateY(-50%) scale(1);
+        filter: drop-shadow(0 0 2px var(--heat-color, #f59e0b)) drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25));
+    }
+    50% {
+        transform: translateY(-50%) scale(1.18);
+        filter: drop-shadow(0 0 9px var(--heat-color, #f59e0b)) drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25));
+    }
+}
+
 /* RESPONSIVE */
 @media (max-width: 1200px) {
     .dashboard-grid-charts {

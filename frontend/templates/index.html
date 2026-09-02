@@ -1505,6 +1505,10 @@
                                 <div class="card-body">
                                     <div style="position: relative; height: 320px; width: 100%;">
                                         <canvas id="chartPulidoRanking"></canvas>
+                                        <!-- Overlay de "carrera": corona/caballo animados en la punta de
+                                             cada barra, posicionados en JS sobre las coordenadas reales del
+                                             gráfico (ver renderChartPulidoRanking en dashboard.js). -->
+                                        <div id="pulido-ranking-icons" style="position: absolute; inset: 0; pointer-events: none;"></div>
                                     </div>
                                 </div>
                             </div>
@@ -1529,6 +1533,10 @@
                                 <div class="card-body">
                                     <div style="position: relative; height: 380px; width: 100%;">
                                         <canvas id="chartPulidoMixRef"></canvas>
+                                        <!-- Overlay de "carrera": caballito con efecto de calor/efervescencia
+                                             en la punta de cada barra, posicionado en JS sobre las coordenadas
+                                             reales del gráfico (ver renderChartPulidoMixReferencias en dashboard.js). -->
+                                        <div id="mix-race-icons" style="position: absolute; inset: 0; pointer-events: none;"></div>
                                     </div>
                                 </div>
                             </div>
@@ -1936,8 +1944,14 @@
                                     <div
                                         class="card-header bg-white border-0 pt-4 pb-0 d-flex justify-content-between align-items-center">
                                         <h5 class="fw-bold mb-0">Cola de Trabajo</h5>
-                                        <button class="btn btn-sm btn-light" id="btn-refresh-prog"><i
-                                                class="fas fa-sync-alt"></i></button>
+                                        <div class="d-flex gap-2">
+                                            <button class="btn btn-sm btn-outline-primary fw-bold" id="btn-retomar-general"
+                                                title="Repite la última programación conocida en todas las máquinas que sigan sin programar para la fecha seleccionada">
+                                                <i class="fas fa-history me-1"></i> Retomar Todas
+                                            </button>
+                                            <button class="btn btn-sm btn-light" id="btn-refresh-prog"><i
+                                                    class="fas fa-sync-alt"></i></button>
+                                        </div>
                                     </div>
                                     <div class="card-body p-3">
                                         <!-- VISTA DE TARJETAS (NUEVA) -->
@@ -4590,6 +4604,24 @@
                         <button class="btn btn-sm btn-outline-primary" onclick="AlmacenModule.irACarteraCompleta()">
                             <i class="fas fa-external-link-alt me-1"></i> Ver Cartera Completa
                         </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Modal Comprometidos por Referencia: drill-down de la columna
+                 COMPROMETIDO en Productos y Existencias, para ver qué pedidos
+                 la componen sin tener que ir a buscar uno por uno. -->
+            <div id="modalComprometidosProducto" class="modal-overlay"
+                style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 11000; align-items: center; justify-content: center; backdrop-filter: blur(4px);">
+                <div class="modal-content"
+                    style="background: white; border-radius: 16px; width: 95%; max-width: 800px; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);">
+                    <div class="d-flex justify-content-between align-items-center p-3 border-bottom" style="flex-shrink: 0;">
+                        <h5 class="m-0 fw-bold"><i class="fas fa-hand-holding me-2 text-danger"></i>Pedidos que Componen el Comprometido</h5>
+                        <button class="btn-close" onclick="document.getElementById('modalComprometidosProducto').style.display='none'"></button>
+                    </div>
+                    <p class="text-muted small px-3 pt-3 mb-2" id="comprometidos-modal-subtitulo">&nbsp;</p>
+                    <div id="comprometidos-modal-body" style="overflow-y: auto; flex-grow: 1; padding: 0 15px 15px;">
+                        <div class="text-center py-4 text-muted"><i class="fas fa-spinner fa-spin fa-2x"></i></div>
                     </div>
                 </div>
             </div>

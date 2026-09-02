@@ -736,6 +736,7 @@ window.ModuloMes = {
         // Refresh buttons
         document.getElementById('btn-refresh-prog')?.addEventListener('click', () => this.actualizarColaProgramacion());
         document.getElementById('btn-refresh-operacion')?.addEventListener('click', () => this.cargarDashboard());
+        document.getElementById('btn-retomar-general')?.addEventListener('click', () => this.retomarGeneral());
 
 
         // --- MEJORA: Búsqueda automática y Autocompletado ---
@@ -1172,7 +1173,13 @@ window.ModuloMes = {
                                 <i class="fas fa-microchip text-muted" style="font-size:1.4rem"></i>
                             </div>
                             <div class="fw-bold text-muted" style="font-size:.7rem;letter-spacing:.1em;text-transform:uppercase">${m}</div>
-                            <div class="text-muted mt-1" style="font-size:.78rem">Disponible</div>
+                            <div class="text-muted mt-1 mb-2" style="font-size:.78rem">Disponible</div>
+                            <button onclick="ModuloMes.retomarMaquina('${m}')"
+                                style="padding:5px 12px;border:1px solid #cbd5e1;border-radius:20px;
+                                background:#fff;color:#334155;font-size:.7rem;font-weight:600;cursor:pointer"
+                                title="Repite en esta máquina la última programación conocida (mismo molde/referencia)">
+                                <i class="fas fa-history me-1"></i> Retomar
+                            </button>
                         </div>
                     </div>
                 </div>`;
@@ -1488,6 +1495,97 @@ window.ModuloMes = {
                 console.error('[MES] Error liberando máquina:', error);
                 Swal.fire('Error', 'No se pudieron cancelar todos los trabajos', 'error');
             }
+        }
+    },
+
+    /**
+     * Repite en una sola máquina la última programación conocida (mismo
+     * molde/referencia/cavidades) para la fecha seleccionada en el formulario
+     * -- atajo para cuando la máquina sigue con el mismo montaje del día
+     * anterior y no hay nada que cambiar.
+     */
+    retomarMaquina: async function (maquina) {
+        if (!this.canOperarMaquina()) {
+            Swal.fire('Acceso Denegado', 'No tienes permisos para programar máquinas.', 'error');
+            return;
+        }
+        const fecha = document.getElementById('mes-prog-fecha')?.value || '';
+        try {
+            mostrarLoading(true);
+            const res = await fetchData('/api/mes/retomar', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ maquinas: [maquina], fecha })
+            });
+            mostrarLoading(false);
+
+            if (res && res.success && res.retomadas?.length > 0) {
+                const r = res.retomadas[0];
+                Swal.fire('Retomada', `${maquina} quedó programada con el molde ${r.molde} (${r.productos} referencia${r.productos !== 1 ? 's' : ''}), igual que su última programación.`, 'success');
+            } else {
+                const motivo = res?.omitidas?.[0]?.motivo || res?.error || 'No se pudo retomar la máquina.';
+                Swal.fire('Sin cambios', motivo, 'info');
+            }
+            await this.cargarDashboard();
+            await this.actualizarColaProgramacion();
+        } catch (error) {
+            mostrarLoading(false);
+            console.error('[MES] Error al retomar máquina:', error);
+            Swal.fire('Error', 'Error de red al intentar retomar la máquina', 'error');
+        }
+    },
+
+    /**
+     * "Retomar General": repite la última programación conocida en TODAS las
+     * máquinas que aún sigan sin programar para la fecha seleccionada. Las
+     * que ya tienen algo cargado (o producción activa) se dejan intactas.
+     */
+    retomarGeneral: async function () {
+        if (!this.canOperarMaquina()) {
+            Swal.fire('Acceso Denegado', 'No tienes permisos para programar máquinas.', 'error');
+            return;
+        }
+        const fecha = document.getElementById('mes-prog-fecha')?.value || '';
+        const confirm = await Swal.fire({
+            title: '¿Retomar todas las máquinas?',
+            text: 'Las máquinas que ya tengan programación o producción activa para esta fecha se dejarán intactas. El resto retomará su último molde/referencia conocido.',
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonColor: '#0d6efd',
+            confirmButtonText: 'Sí, retomar todas',
+            cancelButtonText: 'Cancelar'
+        });
+        if (!confirm.isConfirmed) return;
+
+        try {
+            mostrarLoading(true);
+            const res = await fetchData('/api/mes/retomar', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ maquinas: [], fecha })
+            });
+            mostrarLoading(false);
+
+            if (res && res.success) {
+                const retomadas = res.retomadas || [];
+                const omitidas = res.omitidas || [];
+                const detalleOmitidas = omitidas.length > 0
+                    ? `<br><br><small class="text-muted">Sin cambios: ${omitidas.map(o => `${o.maquina} (${o.motivo})`).join(', ')}</small>`
+                    : '';
+                Swal.fire({
+                    icon: retomadas.length > 0 ? 'success' : 'info',
+                    title: retomadas.length > 0 ? '¡Máquinas Retomadas!' : 'Sin máquinas para retomar',
+                    html: `${retomadas.length} máquina${retomadas.length !== 1 ? 's' : ''} quedaron programadas igual que su última jornada.${detalleOmitidas}`
+                });
+            } else {
+                Swal.fire('Error', res?.error || 'No se pudo retomar la programación', 'error');
+            }
+            await this.cargarDashboard();
+            await this.actualizarColaProgramacion();
+        } catch (error) {
+            mostrarLoading(false);
+            console.error('[MES] Error al retomar general:', error);
+            Swal.fire('Error', 'Error de red al intentar retomar la programación', 'error');
         }
     },
 

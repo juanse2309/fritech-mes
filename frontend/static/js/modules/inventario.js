@@ -278,9 +278,9 @@ function renderizarTablaProductos(productos, resetearPagina = false) {
                                     <span class="stat-label">TERMINADO</span>
                                     <span class="stat-value success">${formatNumber(p.stock_terminado || 0)}</span>
                                 </div>
-                                <div class="stat-item" title="Unidades ya asignadas a pedidos">
+                                <div class="stat-item" title="Unidades ya asignadas a pedidos. Toca para ver el detalle.">
                                     <span class="stat-label">COMPROM.</span>
-                                    <span class="stat-value danger" style="color: #ef4444;">${formatNumber(p.stock_comprometido || 0)}</span>
+                                    <span class="stat-value danger comprometido-link" data-codigo="${p.codigo}" style="color: #ef4444; text-decoration: underline; cursor: pointer;">${formatNumber(p.stock_comprometido || 0)}</span>
                                 </div>
                                 <div class="stat-item" title="Calculado: TERMINADO - COMPROMETIDO">
                                     <span class="stat-label">DISPONIBLE</span>
@@ -346,7 +346,7 @@ function renderizarTablaProductos(productos, resetearPagina = false) {
                 </td>
                 <td style="padding: 10px; text-align: right; color: #f97316; font-weight: 600; background: rgba(249, 115, 22, 0.05);">${formatNumber(p.por_pulir || 0)}</td>
                 <td style="padding: 10px; text-align: right; color: #64748b;">${formatNumber(stockTerminado)}</td>
-                <td style="padding: 10px; text-align: right; color: #ef4444;">${formatNumber(stockComprometido)}</td>
+                <td style="padding: 10px; text-align: right; color: #ef4444; text-decoration: underline; cursor: pointer;" class="comprometido-link" data-codigo="${p.codigo}" title="Ver pedidos que componen este comprometido">${formatNumber(stockComprometido)}</td>
                 <td style="padding: 10px; text-align: right; font-weight: ${bajoMinimo ? 'bold' : '600'}; color: ${bajoMinimo ? '#dc2626' : '#2563eb'};">
                     ${bajoMinimo ? '<i class="fas fa-exclamation-triangle" title="Bajo el Mínimo!"></i> ' : ''}
                     ${formatNumber(disponible)}
@@ -693,6 +693,14 @@ function configurarEventosInventario() {
                 if (codigo && typeof window.abrirModalHistorial === 'function') {
                     window.abrirModalHistorial(codigo);
                 }
+                return;
+            }
+
+            const targetComprometido = e.target.closest('.comprometido-link');
+            if (targetComprometido) {
+                e.preventDefault();
+                const codigo = targetComprometido.getAttribute('data-codigo');
+                if (codigo) abrirModalComprometidos(codigo);
             }
         });
     }
@@ -1244,6 +1252,74 @@ window.ModuloInventario = {
         }
     }
 };
+
+/**
+ * Modal de detalle de "Comprometido": lista los pedidos activos que suman
+ * el valor mostrado en la columna COMPROMETIDO de un producto.
+ */
+async function abrirModalComprometidos(codigo) {
+    const modal = document.getElementById('modalComprometidosProducto');
+    const body = document.getElementById('comprometidos-modal-body');
+    const subtitulo = document.getElementById('comprometidos-modal-subtitulo');
+    if (!modal || !body) return;
+
+    const producto = (window.AppState.productosData || []).find(p => p.codigo === codigo);
+    subtitulo.textContent = producto
+        ? `${codigo} — ${producto.descripcion || ''}`
+        : codigo;
+
+    body.innerHTML = '<div class="text-center py-4 text-muted"><i class="fas fa-spinner fa-spin fa-2x"></i></div>';
+    modal.style.display = 'flex';
+
+    try {
+        const response = await fetch(`/api/productos/comprometidos/${encodeURIComponent(codigo)}`);
+        const data = await response.json();
+
+        if (!data.success || !Array.isArray(data.items) || data.items.length === 0) {
+            body.innerHTML = '<div class="text-center py-4 text-muted">No hay pedidos activos que expliquen este comprometido.</div>';
+            return;
+        }
+
+        const filas = data.items.map(it => `
+            <tr>
+                <td>${it.id_pedido || '-'}</td>
+                <td>${it.cliente || '-'}</td>
+                <td>${it.fecha || '-'}</td>
+                <td><span class="badge bg-secondary">${it.estado || '-'}</span></td>
+                <td class="text-end">${formatNumber(it.cantidad)}</td>
+                <td class="text-end">${formatNumber(it.cant_alistada)}</td>
+                <td class="text-end fw-bold text-danger">${formatNumber(it.pendiente)}</td>
+            </tr>
+        `).join('');
+
+        body.innerHTML = `
+            <table class="table table-sm table-hover align-middle mb-0">
+                <thead>
+                    <tr style="font-size: 11px; text-transform: uppercase; color: #64748b;">
+                        <th>Pedido</th>
+                        <th>Cliente</th>
+                        <th>Fecha</th>
+                        <th>Estado</th>
+                        <th class="text-end">Cant.</th>
+                        <th class="text-end">Alistada</th>
+                        <th class="text-end">Pendiente</th>
+                    </tr>
+                </thead>
+                <tbody>${filas}</tbody>
+                <tfoot>
+                    <tr class="fw-bold">
+                        <td colspan="6" class="text-end">Total Comprometido:</td>
+                        <td class="text-end text-danger">${formatNumber(data.total_comprometido)}</td>
+                    </tr>
+                </tfoot>
+            </table>
+        `;
+    } catch (error) {
+        console.error('Error cargando comprometidos:', error);
+        body.innerHTML = '<div class="text-center py-4 text-danger">No se pudo cargar el detalle de pedidos.</div>';
+    }
+}
+window.abrirModalComprometidos = abrirModalComprometidos;
 
 /**
  * Función puente global para abrir el Modal de Historial.
