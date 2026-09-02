@@ -10,7 +10,7 @@ from backend.utils.auth_middleware import require_role, ROL_ADMINS
 rayada_bp = Blueprint('rayada_bp', __name__)
 logger = logging.getLogger(__name__)
 
-ROLES_RAYADA = ROL_ADMINS + ['AUXILIAR INVENTARIO', 'ENSAMBLE', 'RAYADA']
+ROLES_RAYADA = ROL_ADMINS + ['AUXILIAR INVENTARIO', 'JEFE AUXILIAR INVENTARIO', 'ENSAMBLE', 'RAYADA']
 
 
 @rayada_bp.route('/api/rayada/session_active', methods=['GET'])

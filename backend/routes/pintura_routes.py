@@ -10,7 +10,7 @@ from backend.utils.auth_middleware import require_role, ROL_ADMINS
 pintura_bp = Blueprint('pintura_bp', __name__)
 logger = logging.getLogger(__name__)
 
-ROLES_PINTURA = ROL_ADMINS + ['AUXILIAR INVENTARIO', 'ENSAMBLE', 'PINTURA']
+ROLES_PINTURA = ROL_ADMINS + ['AUXILIAR INVENTARIO', 'JEFE AUXILIAR INVENTARIO', 'ENSAMBLE', 'PINTURA']
 
 
 @pintura_bp.route('/api/pintura/session_active', methods=['GET'])

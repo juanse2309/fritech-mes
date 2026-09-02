@@ -12,7 +12,7 @@ from backend.utils.auth_middleware import _obtener_usuario_activo, obtener_ident
 ensamble_bp = Blueprint('ensamble_bp', __name__)
 logger = logging.getLogger(__name__)
 
-ROLES_ENSAMBLE = ROL_ADMINS + ['AUXILIAR INVENTARIO', 'ENSAMBLE', 'JEFE ALISTAMIENTO']
+ROLES_ENSAMBLE = ROL_ADMINS + ['AUXILIAR INVENTARIO', 'JEFE AUXILIAR INVENTARIO', 'ENSAMBLE', 'JEFE ALISTAMIENTO']
 # '/api/inyeccion/ensamble_desde_producto' se consume desde inyeccion.js (página
 # 'inyeccion', con audiencia mucho más amplia que 'ensamble') -- usa el set
 # de planta completo en vez de ROLES_ENSAMBLE.

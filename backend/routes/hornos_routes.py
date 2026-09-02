@@ -10,7 +10,7 @@ from backend.utils.auth_middleware import require_role, ROL_ADMINS
 hornos_bp = Blueprint('hornos_bp', __name__)
 logger = logging.getLogger(__name__)
 
-ROLES_HORNOS = ROL_ADMINS + ['AUXILIAR INVENTARIO', 'ENSAMBLE', 'HORNOS']
+ROLES_HORNOS = ROL_ADMINS + ['AUXILIAR INVENTARIO', 'JEFE AUXILIAR INVENTARIO', 'ENSAMBLE', 'HORNOS']
 
 
 @hornos_bp.route('/api/hornos/session_active', methods=['GET'])
