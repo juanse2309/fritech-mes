@@ -15,8 +15,11 @@ logger = logging.getLogger(__name__)
 
 # Roles de Frimetals segun backend/core/tenant.py (_FRIMETALS_ROLES) + admins
 # globales y el set comercial ya existente (incluye 'STAFF FRIMETALS' y
-# 'COMERCIAL FRIMETALS').
-ROLES_METALS = ROL_ADMINS + ROL_COMERCIALES + ['ADMIN FRIMETALS', 'PRODUCCION FRIMETALS']
+# 'COMERCIAL FRIMETALS'). 'JEFE DE PLANTA' faltaba aquí (y en
+# _FRIMETALS_ROLES) aunque es el jefe real de planta de Frimetals -- quedaba
+# con 403 en toda la API de metals pese a que el frontend sí le mostraba el
+# módulo (auth.js lo redirige a 'metals-produccion').
+ROLES_METALS = ROL_ADMINS + ROL_COMERCIALES + ['ADMIN FRIMETALS', 'PRODUCCION FRIMETALS', 'JEFE DE PLANTA']
 
 # ====================================================================
 # PRODUCTOS
