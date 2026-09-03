@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify, current_app
 from backend.utils.auth_middleware import require_role, ROL_ADMINS
+from backend.utils.formatters import limpiar_identificacion_tercero
 from backend.services.facturacion_service import FacturacionService, FacturacionDatosInvalidosException
 from backend.core.responses import api_success, api_error
 from backend.core import task_runner
@@ -7,7 +8,6 @@ import pandas as pd
 import io
 import os
 import tempfile
-import re
 from datetime import datetime
 import logging
 from backend.core.sql_database import db
@@ -38,8 +38,14 @@ def procesar_datos_wo(ids_filter=None, consecutivo_inicial=None, incluir_auditor
         return pd.DataFrame(), 0
 
     # 2. Preparar Maestros (Clientes para NITs)
+    # Un mismo nombre puede tener varias filas (histórico manual + sincronizado
+    # desde WO). El ORDER BY deja de último —y por tanto ganando el dict— la
+    # fila que trae id_direccion_wo, que es la que vino de World Office.
     try:
-        res_clientes = db.session.execute(text("SELECT nombre, identificacion FROM db_clientes")).mappings().all()
+        res_clientes = db.session.execute(text(
+            "SELECT nombre, identificacion FROM db_clientes "
+            "ORDER BY (id_direccion_wo IS NOT NULL), id"
+        )).mappings().all()
         mapa_clientes = {str(c['nombre']).strip().upper(): str(c['identificacion']).strip() for c in res_clientes}
     except:
         mapa_clientes = {}
@@ -129,8 +135,7 @@ def procesar_datos_wo(ids_filter=None, consecutivo_inicial=None, incluir_auditor
 
         # --- CONSTRUCCIÓN FILA EXCEL ---
         nit_raw = mapa_clientes.get(str(item.cliente or '').upper(), item.nit or '')
-        match_nit = re.search(r'(\d+)', str(nit_raw))
-        nit_limpio = match_nit.group(1) if match_nit else str(nit_raw).strip()
+        nit_limpio = limpiar_identificacion_tercero(nit_raw)
         
         f_pag = str(item.forma_de_pago or 'Contado').replace('é', 'e').replace('á', 'a').replace('í', 'i').replace('ó', 'o')
         

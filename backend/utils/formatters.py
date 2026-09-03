@@ -218,3 +218,76 @@ def resolver_operario(payload_name: str) -> str:
             return val_sess
             
     return 'SISTEMA'
+
+# Tipos de documento que WO antepone a la identificación en
+# Vista_Tabla_Direcciones. El '.' cubre las tildes, que llegan como mojibake en
+# filas históricas ('Identificaci?n', 'extranjer?a').
+_TIPOS_DOCUMENTO_WO = (
+    r'documento\s+de\s+identificaci.n\s+extranjer[oa](?:\s+persona\s+(?:jur.dica|natural))?',
+    r'nit\s+de\s+otro\s+pa.s',
+    r'c.dula\s+de\s+ciudadan.a',
+    r'c.dula\s+de\s+extranjer.a',
+    r'tarjeta\s+de\s+extranjer.a',
+    r'tarjeta\s+de\s+identidad',
+    r'registro\s+civil',
+    r'pasaporte',
+)
+
+
+def limpiar_identificacion_tercero(valor) -> str:
+    """
+    Normaliza una identificación de tercero al valor EXACTO con el que World
+    Office la tiene registrada, para la columna 'Encab: Tercero Externo' del
+    archivo de importación.
+
+    db_clientes.identificacion se sincroniza tal cual desde
+    Vista_Tabla_Direcciones de WO (ver backend/integration/agente_wo_clientes.py),
+    y ahí conviven tres formatos:
+      'NIT 830102900 3'                                    -> '830102900'
+      'CC 52306854'                                        -> '52306854'
+      'Documento de identificación extranjero 13167415 1'  -> '13167415'
+      'Documento de Identificación extranjero Persona
+       Jurídica J-31284787 5'                              -> 'J-31284787'
+      'J-31284787'                                         -> 'J-31284787'
+      'X0028B9MR7'                                         -> 'X0028B9MR7'
+
+    Lo que se quita es SOLO el envoltorio que WO antepone (tipo de documento)
+    y el dígito de verificación suelto al final. El identificador en sí se
+    devuelve intacto, incluidas sus letras: extraer "el primer grupo de
+    dígitos" convertía el RIF venezolano 'J-31284787' en '31284787' y WO
+    rechazaba la carga porque el tercero no concordaba.
+
+    Nota: la tilde de 'Identificación' llega corrupta en filas históricas
+    (mojibake), por eso el patrón usa '.' en esa posición.
+    """
+    if valor is None:
+        return ""
+    ident = str(valor).strip()
+    if not ident:
+        return ""
+
+    # 1. Nombre completo del tipo de documento tal como lo escribe WO.
+    ident = re.sub(r'(?i)^(?:' + '|'.join(_TIPOS_DOCUMENTO_WO) + r')\s+', '', ident).strip()
+
+    # 2. Prefijo corto de tipo de documento. Exige separador después del prefijo
+    #    para no morder identificaciones que empiezan con esas letras
+    #    (p.ej. 'CCQ211015S64', de un tercero mexicano).
+    ident = re.sub(r'(?i)^(nit|cc|ce|ti|nuip|rut|c\.c\.|c\.e\.|t\.i\.)[\s\.\-:]+', '', ident).strip()
+
+    # 3. Dígito de verificación suelto al final ('900315300 3' -> '900315300').
+    #    Solo separado por espacio: un guion final ('12345678-9') puede ser
+    #    parte del identificador extranjero.
+    ident = re.sub(r'\s+\d$', '', ident).strip()
+
+    # 4. Separadores de miles en identificaciones puramente numéricas.
+    if re.fullmatch(r'[\d\s\.]+', ident):
+        ident = re.sub(r'[\s\.]', '', ident)
+
+    # 5. Basura de separación que quedó suelta en los extremos. Devolver '' es
+    #    preferible a devolver un resto sin sentido: WO reporta el tercero
+    #    vacío en vez de cargarlo contra un tercero equivocado.
+    ident = ident.strip(' |,;:-')
+    if not any(ch.isalnum() for ch in ident):
+        return ""
+
+    return ident
