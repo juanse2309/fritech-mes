@@ -2314,6 +2314,25 @@ const ModuloPulido = {
             });
         }
 
+        // Referencia/OP del MODAL de edición de la cola: mismo componente que
+        // arriba, apuntado a los inputs del modal (ver _camposEdicionProgramacion,
+        // que se recalcula en cada tecla porque depende de la tarjeta abierta).
+        [
+            ['editar-prog-referencia-input', 'editar-prog-referencia-suggestions'],
+            ['editar-prog-op-input', 'editar-prog-op-suggestions'],
+        ].forEach(([inputId, suggId]) => {
+            const input = document.getElementById(inputId);
+            const sugg = document.getElementById(suggId);
+            if (!input || !sugg) return;
+            input.addEventListener('input', () => {
+                this._mostrarSugerenciasProgramacion(input, sugg, {
+                    ...this._camposEdicionProgramacion(),
+                    alSeleccionar: () => this._actualizarHintSaldoProgramacion(this._camposEdicionProgramacion()),
+                });
+                this._actualizarHintSaldoProgramacion(this._camposEdicionProgramacion());
+            });
+        });
+
         // Click outside suggestions. El campo OP abre su lista en 'focus' (no
         // en 'input', como los otros dos) -- el mismo click que dispara el
         // foco burbujea hasta aquí un instante después y, sin este guard,
@@ -2322,7 +2341,8 @@ const ModuloPulido = {
         document.addEventListener('click', (e) => {
             const esInputConSugerencias = e.target.matches(
                 '#responsable-pulido-input, #buscador-productos, #orden-produccion-pulido, ' +
-                '#programacion-referencia-input, #programacion-op-input'
+                '#programacion-referencia-input, #programacion-op-input, ' +
+                '#editar-prog-referencia-input, #editar-prog-op-input'
             );
             if (!esInputConSugerencias && !e.target.closest('.autocomplete-suggestions')) {
                 document.querySelectorAll('.autocomplete-suggestions').forEach(el => el.classList.remove('active'));
@@ -2343,7 +2363,15 @@ const ModuloPulido = {
             .slice(0, 8);
     },
 
-    _mostrarSugerenciasProgramacion: function (inputEl, containerEl) {
+    // `campos` deja apuntar el mismo componente a otro par de inputs: el
+    // formulario de "Asignar tarea" usa los suyos por defecto, y el modal de
+    // edición pasa los del modal -- misma lista, mismo comportamiento, sin
+    // duplicar el render.
+    _mostrarSugerenciasProgramacion: function (inputEl, containerEl, campos) {
+        const ids = campos || {};
+        const refId = ids.refInputId || 'programacion-referencia-input';
+        const opId = ids.opInputId || 'programacion-op-input';
+
         const resultados = this._filtrarSaldoProgramacion(inputEl.value);
         if (!resultados.length) { containerEl.classList.remove('active'); return; }
 
@@ -2358,10 +2386,11 @@ const ModuloPulido = {
         containerEl.querySelectorAll('.suggestion-item').forEach((div, idx) => {
             div.addEventListener('click', () => {
                 const f = resultados[idx];
-                document.getElementById('programacion-referencia-input').value = f.referencia;
-                document.getElementById('programacion-op-input').value = f.orden_produccion;
+                document.getElementById(refId).value = f.referencia;
+                document.getElementById(opId).value = f.orden_produccion;
                 containerEl.classList.remove('active');
-                this._actualizarHintSaldoProgramacion();
+                if (typeof ids.alSeleccionar === 'function') ids.alSeleccionar();
+                else this._actualizarHintSaldoProgramacion();
             });
         });
         containerEl.classList.add('active');
@@ -3571,11 +3600,17 @@ const ModuloPulido = {
     // Feedback informativo (no bloqueante) mientras se escribe Referencia/OP:
     // busca coincidencia exacta contra el saldo real del sistema y muestra
     // qué tan disponible está -- sin impedir seguir escribiendo algo distinto.
-    _actualizarHintSaldoProgramacion: function () {
-        const hint = document.getElementById('programacion-saldo-hint');
+    // `campos` permite apuntarlo a los inputs del modal de edición. Cuando se
+    // edita una tarjeta, su propia cantidad YA está descontada del
+    // `disponible` que trae el backend, así que se devuelve (`cantidadPropia`)
+    // antes de mostrarlo -- si no, abrir una tarjeta sin cambiarle nada
+    // mostraría un disponible más bajo del real, o incluso negativo.
+    _actualizarHintSaldoProgramacion: function (campos) {
+        const ids = campos || {};
+        const hint = document.getElementById(ids.hintId || 'programacion-saldo-hint');
         if (!hint) return;
-        const op = document.getElementById('programacion-op-input')?.value?.trim();
-        const ref = document.getElementById('programacion-referencia-input')?.value?.trim().toUpperCase();
+        const op = document.getElementById(ids.opInputId || 'programacion-op-input')?.value?.trim();
+        const ref = document.getElementById(ids.refInputId || 'programacion-referencia-input')?.value?.trim().toUpperCase();
         if (!op || !ref) { hint.innerHTML = ''; return; }
 
         const match = (this._saldoProgramacion || []).find(f =>
@@ -3584,8 +3619,13 @@ const ModuloPulido = {
         );
 
         if (match) {
-            const claseDisp = match.disponible <= 0 ? 'text-danger' : 'text-success';
-            hint.innerHTML = `<i class="fas fa-circle-info me-1"></i>Sistema: inyectado <b>${match.inyectado}</b> · pulido <b>${match.pulido}</b> · disponible <b class="${claseDisp}">${match.disponible}</b>`;
+            const propia = Number(ids.cantidadPropia || 0);
+            const mismaFila = propia > 0 &&
+                String(ids.opPropia || '').trim() === op &&
+                String(ids.refPropia || '').trim().toUpperCase() === ref;
+            const disponible = match.disponible + (mismaFila ? propia : 0);
+            const claseDisp = disponible <= 0 ? 'text-danger' : 'text-success';
+            hint.innerHTML = `<i class="fas fa-circle-info me-1"></i>Sistema: inyectado <b>${match.inyectado}</b> · pulido <b>${match.pulido}</b> · disponible <b class="${claseDisp}">${disponible}</b>`;
         } else {
             hint.innerHTML = `<i class="fas fa-triangle-exclamation me-1 text-warning"></i><span class="text-warning">Sin dato en el sistema para esa OP/referencia -- se guardará igual.</span>`;
         }
@@ -3631,16 +3671,199 @@ const ModuloPulido = {
         }
 
         const temaEstado = { PROGRAMADO: 'secondary', EN_PROCESO: 'success', FINALIZADO: 'primary' };
-        cont.innerHTML = items.map((t, idx) => `
+        // Solo las tarjetas que la operaria todavía no inició se pueden tocar:
+        // una EN_PROCESO ya está amarrada a una fila real de db_pulido por
+        // id_pulido (mismo criterio que ProgramacionPulidoBloqueadaError en el
+        // backend, que es quien de verdad lo impide). Las demás muestran un
+        // candado en vez de los botones, para que se vea POR QUÉ no se pueden.
+        cont.innerHTML = items.map((t, idx) => {
+            const editable = t.estado === 'PROGRAMADO';
+            const acciones = editable
+                ? `<button class="btn btn-sm btn-link text-secondary p-1" title="Editar tarea"
+                           onclick="ModuloPulido.abrirModalEditarProgramacion(${t.id})">
+                       <i class="fas fa-pen-to-square"></i>
+                   </button>
+                   <button class="btn btn-sm btn-link text-danger p-1" title="Quitar de la cola"
+                           onclick="ModuloPulido.eliminarItemProgramacion(${t.id})">
+                       <i class="fas fa-trash-can"></i>
+                   </button>`
+                : `<i class="fas fa-lock text-muted small ms-2" title="La operaria ya inició esta tarea -- no se puede editar ni quitar"></i>`;
+
+            return `
             <div class="d-flex justify-content-between align-items-center p-2 border rounded-3">
                 <div>
                     <span class="badge rounded-pill bg-light text-dark border me-2">#${idx + 1}</span>
                     <span class="fw-bold">${t.codigo}</span>
                     <span class="text-muted small ms-1">OP: ${t.orden_produccion || 'N/A'} &middot; ${t.cantidad_objetivo} pz${t.lote ? ` &middot; Lote: ${t.lote}` : ''}</span>
                 </div>
-                <span class="badge bg-${temaEstado[t.estado] || 'secondary'}">${t.estado}</span>
+                <div class="d-flex align-items-center gap-1">
+                    <span class="badge bg-${temaEstado[t.estado] || 'secondary'}">${t.estado}</span>
+                    ${acciones}
+                </div>
             </div>
-        `).join('');
+        `;
+        }).join('');
+    },
+
+    // ── Editar / quitar una tarea ya programada ───────────────────────
+    // Se edita en un modal aparte y no reutilizando el formulario de la
+    // izquierda a propósito: ese formulario alimenta el BORRADOR de varias
+    // tareas nuevas (_borradorProgramacion), y mezclar los dos modos termina
+    // guardando lo que no era.
+    _itemEditando: null,
+
+    _buscarItemProgramacion: function (id) {
+        for (const lista of Object.values(this._colaAdminProgramacion || {})) {
+            const encontrado = (lista || []).find(t => t.id === id);
+            if (encontrado) return encontrado;
+        }
+        return null;
+    },
+
+    _camposEdicionProgramacion: function () {
+        return {
+            refInputId: 'editar-prog-referencia-input',
+            opInputId: 'editar-prog-op-input',
+            hintId: 'editar-prog-saldo-hint',
+            cantidadPropia: this._itemEditando?.cantidad_objetivo || 0,
+            opPropia: this._itemEditando?.orden_produccion || '',
+            refPropia: this._itemEditando?.codigo || '',
+        };
+    },
+
+    abrirModalEditarProgramacion: function (id) {
+        const item = this._buscarItemProgramacion(id);
+        if (!item) {
+            Swal.fire('No encontrada', 'Refresca el panel e intenta de nuevo.', 'warning');
+            return;
+        }
+        if (item.estado !== 'PROGRAMADO') {
+            Swal.fire('Tarea ya iniciada', 'La operaria ya arrancó esta tarea -- no se puede editar.', 'info');
+            return;
+        }
+
+        this._itemEditando = item;
+
+        // El selector de operaria del modal se llena con las mismas opciones
+        // que el del formulario (ya cargadas por _cargarOperariasProgramacion).
+        const origen = document.getElementById('programacion-operaria-select');
+        const destino = document.getElementById('editar-prog-operaria-select');
+        if (origen && destino) destino.innerHTML = origen.innerHTML;
+        if (destino) destino.value = item.operaria;
+
+        document.getElementById('editar-prog-referencia-input').value = item.codigo || '';
+        document.getElementById('editar-prog-op-input').value = item.orden_produccion || '';
+        document.getElementById('editar-prog-lote-input').value = item.lote || '';
+        document.getElementById('editar-prog-cantidad-input').value = item.cantidad_objetivo || '';
+        document.getElementById('editar-prog-observaciones-input').value = item.observaciones || '';
+        this._actualizarHintSaldoProgramacion(this._camposEdicionProgramacion());
+
+        const modal = document.getElementById('modal-editar-programacion-pulido');
+        if (modal) modal.style.display = 'block';
+    },
+
+    cerrarModalEditarProgramacion: function () {
+        const modal = document.getElementById('modal-editar-programacion-pulido');
+        if (modal) modal.style.display = 'none';
+        document.getElementById('editar-prog-referencia-suggestions')?.classList.remove('active');
+        document.getElementById('editar-prog-op-suggestions')?.classList.remove('active');
+        this._itemEditando = null;
+    },
+
+    guardarEdicionProgramacion: async function () {
+        const item = this._itemEditando;
+        if (!item) return;
+
+        const codigo = document.getElementById('editar-prog-referencia-input')?.value?.trim();
+        const orden_produccion = document.getElementById('editar-prog-op-input')?.value?.trim();
+        const cantidad_objetivo = parseFloat(document.getElementById('editar-prog-cantidad-input')?.value || '0');
+        const operaria = document.getElementById('editar-prog-operaria-select')?.value;
+
+        if (!codigo || !orden_produccion) {
+            Swal.fire('Falta OP/Referencia', 'Escribe la referencia y la OP tal como están en la bolsa.', 'warning');
+            return;
+        }
+        if (!cantidad_objetivo || cantidad_objetivo <= 0) {
+            Swal.fire('Cantidad inválida', 'Indica una cantidad objetivo mayor a 0.', 'warning');
+            return;
+        }
+        if (!operaria) {
+            Swal.fire('Falta la operaria', 'Selecciona a quién queda asignada.', 'warning');
+            return;
+        }
+
+        const cambiaOperaria = operaria !== item.operaria;
+
+        mostrarLoading(true, 'Guardando cambios...');
+        try {
+            const res = await fetch(`/api/pulido/programacion/${item.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    codigo,
+                    orden_produccion,
+                    cantidad_objetivo,
+                    operaria,
+                    lote: document.getElementById('editar-prog-lote-input')?.value || '',
+                    observaciones: document.getElementById('editar-prog-observaciones-input')?.value || '',
+                })
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                const advertencias = data.data?.advertencias || [];
+                this.cerrarModalEditarProgramacion();
+                await this.cargarPanelProgramacion();
+                Swal.fire({
+                    title: 'Tarea actualizada',
+                    html: advertencias.length
+                        ? `Se guardó, pero revisa:<br><small>${advertencias.join('<br>')}</small>`
+                        : (cambiaOperaria ? `Quedó al final de la cola de ${operaria}.` : 'Los cambios ya están en la cola.'),
+                    icon: advertencias.length ? 'warning' : 'success'
+                });
+            } else {
+                Swal.fire('No se pudo guardar', data.error || 'Error del servidor.', 'error');
+            }
+        } catch (e) {
+            console.error('[Pulido] Error editando programación:', e);
+            Swal.fire('Error de conexión', 'No se pudo guardar el cambio.', 'error');
+        } finally {
+            mostrarLoading(false);
+        }
+    },
+
+    eliminarItemProgramacion: async function (id) {
+        const item = this._buscarItemProgramacion(id);
+        if (!item) return;
+
+        const confirmacion = await Swal.fire({
+            title: '¿Quitar de la cola?',
+            html: `<b>${item.codigo}</b> (OP ${item.orden_produccion || 'N/A'}) &middot; ${item.cantidad_objetivo} pz<br>` +
+                  `<small class="text-muted">Se elimina de la programación de ${item.operaria}. No afecta nada ya pulido.</small>`,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: 'Sí, quitar',
+            cancelButtonText: 'Cancelar',
+            confirmButtonColor: '#dc2626'
+        });
+        if (!confirmacion.isConfirmed) return;
+
+        mostrarLoading(true, 'Quitando tarea...');
+        try {
+            const res = await fetch(`/api/pulido/programacion/${id}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+                await this.cargarPanelProgramacion();
+                mostrarNotificacion('Tarea quitada de la cola', 'success');
+            } else {
+                Swal.fire('No se pudo quitar', data.error || 'Error del servidor.', 'error');
+            }
+        } catch (e) {
+            console.error('[Pulido] Error eliminando programación:', e);
+            Swal.fire('Error de conexión', 'No se pudo quitar la tarea.', 'error');
+        } finally {
+            mostrarLoading(false);
+        }
     },
 
     agregarItemBorradorProgramacion: function () {

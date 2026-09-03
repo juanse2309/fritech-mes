@@ -66,6 +66,8 @@ const ModuloEnsamble = {
         // Autocompletes
         this.initAutocomplete('prog-producto', 'prog-producto-suggestions', true);
         this.initAutocomplete('reporte-producto-manual', 'reporte-producto-manual-suggestions', true);
+        // Mismo buscador con imágenes dentro del modal de edición de metas.
+        this.initAutocomplete('editar-meta-producto', 'editar-meta-producto-suggestions', true);
 
         this.listarProgramacion();
         this.listarTareasPendientes();
@@ -1046,6 +1048,10 @@ const ModuloEnsamble = {
                 return;
             }
 
+            // Cache para que el modal de edición no tenga que volver a pedir
+            // la meta al servidor (y para saber si tiene avance encima).
+            this._metasCache = res.data;
+
             let html = '<div class="p-3">';
             res.data.forEach(p => {
                 const checklist = p.checklist || checklistPorDefecto();
@@ -1068,11 +1074,41 @@ const ModuloEnsamble = {
                     ? `<div class="mt-1"><span class="badge" style="background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;font-size:.7rem;font-weight:700;"><i class="fas fa-file-invoice me-1"></i>OP ${p.op_numero}</span></div>`
                     : '';
 
+                // Qué se le puede hacer a esta meta, con el mismo criterio que
+                // aplica el backend (EnsambleService._validar_meta_mutable):
+                // una meta COMPLETADA o de un día cuya OP ya salió hacia World
+                // Office no se toca; con avance reportado solo se le ajusta la
+                // cantidad (editar sí, borrar no).
+                const jornadaCerrada = !!p.op_estado && p.op_estado !== 'RESERVADA';
+                const mutable = p.estado !== 'COMPLETADO' && !jornadaCerrada;
+                const conAvance = (p.cantidad_realizada || 0) > 0;
+
+                let acciones = '';
+                if (mutable) {
+                    acciones = `
+                        <button class="btn btn-sm btn-link text-secondary p-0 ms-2" title="Editar meta"
+                                onclick="ModuloEnsamble.abrirModalEditarMeta(${p.id_prog})">
+                            <i class="fas fa-pen-to-square"></i>
+                        </button>` + (conAvance ? '' : `
+                        <button class="btn btn-sm btn-link text-danger p-0 ms-1" title="Eliminar meta"
+                                onclick="ModuloEnsamble.eliminarMeta(${p.id_prog})">
+                            <i class="fas fa-trash-can"></i>
+                        </button>`);
+                } else {
+                    const motivo = jornadaCerrada
+                        ? `La OP de ese día ya está en ${p.op_estado} -- no se puede modificar`
+                        : 'Meta completada -- no se edita ni se borra';
+                    acciones = `<i class="fas fa-lock text-muted ms-2" title="${motivo}"></i>`;
+                }
+
                 html += `
                     <div class="mb-2 p-2 border-bottom">
                         <div class="d-flex justify-content-between align-items-center small">
                             <span>${p.id_codigo}${badge}</span>
-                            <span>${p.cantidad_realizada}/${p.cantidad_objetivo}</span>
+                            <span class="d-flex align-items-center">
+                                <span>${p.cantidad_realizada}/${p.cantidad_objetivo}</span>
+                                ${acciones}
+                            </span>
                         </div>
                         ${badgeOp}
                         <div class="progress mt-1" style="height: 3px;">
@@ -1084,6 +1120,143 @@ const ModuloEnsamble = {
             html += '</div>';
             container.innerHTML = html;
         } catch (e) { console.error(e); }
+    },
+
+    // ── Editar / eliminar una meta ya programada ──────────────────────
+    // Modal aparte del formulario de "Nueva Meta" a propósito: ese formulario
+    // CREA (y su POST es un UPSERT), así que reutilizarlo para editar es la
+    // forma más fácil de terminar con dos metas activas para lo mismo.
+    _metasCache: [],
+    _metaEditando: null,
+
+    abrirModalEditarMeta: function (idProg) {
+        const meta = (this._metasCache || []).find(m => m.id_prog === idProg);
+        if (!meta) {
+            mostrarNotificacion('Meta no encontrada, refresca el panel', 'error');
+            return;
+        }
+        this._metaEditando = meta;
+
+        const conAvance = (meta.cantidad_realizada || 0) > 0;
+
+        document.getElementById('editar-meta-resumen').innerHTML = `
+            <div class="d-flex flex-wrap gap-2 align-items-center">
+                ${meta.op_numero ? `<span class="badge" style="background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;font-weight:700;"><i class="fas fa-file-invoice me-1"></i>OP ${meta.op_numero}</span>` : ''}
+                <span class="badge bg-light text-dark border">Avance: ${meta.cantidad_realizada}/${meta.cantidad_objetivo}</span>
+                <span class="badge bg-light text-dark border">${meta.estado}</span>
+            </div>`;
+
+        // Con producción reportada, producto y fecha quedan bloqueados: el
+        // avance cuelga de esta meta por id_prog, y la OP cuelga del día.
+        document.getElementById('editar-meta-aviso').innerHTML = conAvance
+            ? `<div class="alert alert-warning py-2 px-3 small mb-0">
+                   <i class="fas fa-triangle-exclamation me-1"></i>
+                   Esta meta ya tiene <b>${meta.cantidad_realizada}</b> unidad(es) reportada(s): solo se le puede
+                   ajustar la cantidad objetivo. Cambiarle el producto o la fecha reetiquetaría trabajo ya hecho.
+               </div>`
+            : '';
+
+        const inputProducto = document.getElementById('editar-meta-producto');
+        const inputFecha = document.getElementById('editar-meta-fecha');
+        inputProducto.value = meta.id_codigo || '';
+        inputFecha.value = meta.fecha_programada || '';
+        document.getElementById('editar-meta-cantidad').value = meta.cantidad_objetivo || '';
+        inputProducto.disabled = conAvance;
+        inputFecha.disabled = conAvance;
+
+        document.getElementById('modal-editar-meta-ensamble').style.display = 'block';
+    },
+
+    cerrarModalEditarMeta: function () {
+        const modal = document.getElementById('modal-editar-meta-ensamble');
+        if (modal) modal.style.display = 'none';
+        document.getElementById('editar-meta-producto-suggestions')?.classList.remove('active');
+        this._metaEditando = null;
+    },
+
+    guardarEdicionMeta: async function () {
+        const meta = this._metaEditando;
+        if (!meta) return;
+
+        const idCodigo = document.getElementById('editar-meta-producto').value.trim();
+        const cantidad = parseInt(document.getElementById('editar-meta-cantidad').value) || 0;
+        const fecha = document.getElementById('editar-meta-fecha').value;
+
+        if (!idCodigo || !fecha) return mostrarNotificacion('Faltan datos', 'error');
+        if (cantidad <= 0) return mostrarNotificacion('La cantidad objetivo debe ser mayor a 0', 'error');
+
+        mostrarLoading(true);
+        try {
+            const res = await fetch(`/api/ensamble/programacion/${meta.id_prog}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    id_codigo: idCodigo,
+                    cantidad_objetivo: cantidad,
+                    fecha_programada: fecha
+                })
+            });
+            const data = await res.json();
+            mostrarLoading(false);
+
+            if (!data.success) {
+                Swal.fire('No se pudo guardar', data.error || 'Error del servidor.', 'error');
+                return;
+            }
+
+            this.cerrarModalEditarMeta();
+            // La OP puede haber cambiado si se movió la fecha (cada día tiene
+            // la suya) -- se muestra la que quedó, no la que había.
+            const opFinal = data.data?.op_numero || '';
+            Swal.fire({
+                icon: 'success',
+                title: 'Meta actualizada',
+                html: opFinal
+                    ? `<div class="mt-2"><span class="badge bg-primary fs-6">OP: ${opFinal}</span></div>`
+                    : ''
+            });
+            this.listarProgramacion();
+            this.listarTareasPendientes();
+        } catch (e) {
+            mostrarLoading(false);
+            console.error(e);
+            Swal.fire('Error de conexión', 'No se pudo guardar el cambio.', 'error');
+        }
+    },
+
+    eliminarMeta: async function (idProg) {
+        const meta = (this._metasCache || []).find(m => m.id_prog === idProg);
+        if (!meta) return;
+
+        const confirmacion = await Swal.fire({
+            title: '¿Eliminar la meta?',
+            html: `<b>${meta.id_codigo}</b> &middot; ${meta.cantidad_objetivo} unidades &middot; ${meta.fecha_programada}` +
+                  `<br><small class="text-muted">No tiene producción reportada, así que no se pierde ningún avance.</small>`,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: 'Sí, eliminar',
+            cancelButtonText: 'Cancelar',
+            confirmButtonColor: '#dc2626'
+        });
+        if (!confirmacion.isConfirmed) return;
+
+        mostrarLoading(true);
+        try {
+            const res = await fetch(`/api/ensamble/programacion/${idProg}`, { method: 'DELETE' });
+            const data = await res.json();
+            mostrarLoading(false);
+            if (data.success) {
+                mostrarNotificacion('Meta eliminada', 'success');
+                this.listarProgramacion();
+                this.listarTareasPendientes();
+            } else {
+                Swal.fire('No se pudo eliminar', data.error || 'Error del servidor.', 'error');
+            }
+        } catch (e) {
+            mostrarLoading(false);
+            console.error(e);
+            Swal.fire('Error de conexión', 'No se pudo eliminar la meta.', 'error');
+        }
     },
 
     guardarProgramacion: async function () {

@@ -73,6 +73,28 @@ class StockInsuficienteException(Exception):
         super().__init__(self.message)
 
 
+class MetaEnsambleBloqueadaException(Exception):
+    """
+    Se lanza al intentar editar o borrar una meta de programación que ya no
+    se puede tocar sin desincronizar algo aguas abajo. Tres motivos, todos
+    con la misma forma: la meta ya está COMPLETADA, la OP de ese día ya
+    salió hacia World Office (estado distinto de RESERVADA), o se quiso
+    cambiar producto/fecha de una meta que YA tiene producción reportada
+    contra su id_prog. Se traduce a 409, no a 400: el payload puede ser
+    válido, lo que no se puede es aplicarlo en ese estado.
+    """
+    def __init__(self, message):
+        self.message = message
+        super().__init__(self.message)
+
+
+class MetaEnsambleNoEncontradaException(Exception):
+    """Se lanza cuando el id_prog recibido no corresponde a ninguna meta. Se traduce a 404."""
+    def __init__(self, id_prog):
+        self.message = f"No existe la meta de programación #{id_prog}"
+        super().__init__(self.message)
+
+
 class ChecklistIncompletoException(Exception):
     """Se lanza al intentar cerrar_jornada con checklists de procesos sin terminar.
     Cierre de jornada (reunión 2026-08-25): señal explícita, no un cron a una
@@ -214,6 +236,238 @@ class EnsambleService:
         except Exception as e:
             db.session.rollback()
             logger.error(f"Error al crear/actualizar programación ensamble: {e}")
+            raise
+
+    # ------------------------------------------------------------------
+    # EDICION Y BORRADO DE METAS (panel "Historial de Metas")
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _op_del_dia(fecha):
+        """OP de ensamble reservada para ese dia (None si no hay). Ignora las
+        ANULADAS, igual que cerrar_jornada."""
+        return db.session.query(OpGenerada).filter(
+            OpGenerada.ambito == 'ENSAMBLE',
+            OpGenerada.fecha_produccion == fecha,
+            OpGenerada.estado != 'ANULADA'
+        ).first()
+
+    @staticmethod
+    def _produccion_reportada(id_prog) -> int:
+        """Cuantas filas de db_ensambles cuelgan de esta meta. Cuenta TODAS
+        (produccion del producto final y renglones de consumo del BOM): para
+        decidir si la meta todavia es "papel en blanco" basta con que exista
+        una sola, sin importar de que tipo."""
+        return db.session.query(db.func.count(Ensamble.id)).filter(
+            Ensamble.id_prog == id_prog
+        ).scalar() or 0
+
+    @staticmethod
+    def _validar_meta_mutable(meta):
+        """Guardas comunes a editar y borrar. Ver MetaEnsambleBloqueadaException."""
+        if meta.estado == 'COMPLETADO':
+            raise MetaEnsambleBloqueadaException(
+                "La meta ya esta COMPLETADA -- no se edita ni se borra lo que ya se cumplio."
+            )
+        op = EnsambleService._op_del_dia(meta.fecha_programada)
+        if op and op.estado != 'RESERVADA':
+            raise MetaEnsambleBloqueadaException(
+                f"La OP {op.numero_op} de ese dia ya esta en {op.estado} (jornada cerrada o exportada a "
+                f"World Office) -- no se puede modificar su programacion."
+            )
+
+    @staticmethod
+    def _validar_dia_destino_abierto(fecha_destino):
+        """Mismo guard de OP que _validar_meta_mutable, pero sobre el dia al
+        que se quiere MOVER una meta: mudarla a un dia ya cerrado/exportado
+        le meteria una linea nueva a una OP que World Office ya recibio."""
+        op = EnsambleService._op_del_dia(fecha_destino)
+        if op and op.estado != 'RESERVADA':
+            raise MetaEnsambleBloqueadaException(
+                f"No se puede mover la meta al {fecha_destino.strftime('%Y-%m-%d')}: la OP "
+                f"{op.numero_op} de ese dia ya esta en {op.estado}."
+            )
+
+    @staticmethod
+    def _hay_meta_activa_equivalente(fecha, id_codigo, op_numero, excluir_id_prog):
+        """
+        Existe OTRA meta activa con la misma clave (fecha, producto, OP)?
+        Es exactamente la clave del indice unico parcial
+        uq_programacion_ensamble_activa -- se comprueba antes de escribir
+        para poder devolver un mensaje entendible en vez de un IntegrityError
+        crudo, y para no crear dos metas activas para lo mismo (justo el
+        duplicado que este modulo ya sufrio una vez).
+        """
+        query = db.session.query(ProgramacionEnsamble).filter(
+            ProgramacionEnsamble.fecha_programada == fecha,
+            ProgramacionEnsamble.id_codigo == id_codigo,
+            ProgramacionEnsamble.estado != 'COMPLETADO',
+            ProgramacionEnsamble.id_prog != excluir_id_prog,
+        )
+        query = query.filter(
+            ProgramacionEnsamble.op_numero.is_(None) if op_numero is None
+            else ProgramacionEnsamble.op_numero == op_numero
+        )
+        return query.first()
+
+    @staticmethod
+    def actualizar_programacion(id_prog, data) -> dict:
+        """
+        Edita una meta ya programada. Actualizacion PARCIAL: solo se toca lo
+        que venga en `data`.
+
+        `cantidad_objetivo` se puede cambiar siempre (mientras la meta sea
+        mutable); el estado se recalcula contra la produccion ya reportada,
+        asi que bajar el objetivo por debajo de lo ya hecho la cierra en vez
+        de dejarla colgada en EN_PROCESO para siempre.
+
+        `id_codigo` y `fecha_programada` solo se pueden cambiar mientras la
+        meta NO tenga produccion reportada. Con avance encima, cambiar el
+        producto le pondria otra etiqueta a trabajo ya hecho
+        (cantidad_realizada se recalcula por id_prog en reportar_multi), y
+        mover la fecha romperia la correspondencia OP<->dia que despues
+        exporta a World Office.
+
+        Mover la fecha re-reserva la OP del dia destino (misma llamada
+        idempotente que usa crear_o_actualizar_programacion): la meta pasa a
+        colgar de la OP de su nuevo dia, no de la del dia viejo.
+        """
+        meta = db.session.get(ProgramacionEnsamble, int(id_prog)) if str(id_prog).isdigit() else None
+        if not meta:
+            raise MetaEnsambleNoEncontradaException(id_prog)
+
+        EnsambleService._validar_meta_mutable(meta)
+        data = data or {}
+
+        nuevo_codigo = meta.id_codigo
+        nueva_fecha = meta.fecha_programada
+        cambia_identidad = False
+
+        if 'id_codigo' in data:
+            codigo = normalizar_codigo(data.get('id_codigo') or '')
+            if not codigo:
+                raise ValueError('El producto no puede quedar vacio')
+            if codigo != meta.id_codigo:
+                nuevo_codigo = codigo
+                cambia_identidad = True
+
+        if 'fecha_programada' in data:
+            fecha_str = str(data.get('fecha_programada') or '').strip()
+            if not fecha_str:
+                raise ValueError('La fecha programada no puede quedar vacia')
+            try:
+                fecha = datetime.strptime(fecha_str, '%Y-%m-%d').date()
+            except ValueError:
+                raise ValueError(f"Formato de fecha invalido: {fecha_str!r}. Usar YYYY-MM-DD")
+            if fecha != meta.fecha_programada:
+                nueva_fecha = fecha
+                cambia_identidad = True
+
+        if cambia_identidad:
+            reportado = EnsambleService._produccion_reportada(meta.id_prog)
+            if reportado or (meta.cantidad_realizada or 0) > 0:
+                raise MetaEnsambleBloqueadaException(
+                    "Esta meta ya tiene produccion reportada: solo se le puede ajustar la cantidad "
+                    "objetivo. Cambiarle el producto o la fecha reetiquetaria trabajo ya hecho."
+                )
+
+        nuevo_objetivo = meta.cantidad_objetivo
+        if 'cantidad_objetivo' in data:
+            try:
+                nuevo_objetivo = int(data.get('cantidad_objetivo') or 0)
+            except (TypeError, ValueError):
+                raise ValueError('Cantidad objetivo invalida')
+            if nuevo_objetivo <= 0:
+                raise ValueError('La cantidad objetivo debe ser mayor a 0')
+
+        # La OP sigue a la fecha, nunca al reves: si la meta se muda de dia,
+        # se le pide (idempotente) la OP de ese dia.
+        nueva_op = meta.op_numero
+        if nueva_fecha != meta.fecha_programada:
+            EnsambleService._validar_dia_destino_abierto(nueva_fecha)
+            nueva_op = OpNumeradorService.obtener_o_reservar('ENSAMBLE', nueva_fecha).numero_op
+
+        choque = EnsambleService._hay_meta_activa_equivalente(
+            nueva_fecha, nuevo_codigo, nueva_op, meta.id_prog
+        )
+        if choque:
+            raise MetaEnsambleBloqueadaException(
+                f"Ya existe otra meta activa de {nuevo_codigo} para el "
+                f"{nueva_fecha.strftime('%Y-%m-%d')} (#{choque.id_prog}, {choque.cantidad_realizada}/"
+                f"{choque.cantidad_objetivo}). Ajusta esa en vez de duplicarla."
+            )
+
+        meta.id_codigo = nuevo_codigo
+        meta.fecha_programada = nueva_fecha
+        meta.op_numero = nueva_op
+        meta.cantidad_objetivo = nuevo_objetivo
+
+        realizado = meta.cantidad_realizada or 0
+        if realizado >= nuevo_objetivo:
+            meta.estado = 'COMPLETADO'
+        elif realizado > 0:
+            meta.estado = 'EN_PROCESO'
+        else:
+            meta.estado = 'PENDIENTE'
+
+        try:
+            db.session.commit()
+            return {
+                'id_prog': meta.id_prog,
+                'id_codigo': meta.id_codigo,
+                'op_numero': meta.op_numero,
+                'cantidad_objetivo': meta.cantidad_objetivo,
+                'cantidad_realizada': meta.cantidad_realizada,
+                'fecha_programada': meta.fecha_programada.strftime('%Y-%m-%d'),
+                'estado': meta.estado,
+            }
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error actualizando meta de ensamble #{id_prog}: {e}")
+            raise
+
+    @staticmethod
+    def eliminar_programacion(id_prog) -> dict:
+        """
+        Borra una meta que todavia no arranco. Con produccion reportada NO se
+        borra: esas filas de db_ensambles la referencian por id_prog y
+        quedarian huerfanas (y el avance ya reportado desapareceria del
+        tablero sin dejar rastro). En ese caso el camino correcto es bajarle
+        la cantidad objetivo, que la cierra sin perder nada.
+
+        Se lleva por delante la fila de checklist de la meta (relacion 1-1
+        por id_prog, sin FK formal): dejarla seria basura apuntando a un
+        id_prog que ya no existe, que ademas reapareceria si el autoincrement
+        reutilizara el numero.
+        """
+        meta = db.session.get(ProgramacionEnsamble, int(id_prog)) if str(id_prog).isdigit() else None
+        if not meta:
+            raise MetaEnsambleNoEncontradaException(id_prog)
+
+        EnsambleService._validar_meta_mutable(meta)
+
+        reportado = EnsambleService._produccion_reportada(meta.id_prog)
+        if reportado or (meta.cantidad_realizada or 0) > 0:
+            raise MetaEnsambleBloqueadaException(
+                f"Esta meta ya tiene {meta.cantidad_realizada} unidad(es) reportada(s) en "
+                f"{reportado} registro(s) de produccion -- no se puede borrar. Si ya no va a "
+                f"seguir, bajale la cantidad objetivo a lo que realmente se hizo."
+            )
+
+        resumen = {
+            'id_prog': meta.id_prog,
+            'id_codigo': meta.id_codigo,
+            'op_numero': meta.op_numero,
+            'cantidad_objetivo': meta.cantidad_objetivo,
+            'fecha_programada': meta.fecha_programada.strftime('%Y-%m-%d') if meta.fecha_programada else None,
+        }
+        try:
+            ChecklistEnsamble.query.filter_by(id_prog=meta.id_prog).delete()
+            db.session.delete(meta)
+            db.session.commit()
+            return {'eliminada': resumen}
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error eliminando meta de ensamble #{id_prog}: {e}")
             raise
 
     @staticmethod
@@ -458,6 +712,22 @@ class EnsambleService:
             ).all()
             checklists_por_id_prog = {row.id_prog: _checklist_a_dict(row) for row in filas_checklist}
 
+        # Estado de la OP de cada día involucrado, en UNA sola query (no una
+        # por meta). Lo consume el panel para saber si esa meta todavía se
+        # puede editar: en cuanto la OP del día deja de estar RESERVADA la
+        # jornada ya se cerró o se exportó a World Office, y tocarla la
+        # desincronizaría -- misma regla que _validar_meta_mutable, aquí solo
+        # para no ofrecer en pantalla un botón que el backend va a rechazar.
+        fechas = {s.fecha_programada for s in schedules if s.fecha_programada}
+        estado_op_por_fecha = {}
+        if fechas:
+            for op in db.session.query(OpGenerada).filter(
+                OpGenerada.ambito == 'ENSAMBLE',
+                OpGenerada.fecha_produccion.in_(list(fechas)),
+                OpGenerada.estado != 'ANULADA'
+            ).all():
+                estado_op_por_fecha[op.fecha_produccion] = op.estado
+
         return [{
             'id_prog': s.id_prog,
             'id_codigo': s.id_codigo,
@@ -469,6 +739,7 @@ class EnsambleService:
             # mostrarla en el panel de metas (pedido del usuario 2026-08-28:
             # la OP se generaba sola pero no se veía en ningún lado).
             'op_numero': s.op_numero,
+            'op_estado': estado_op_por_fecha.get(s.fecha_programada),
             'checklist': checklists_por_id_prog.get(s.id_prog, _checklist_default())
         } for s in schedules]
 

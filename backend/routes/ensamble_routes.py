@@ -5,7 +5,14 @@ from backend.core.sql_database import db
 from backend.core.responses import api_success, api_error
 from backend.models.sql_models import ProgramacionEnsamble, Ensamble
 from backend.services.audit_service import OwnershipMismatchException
-from backend.services.ensamble_service import EnsambleService, BomNoDisponibleException, StockInsuficienteException, ChecklistIncompletoException
+from backend.services.ensamble_service import (
+    EnsambleService,
+    BomNoDisponibleException,
+    StockInsuficienteException,
+    ChecklistIncompletoException,
+    MetaEnsambleBloqueadaException,
+    MetaEnsambleNoEncontradaException,
+)
 from backend.config.constants import FALLBACK_OPERARIO
 from backend.utils.auth_middleware import _obtener_usuario_activo, obtener_identidad_segura, require_role, ROL_ADMINS, ROL_JEFES, ROL_OPERARIOS
 
@@ -100,6 +107,43 @@ def crear_programacion():
     except Exception as e:
         logger.error(f"Error al crear programación ensamble: {e}")
         return api_error(str(e), status_code=500)
+
+@ensamble_bp.route('/api/ensamble/programacion/<int:id_prog>', methods=['PUT'])
+@require_role(ROLES_ENSAMBLE)
+def actualizar_programacion(id_prog):
+    """Controlador puro: edita una meta ya programada (producto / cantidad /
+    fecha). Los limites de que se puede tocar y cuando viven en el servicio
+    -- ver EnsambleService.actualizar_programacion."""
+    try:
+        resultado = EnsambleService.actualizar_programacion(id_prog, request.get_json() or {})
+        return api_success(data=resultado)
+    except MetaEnsambleNoEncontradaException as e:
+        return api_error(e.message, status_code=404)
+    except MetaEnsambleBloqueadaException as e:
+        return api_error(e.message, status_code=409)
+    except ValueError as e:
+        return api_error(str(e), status_code=400)
+    except Exception as e:
+        logger.error(f"Error al actualizar meta de ensamble #{id_prog}: {e}")
+        return api_error(str(e), status_code=500)
+
+
+@ensamble_bp.route('/api/ensamble/programacion/<int:id_prog>', methods=['DELETE'])
+@require_role(ROLES_ENSAMBLE)
+def eliminar_programacion(id_prog):
+    """Controlador puro: borra una meta que todavia no tiene produccion
+    reportada -- ver EnsambleService.eliminar_programacion."""
+    try:
+        resultado = EnsambleService.eliminar_programacion(id_prog)
+        return api_success(data=resultado)
+    except MetaEnsambleNoEncontradaException as e:
+        return api_error(e.message, status_code=404)
+    except MetaEnsambleBloqueadaException as e:
+        return api_error(e.message, status_code=409)
+    except Exception as e:
+        logger.error(f"Error al eliminar meta de ensamble #{id_prog}: {e}")
+        return api_error(str(e), status_code=500)
+
 
 @ensamble_bp.route('/api/ensamble/bom_stock/<id_codigo>', methods=['GET'])
 @require_role(ROLES_ENSAMBLE)

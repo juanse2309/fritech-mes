@@ -34,6 +34,34 @@ def _parsear_fecha(fecha_str):
     return get_colombia_time().date()
 
 
+class ProgramacionPulidoNoEncontradaError(Exception):
+    """Se lanza cuando el id de una tarjeta de la cola no existe (ya la
+    borraron desde otra pantalla, o el id llegó mal). Se traduce a 404."""
+    def __init__(self, id_item):
+        self.message = f"No existe la tarea programada #{id_item}"
+        super().__init__(self.message)
+
+
+class ProgramacionPulidoBloqueadaError(Exception):
+    """
+    Se lanza al intentar editar o borrar una tarjeta de la cola que ya dejó
+    de ser solo un plan. Una tarjeta en EN_PROCESO ya está amarrada a una
+    fila real de ProduccionPulido por `id_pulido` (la operaria le dio
+    "Iniciar" y está reportando contra ella): cambiarle la OP o la
+    referencia ahí dejaría el reporte en curso apuntando a otra cosa, y
+    borrarla dejaría huérfana la fila de ejecución. FINALIZADO es historia
+    ya cerrada. Se traduce a 409 en la ruta, no a 400: el payload puede ser
+    perfectamente válido, lo que no se puede es aplicarlo en ese estado.
+    """
+    def __init__(self, estado):
+        self.estado = estado
+        self.message = (
+            f"La tarea ya está en estado {estado} -- solo se pueden editar o eliminar "
+            f"las que siguen en PROGRAMADO (la operaria todavía no las inició)."
+        )
+        super().__init__(self.message)
+
+
 class ProgramacionPulidoService:
     """Programación (plan) diaria de Pulido: crear cola, listarla por
     operaria o completa, y sincronizarla con la ejecución real."""
@@ -42,25 +70,34 @@ class ProgramacionPulidoService:
     # SALDO DISPONIBLE PARA PROGRAMAR
     # ------------------------------------------------------------------
     @staticmethod
-    def obtener_saldo_para_programar() -> list:
+    def obtener_saldo_para_programar(excluir_id=None) -> list:
         """
         Saldo por pulir por OP+referencia (PulidoService.get_saldo_por_op),
         con lo que YA tiene cola programada (estado PROGRAMADO/EN_PROCESO,
         de cualquier operaria) restado -- para que el ADMIN vea cuánto le
         queda realmente disponible antes de sobre-asignar entre varias
         operarias.
+
+        `excluir_id` saca UNA tarjeta del conteo de "ya asignado". Es lo que
+        necesita la edición (actualizar_item): la tarjeta que se está
+        editando ya está contada dentro de su propio `ya_asignado`, así que
+        sin excluirla, dejar la cantidad igual o incluso bajarla se
+        advertiría a sí misma como sobre-asignación.
         """
         saldo = PulidoService.get_saldo_por_op()
         if not saldo:
             return []
 
-        asignados = db.session.query(
+        query_asignados = db.session.query(
             ProgramacionPulido.orden_produccion,
             ProgramacionPulido.codigo,
             db.func.sum(ProgramacionPulido.cantidad_objetivo)
         ).filter(
             ProgramacionPulido.estado.in_(['PROGRAMADO', 'EN_PROCESO'])
-        ).group_by(
+        )
+        if excluir_id:
+            query_asignados = query_asignados.filter(ProgramacionPulido.id != int(excluir_id))
+        asignados = query_asignados.group_by(
             ProgramacionPulido.orden_produccion, ProgramacionPulido.codigo
         ).all()
 
@@ -151,6 +188,124 @@ class ProgramacionPulidoService:
             db.session.rollback()
             if not isinstance(e, ValueError):
                 logger.error(f"Error en ProgramacionPulidoService.crear_items: {e}")
+            raise
+
+    # ------------------------------------------------------------------
+    # EDICIÓN Y BORRADO DE LA COLA
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _obtener_editable(id_item) -> ProgramacionPulido:
+        """Trae la tarjeta y verifica que todavía sea SOLO un plan. Punto
+        único de esa regla para editar y para borrar -- ver
+        ProgramacionPulidoBloqueadaError para el porqué del estado."""
+        try:
+            item = db.session.get(ProgramacionPulido, int(id_item))
+        except (TypeError, ValueError):
+            item = None
+        if not item:
+            raise ProgramacionPulidoNoEncontradaError(id_item)
+        if item.estado != 'PROGRAMADO':
+            raise ProgramacionPulidoBloqueadaError(item.estado)
+        return item
+
+    @staticmethod
+    def actualizar_item(id_item, data) -> dict:
+        """
+        Edita una tarjeta que sigue en PROGRAMADO. Actualización PARCIAL a
+        propósito: solo se toca lo que venga en `data`, así una pantalla que
+        mande únicamente `cantidad_objetivo` no borra en silencio el lote ni
+        las observaciones.
+
+        Reasignar de operaria manda la tarjeta al FINAL de la cola de la
+        operaria destino (mismo día): dejarle el orden_prioridad viejo la
+        metería en medio de una cola ya armada por otra persona, o
+        empatada con una tarjeta existente.
+
+        La validación de saldo es blanda, igual que en crear_items -- y aquí
+        se calcula excluyendo esta misma tarjeta del "ya asignado", o
+        editarla sin cambiarle la cantidad se advertiría a sí misma.
+        """
+        item = ProgramacionPulidoService._obtener_editable(id_item)
+        data = data or {}
+
+        if 'codigo' in data:
+            codigo = str(data.get('codigo') or '').strip()
+            if not codigo:
+                raise ValueError('La referencia no puede quedar vacía')
+            item.codigo = codigo
+
+        if 'orden_produccion' in data:
+            op = str(data.get('orden_produccion') or '').strip()
+            if not op:
+                raise ValueError('La OP no puede quedar vacía')
+            item.orden_produccion = op
+
+        if 'cantidad_objetivo' in data:
+            try:
+                cantidad = float(data.get('cantidad_objetivo') or 0)
+            except (TypeError, ValueError):
+                raise ValueError('Cantidad objetivo inválida')
+            if cantidad <= 0:
+                raise ValueError('La cantidad objetivo debe ser mayor a 0')
+            item.cantidad_objetivo = cantidad
+
+        if 'lote' in data:
+            item.lote = str(data.get('lote') or '').strip() or None
+
+        if 'observaciones' in data:
+            item.observaciones = str(data.get('observaciones') or '').strip() or None
+
+        if 'operaria' in data:
+            operaria = str(data.get('operaria') or '').strip()
+            if not operaria:
+                raise ValueError('Falta indicar la operaria')
+            if operaria != item.operaria:
+                maximo = db.session.query(
+                    db.func.max(ProgramacionPulido.orden_prioridad)
+                ).filter(
+                    ProgramacionPulido.operaria == operaria,
+                    ProgramacionPulido.fecha == item.fecha,
+                    ProgramacionPulido.id != item.id,
+                ).scalar()
+                item.operaria = operaria
+                item.orden_prioridad = int(maximo or 0) + 1
+
+        advertencias = []
+        saldo_map = {
+            (str(f['orden_produccion'] or '').strip(), _normalizar_referencia(f['referencia'])): f['disponible']
+            for f in ProgramacionPulidoService.obtener_saldo_para_programar(excluir_id=item.id)
+        }
+        key = (str(item.orden_produccion or '').strip(), _normalizar_referencia(item.codigo))
+        disponible = saldo_map.get(key)
+        cantidad_final = float(item.cantidad_objetivo or 0)
+        if disponible is not None and cantidad_final > disponible + 0.0001:
+            advertencias.append(
+                f"{item.orden_produccion} / {item.codigo}: quedaron {cantidad_final:g}, disponible real {disponible:g}"
+            )
+
+        try:
+            db.session.commit()
+            return {'item': ProgramacionPulidoService._serializar(item), 'advertencias': advertencias}
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error en ProgramacionPulidoService.actualizar_item({id_item}): {e}")
+            raise
+
+    @staticmethod
+    def eliminar_item(id_item) -> dict:
+        """Borra una tarjeta que sigue en PROGRAMADO (nunca una ya iniciada
+        -- ver _obtener_editable). No renumera el resto de la cola: el orden
+        que ve la operaria sale de ORDER BY orden_prioridad, así que un
+        hueco en la numeración (1, 2, 4) no cambia en nada la secuencia."""
+        item = ProgramacionPulidoService._obtener_editable(id_item)
+        resumen = ProgramacionPulidoService._serializar(item)
+        try:
+            db.session.delete(item)
+            db.session.commit()
+            return {'eliminado': resumen}
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error en ProgramacionPulidoService.eliminar_item({id_item}): {e}")
             raise
 
     # ------------------------------------------------------------------
