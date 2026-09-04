@@ -246,15 +246,18 @@ class ProgramacionService:
             resultado = {'retomadas': [], 'omitidas': []}
 
             for maquina in objetivo:
+                # Comparación case-insensitive en TODAS las consultas por máquina de
+                # aquí en adelante -- ProgramacionInyeccion.maquina se guarda con el
+                # nombre tal cual llega del formulario (ej. 'MAQUINA No. 1', con 'No.'
+                # en minúscula sostenida), pero `maquina` aquí siempre viene en
+                # mayúsculas (`.upper()` más arriba). Un match exacto nunca coincidía,
+                # así que 'Retomar' jamás encontraba historial previo real -- ver
+                # mismo razonamiento ya aplicado abajo para ProduccionInyeccion.
                 ya_tiene = db.session.query(ProgramacionInyeccion.id).filter(
-                    ProgramacionInyeccion.maquina == maquina,
+                    db.func.upper(ProgramacionInyeccion.maquina) == maquina,
                     ProgramacionInyeccion.fecha == fecha_obj
                 ).first()
                 if not ya_tiene:
-                    # Comparación case-insensitive a propósito: obtener_dashboard_mes ya
-                    # demostró que ProduccionInyeccion.maquina no siempre llega en el mismo
-                    # formato de mayúsculas que ProgramacionInyeccion.maquina -- un match
-                    # exacto aquí dejaría pasar como "libre" una máquina realmente ocupada.
                     ya_tiene = db.session.query(ProduccionInyeccion.id_inyeccion).filter(
                         db.func.upper(ProduccionInyeccion.maquina) == maquina,
                         ProduccionInyeccion.estado.in_(['EN_PROCESO', 'ABIERTO'])
@@ -264,7 +267,7 @@ class ProgramacionService:
                     continue
 
                 ultima = db.session.query(ProgramacionInyeccion).filter(
-                    ProgramacionInyeccion.maquina == maquina,
+                    db.func.upper(ProgramacionInyeccion.maquina) == maquina,
                     ProgramacionInyeccion.fecha < fecha_obj
                 ).order_by(ProgramacionInyeccion.fecha.desc(), ProgramacionInyeccion.id.desc()).first()
 
@@ -275,7 +278,7 @@ class ProgramacionService:
                 # Bloque completo del último montaje (mismo día+molde+OP) --
                 # multi-SKU, ver crear_programacion/obtener_status_maquina.
                 bloque = db.session.query(ProgramacionInyeccion).filter(
-                    ProgramacionInyeccion.maquina == maquina,
+                    db.func.upper(ProgramacionInyeccion.maquina) == maquina,
                     ProgramacionInyeccion.fecha == ultima.fecha,
                     ProgramacionInyeccion.molde == ultima.molde,
                     ProgramacionInyeccion.op_world_office == ultima.op_world_office
@@ -287,7 +290,10 @@ class ProgramacionService:
                 ]
 
                 ProgramacionService.crear_programacion(
-                    maquina=maquina,
+                    # Nombre con el casing original de la fila histórica (no el
+                    # `maquina` en mayúsculas del bucle) para no crear una nueva
+                    # variante de mayúsculas en db_programacion.
+                    maquina=ultima.maquina,
                     fecha_str=fecha_obj.strftime('%Y-%m-%d'),
                     productos=productos,
                     responsable=responsable,
@@ -607,10 +613,14 @@ class ProgramacionService:
             if activos:
                 raise MaquinaOcupadaException(maquina_nom)
 
+            # Misma corrección que InyeccionService.iniciar_trabajo: exigir
+            # también la OP del montaje, no solo máquina+fecha+molde, para no
+            # fusionar dos montajes distintos que comparten letra de molde.
             progs_en_cola = db.session.query(ProgramacionInyeccion).filter(
                 ProgramacionInyeccion.maquina == maquina_nom,
                 ProgramacionInyeccion.fecha == prog_trigger.fecha,
                 ProgramacionInyeccion.molde == prog_trigger.molde,
+                ProgramacionInyeccion.op_world_office == prog_trigger.op_world_office,
                 ProgramacionInyeccion.estado == 'PROGRAMADO'
             ).all()
             if not progs_en_cola:

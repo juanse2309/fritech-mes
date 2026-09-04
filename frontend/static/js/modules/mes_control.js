@@ -236,6 +236,12 @@ window.ModuloMes = {
                         <div class="fw-bold mb-2 text-primary" style="font-size:.8rem">Lote Activo (Molde: ${activo.molde || capacidadMolde})</div>
                         ${this.badgeOP(activo.orden_produccion)}
                         ${skuList}
+                        ${this.avanceParcialHTML(activo.lecturas_parciales_hoy || [])}
+                        <button class="btn btn-outline-primary btn-sm fw-bold w-100 mt-2"
+                            ${canOperate ? '' : 'disabled title="Sin permisos para operar"'}
+                            onclick="ModuloMes.clickReportarParcialDesdeCard('${activo.id_inyeccion}', '${activo.molde || capacidadMolde}', '${m.nombre}')">
+                            <i class="fas fa-clipboard-check me-1"></i> Reportar Avance (11am/3pm)
+                        </button>
                         <button class="btn btn-warning btn-sm fw-bold w-100 mt-2"
                             ${canOperate ? '' : 'disabled title="Sin permisos para operar"'}
                             onclick="ModuloMes.clickFinalizarDesdeCard('${activo.id_inyeccion}', ${activo.cavidades}, '${activo.molde || capacidadMolde}', '${activo.producto || 'LOTE MÚLTIPLE'}', '${activo.hora_inicio || '06:00'}', '${m.nombre}')">
@@ -248,19 +254,23 @@ window.ModuloMes = {
             // Productos en cola HTML (Agrupados por Molde/Montaje)
             let productosColaHTML = '';
             if (cola && cola.length > 0) {
-                // Agrupamos usando el Molde como clave del Montaje
+                // Agrupamos por Molde + OP: dos montajes distintos pueden
+                // compartir letra de molde en la misma máquina/fecha (ej. uno
+                // al inicio de jornada y otro a las 12) y no deben fusionarse
+                // en una sola tarjeta con un solo botón "Iniciar".
                 const colaAgrupada = {};
                 cola.forEach(c => {
-                    const groupKey = c.molde || 'N/A';
+                    const groupKey = `${c.molde || 'N/A'}|${c.orden_produccion || 'SIN_OP'}`;
                     if (!colaAgrupada[groupKey]) colaAgrupada[groupKey] = [];
                     colaAgrupada[groupKey].push(c);
                 });
 
                 const canOperate = this.canOperarMaquina();
-                for (const [moldeKey, itemsMolde] of Object.entries(colaAgrupada)) {
+                for (const itemsMolde of Object.values(colaAgrupada)) {
                     // Tomamos el id de la primera programación para iniciar todo el bloque
                     const primerId = itemsMolde[0].id_programacion;
-                    
+                    const moldeLabel = itemsMolde[0].molde || 'N/A';
+
                     const skuList = itemsMolde.map(c => `
                         <div class="d-flex justify-content-between align-items-center py-1" style="font-size:.75rem">
                             <span><i class="fas fa-caret-right me-1 text-muted"></i> ${c.codigo_sistema || '-'}</span>
@@ -271,7 +281,7 @@ window.ModuloMes = {
                     const opMontaje = itemsMolde[0].orden_produccion || '';
                     productosColaHTML += `
                         <div class="mb-3 p-2" style="border: 1px dashed #cbd5e1; border-radius: 8px; background: #f8fafc;">
-                            <div class="fw-bold mb-2 text-dark" style="font-size:.8rem">Montaje (Molde ${moldeKey})</div>
+                            <div class="fw-bold mb-2 text-dark" style="font-size:.8rem">Montaje (Molde ${moldeLabel})</div>
                             ${this.badgeOP(opMontaje)}
                             ${skuList}
                             <button class="btn btn-success btn-sm fw-bold w-100 mt-2"
@@ -683,6 +693,145 @@ window.ModuloMes = {
                 mostrarLoading(false);
                 console.error('[MES] Error finalizando:', e);
                 Swal.fire('Error', 'Error de red al intentar reportar', 'error');
+            }
+        }
+    },
+
+    /**
+     * Resumen visual del "Reporte de Avance" (pedido del usuario 2026-09-04):
+     * muestra la última lectura del contador hecha hoy y avisa en ámbar si ya
+     * pasó la hora de una franja (11am / 3pm) y todavía no hay ninguna
+     * lectura registrada después de esa hora. Una lectura posterior a las
+     * 15:00 también cubre la franja de las 11:00 -- no se pide una lectura
+     * por cada franja exacta, solo que haya habido *algún* check-in después.
+     */
+    avanceParcialHTML: function (lecturas) {
+        const ahora = new Date();
+        const horaActual = ahora.getHours() * 60 + ahora.getMinutes();
+        const pasoDe = (hhmm) => {
+            const [h, m] = hhmm.split(':').map(Number);
+            return horaActual >= (h * 60 + m);
+        };
+        const hayLecturaDesde = (hhmm) => lecturas.some(l => l.hora && l.hora >= hhmm);
+
+        const faltantes = [];
+        if (pasoDe('11:00') && !hayLecturaDesde('11:00')) faltantes.push('11:00 am');
+        if (pasoDe('15:00') && !hayLecturaDesde('15:00')) faltantes.push('3:00 pm');
+
+        const ultima = lecturas.length > 0 ? lecturas[lecturas.length - 1] : null;
+        const ultimaHTML = ultima
+            ? `<div class="d-flex justify-content-between align-items-center" style="font-size:.72rem;color:#334155">
+                   <span><i class="fas fa-history me-1"></i>Última lectura: ${ultima.hora}</span>
+                   <span class="fw-bold">${Number(ultima.cierres).toLocaleString()} cierres</span>
+               </div>`
+            : `<div style="font-size:.72rem;color:#94a3b8"><i class="fas fa-info-circle me-1"></i>Sin reportes de avance hoy</div>`;
+
+        const avisoHTML = faltantes.length > 0
+            ? `<div class="mt-1" style="font-size:.68rem;font-weight:700;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:3px 6px">
+                   <i class="fas fa-exclamation-triangle me-1"></i>Falta reportar avance de las ${faltantes.join(' y ')}
+               </div>`
+            : '';
+
+        return `<div class="mt-2 pt-2" style="border-top:1px dashed #bfdbfe">${ultimaHTML}${avisoHTML}</div>`;
+    },
+
+    /**
+     * Reporte parcial de avance (pedido del usuario 2026-09-04): a diferencia
+     * de "Pausar/Finalizar Montaje", NO cierra el lote -- solo deja una
+     * lectura del contador para que el supervisor vea el ritmo del día a las
+     * 11am y 3pm. Modal deliberadamente mínimo (solo Cierres + Responsable):
+     * ni PNC ni horas, porque el lote sigue vivo y esos datos se piden en el
+     * cierre real.
+     */
+    clickReportarParcialDesdeCard: async function (idInyeccion, molde, maquinaNombre) {
+        if (!this.canOperarMaquina()) {
+            Swal.fire('Acceso Denegado', 'No tienes permisos para reportar avance de producción.', 'error');
+            return;
+        }
+        if (!idInyeccion) return;
+
+        const maquinaData = (this.dashboardData || []).find(m => (m.nombre || '').toUpperCase() === (maquinaNombre || '').toUpperCase());
+        const activeResp = maquinaData?.trabajo_activo?.responsable;
+        const _getResp = (maq) => {
+            const n = (maq || '').replace(/\D/g, '');
+            if (n === '1' || n === '2') return 'Richard Lobo';
+            if (n === '3' || n === '4') return 'Oscar Prieto';
+            return document.getElementById('current_user_fullname')?.value || '';
+        };
+        const defaultResp = activeResp || _getResp(maquinaNombre);
+
+        const responsables = this.responsables || [];
+        const datalistOpts = responsables
+            .map(r => typeof r === 'object' ? (r.nombre || r.username || '') : String(r))
+            .filter(Boolean)
+            .map(n => `<option value="${n}">`)
+            .join('') || '<option value="Richard Lobo"><option value="Oscar Prieto">';
+
+        const { value: formValues } = await Swal.fire({
+            title: 'Reportar Avance',
+            html: `
+                <div class="alert alert-info py-2 px-3 mb-3 border-0 text-start" style="background:#e0f2fe;color:#0369a1;border-radius:12px">
+                    <small class="d-block fw-bold opacity-75">MOLDE</small> <strong>${molde}</strong>
+                </div>
+                <datalist id="swal-resp-list-parcial">${datalistOpts}</datalist>
+                <div class="mb-3 text-start px-2">
+                    <label class="form-label fw-bold small text-uppercase text-muted mb-1">Operario / Responsable</label>
+                    <input type="text" id="swal-responsable-parcial" class="form-control"
+                           list="swal-resp-list-parcial"
+                           value="${defaultResp}" autocomplete="off"
+                           placeholder="Escribe para buscar...">
+                </div>
+                <div class="mb-1 text-start px-2">
+                    <label class="form-label fw-bold small text-uppercase text-muted mb-1">Cierres del Contador (ahora)</label>
+                    <input type="number" id="swal-cierres-parcial" class="form-control form-control-lg text-center fw-bold" placeholder="0" min="1">
+                </div>
+                <small class="text-muted px-2">Esto NO finaliza el lote -- solo deja un registro de avance.</small>
+            `,
+            focusConfirm: false,
+            showCancelButton: true,
+            confirmButtonText: '<i class="fas fa-clipboard-check me-1"></i> Guardar Avance',
+            cancelButtonText: 'Cancelar',
+            confirmButtonColor: '#0284c7',
+            preConfirm: () => {
+                const cierres = document.getElementById('swal-cierres-parcial').value;
+                const resp = document.getElementById('swal-responsable-parcial').value;
+                if (!cierres || parseInt(cierres) <= 0) {
+                    Swal.showValidationMessage('Ingresa un número válido de cierres');
+                    return false;
+                }
+                return { cierres: parseInt(cierres), responsable: resp };
+            }
+        });
+
+        if (formValues) {
+            try {
+                mostrarLoading(true);
+                const res = await fetchData('/api/mes/reportar_parcial', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id_inyeccion: idInyeccion,
+                        cierres: formValues.cierres,
+                        responsable: formValues.responsable
+                    })
+                });
+                mostrarLoading(false);
+                if (res?.success) {
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'Avance registrado',
+                        text: `${formValues.cierres.toLocaleString()} cierres a las ${res.data?.hora || ''}.`,
+                        timer: 2000,
+                        showConfirmButton: false
+                    });
+                    await this.cargarDashboard();
+                } else {
+                    Swal.fire('Error', res?.error || 'No se pudo registrar el avance', 'error');
+                }
+            } catch (e) {
+                mostrarLoading(false);
+                console.error('[MES] Error registrando avance parcial:', e);
+                Swal.fire('Error', 'Error de red al intentar registrar el avance', 'error');
             }
         }
     },

@@ -1090,11 +1090,18 @@ class InyeccionService:
 
         op_world_office = str(op_world_office).strip().upper()
 
+        # Además de máquina/fecha/molde, se exige la misma OP del montaje que
+        # dispara el inicio: dos montajes distintos programados para la misma
+        # máquina y fecha pueden compartir letra de molde (ej. uno para el
+        # arranque de jornada y otro para las 12) y antes se fusionaban en un
+        # solo lote al iniciar cualquiera de los dos -- ver obtener_status_maquina,
+        # que ya exigía esta misma coincidencia de OP.
         programaciones_bloque = db.session.query(ProgramacionInyeccion).filter(
             ProgramacionInyeccion.maquina == prog_inicial.maquina,
             ProgramacionInyeccion.fecha == prog_inicial.fecha,
             ProgramacionInyeccion.estado == 'PROGRAMADO',
-            ProgramacionInyeccion.molde == prog_inicial.molde
+            ProgramacionInyeccion.molde == prog_inicial.molde,
+            ProgramacionInyeccion.op_world_office == prog_inicial.op_world_office
         ).all()
 
         if prog_inicial not in programaciones_bloque:
