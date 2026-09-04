@@ -1399,7 +1399,7 @@
 
                     <!-- NUEVA FILA: Tendencia y Scrap Global -->
                     <div class="row g-4 mb-4" id="dashboard-section-tendencia"
-                        data-role-access="ADMIN,INYECCION,PULIDO">
+                        data-role-access="ADMIN,INYECCION">
                         <!-- Tendencia de Producción (Data Scientist View) -->
                         <div class="col-12">
                             <div class="card shadow-sm border-0 h-100" style="border-radius: 16px;">
@@ -1419,7 +1419,7 @@
                         </div>
                     </div>
 
-                    <div class="row g-4 mb-4" id="dash-nav-scrap-pnc">
+                    <div class="row g-4 mb-4" id="dash-nav-scrap-pnc" data-role-access="ADMIN,INYECCION">
                         <!-- Scrap / PNC Pareteo Breakdown -->
                         <div class="col-12">
                             <div class="card shadow-sm border-0 h-100" style="border-radius: 16px;">
@@ -2733,8 +2733,87 @@
             </div>
 
             <div class="p-4">
-                <!-- Saldo disponible por OP/referencia -->
+                <!-- Cola del día: tablero completo por operaria, de primeras y a todo
+                     lo ancho para verlo entero sin scroll horizontal (pedido del
+                     usuario 2026-09-04: "sin correr entre todas las muchachas") --
+                     las columnas se acomodan en varias filas si no caben todas.
+                     Arrastra una tarjeta para reordenarla dentro de su columna o
+                     soltarla en otra operaria para reasignarla -- ver
+                     ModuloPulido._initDragDropColasPulido. -->
                 <div class="card border-0 shadow-sm mb-4">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h6 class="fw-800 mb-0"><i class="fas fa-list-check me-2 text-primary"></i>Cola del día</h6>
+                            <span class="text-muted small"><i class="fas fa-arrows-up-down-left-right me-1"></i>Arrastra para reordenar o reasignar</span>
+                        </div>
+                        <div id="programacion-cola-operaria-vista" class="d-flex flex-wrap gap-3"></div>
+                    </div>
+                </div>
+
+                <!-- Formulario para agregar tareas a la cola de una operaria -->
+                <div class="card border-0 shadow-sm mb-4">
+                    <div class="card-body">
+                        <h6 class="fw-800 mb-3"><i class="fas fa-plus-circle me-2 text-primary"></i>Asignar tarea</h6>
+                        <p class="text-muted small mb-3">Copia lo que dice la bolsa física: referencia, OP, lote y cantidad, y marca a quién(es) se les asigna -- una, varias o todas con el mismo click. El orden lo da el orden en que las vayas agregando abajo (arrástralas para reordenarlas).</p>
+                        <div class="row g-3">
+                            <div class="col-12 col-lg-6">
+                                <div class="mb-3">
+                                    <label class="form-label small fw-bold d-flex justify-content-between align-items-center mb-2">
+                                        <span><i class="fas fa-users me-1 text-primary"></i>Asignar a</span>
+                                        <label class="operaria-chip m-0" for="programacion-operarias-todas" style="padding:4px 12px;font-size:.72rem;">
+                                            <input type="checkbox" id="programacion-operarias-todas" onchange="ModuloPulido._toggleTodasOperariasCheck(this.checked)">
+                                            <span class="chip-check"><i class="fas fa-check"></i></span>
+                                            Todas
+                                        </label>
+                                    </label>
+                                    <div id="programacion-operarias-checks" class="d-flex flex-wrap gap-2 p-2 rounded-4" style="max-height: 120px; overflow-y: auto; background:#f8fafc;"></div>
+                                </div>
+                                <div class="p-3 rounded-4 mb-3" style="background:#f8fafc;border:1px solid #eef2f6;">
+                                    <div class="row g-2 mb-2">
+                                        <div class="col-6 position-relative">
+                                            <label class="form-label small fw-bold text-muted"><i class="fas fa-cube me-1"></i>Referencia</label>
+                                            <input type="text" id="programacion-referencia-input" class="form-control form-control-sm" placeholder="Ej: FR-9304" autocomplete="off">
+                                            <div id="programacion-referencia-suggestions" class="autocomplete-suggestions" style="top: 100%; left: 0.75rem; right: 0.75rem; width: auto; z-index: 1000;"></div>
+                                        </div>
+                                        <div class="col-6 position-relative">
+                                            <label class="form-label small fw-bold text-muted"><i class="fas fa-file-lines me-1"></i>OP</label>
+                                            <input type="text" id="programacion-op-input" class="form-control form-control-sm" placeholder="Ej: 30130" autocomplete="off">
+                                            <div id="programacion-op-suggestions" class="autocomplete-suggestions" style="top: 100%; left: 0.75rem; right: 0.75rem; width: auto; z-index: 1000;"></div>
+                                        </div>
+                                    </div>
+                                    <div id="programacion-saldo-hint" class="small mb-2"></div>
+                                    <div class="row g-2 mb-2">
+                                        <div class="col-6">
+                                            <label class="form-label small fw-bold text-muted"><i class="fas fa-calendar-day me-1"></i>Lote (opcional)</label>
+                                            <input type="date" id="programacion-lote-input" class="form-control form-control-sm">
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small fw-bold text-muted"><i class="fas fa-layer-group me-1"></i>Cantidad objetivo</label>
+                                            <input type="number" id="programacion-cantidad-input" class="form-control form-control-sm" min="0">
+                                        </div>
+                                    </div>
+                                    <div class="mb-0">
+                                        <label class="form-label small fw-bold text-muted"><i class="fas fa-note-sticky me-1"></i>Observaciones (opcional)</label>
+                                        <textarea id="programacion-observaciones-input" class="form-control form-control-sm" rows="2"></textarea>
+                                    </div>
+                                </div>
+                                <button type="button" class="btn btn-sm btn-outline-primary w-100 mb-2" onclick="ModuloPulido.agregarItemBorradorProgramacion()">
+                                    <i class="fas fa-list-ol me-1"></i> Agregar a la cola del día
+                                </button>
+                            </div>
+                            <div class="col-12 col-lg-6">
+                                <label class="form-label small fw-bold"><i class="fas fa-basket-shopping me-1 text-primary"></i>Tareas por guardar</label>
+                                <div id="programacion-borrador-lista" class="d-flex flex-column gap-2 mb-3"></div>
+                                <button type="button" class="btn btn-primary w-100 fw-bold" onclick="ModuloPulido.guardarProgramacion()">
+                                    <i class="fas fa-cloud-upload-alt me-1"></i> Guardar programación
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Saldo disponible por OP/referencia -->
+                <div class="card border-0 shadow-sm">
                     <div class="card-body">
                         <h6 class="fw-800 mb-3"><i class="fas fa-cubes me-2 text-primary"></i>Saldo disponible por pulir</h6>
                         <div class="table-responsive" style="max-height: 260px; overflow-y: auto;">
@@ -2753,69 +2832,6 @@
                                     <tr><td colspan="6" class="text-center text-muted py-3">Cargando...</td></tr>
                                 </tbody>
                             </table>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="row g-4">
-                    <!-- Formulario para agregar tareas a la cola de una operaria -->
-                    <div class="col-12 col-lg-5">
-                        <div class="card border-0 shadow-sm">
-                            <div class="card-body">
-                                <h6 class="fw-800 mb-3"><i class="fas fa-plus-circle me-2 text-primary"></i>Asignar tarea</h6>
-                                <p class="text-muted small mb-3">Copia lo que dice la bolsa física: referencia, OP y lote. El orden lo da el orden en que las vayas agregando abajo.</p>
-                                <div class="mb-2">
-                                    <label class="form-label small fw-bold">Operaria</label>
-                                    <select id="programacion-operaria-select" class="form-select form-select-sm" onchange="ModuloPulido._alCambiarOperariaProgramacion()"></select>
-                                </div>
-                                <div class="row g-2 mb-2">
-                                    <div class="col-6 position-relative">
-                                        <label class="form-label small fw-bold">Referencia</label>
-                                        <input type="text" id="programacion-referencia-input" class="form-control form-control-sm" placeholder="Ej: FR-9304" autocomplete="off">
-                                        <div id="programacion-referencia-suggestions" class="autocomplete-suggestions" style="top: 100%; left: 0.75rem; right: 0.75rem; width: auto; z-index: 1000;"></div>
-                                    </div>
-                                    <div class="col-6 position-relative">
-                                        <label class="form-label small fw-bold">OP</label>
-                                        <input type="text" id="programacion-op-input" class="form-control form-control-sm" placeholder="Ej: 30130" autocomplete="off">
-                                        <div id="programacion-op-suggestions" class="autocomplete-suggestions" style="top: 100%; left: 0.75rem; right: 0.75rem; width: auto; z-index: 1000;"></div>
-                                    </div>
-                                </div>
-                                <div id="programacion-saldo-hint" class="small mb-2"></div>
-                                <div class="row g-2 mb-2">
-                                    <div class="col-6">
-                                        <label class="form-label small fw-bold">Lote (opcional)</label>
-                                        <input type="date" id="programacion-lote-input" class="form-control form-control-sm">
-                                    </div>
-                                    <div class="col-6">
-                                        <label class="form-label small fw-bold">Cantidad objetivo</label>
-                                        <input type="number" id="programacion-cantidad-input" class="form-control form-control-sm" min="0">
-                                    </div>
-                                </div>
-                                <div class="mb-3">
-                                    <label class="form-label small fw-bold">Observaciones (opcional)</label>
-                                    <textarea id="programacion-observaciones-input" class="form-control form-control-sm" rows="2"></textarea>
-                                </div>
-                                <button type="button" class="btn btn-sm btn-outline-primary w-100 mb-2" onclick="ModuloPulido.agregarItemBorradorProgramacion()">
-                                    <i class="fas fa-list-ol me-1"></i> Agregar a la cola del día
-                                </button>
-                                <div id="programacion-borrador-lista" class="d-flex flex-column gap-2 mb-3"></div>
-                                <button type="button" class="btn btn-primary w-100 fw-bold" onclick="ModuloPulido.guardarProgramacion()">
-                                    <i class="fas fa-cloud-upload-alt me-1"></i> Guardar programación
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Cola del día por operaria -->
-                    <div class="col-12 col-lg-7">
-                        <div class="card border-0 shadow-sm h-100">
-                            <div class="card-body">
-                                <div class="d-flex justify-content-between align-items-center mb-3">
-                                    <h6 class="fw-800 mb-0"><i class="fas fa-list-check me-2 text-primary"></i>Cola del día</h6>
-                                    <select id="programacion-ver-operaria-select" class="form-select form-select-sm" style="width: 220px;" onchange="ModuloPulido.renderColaOperariaAdmin()"></select>
-                                </div>
-                                <div id="programacion-cola-operaria-vista" class="d-flex flex-column gap-2"></div>
-                            </div>
                         </div>
                     </div>
                 </div>

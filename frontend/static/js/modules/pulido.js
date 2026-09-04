@@ -3525,17 +3525,33 @@ const ModuloPulido = {
         if (panel) panel.style.display = 'none';
     },
 
+    // Lista canónica de operarias de Pulido -- alimenta tanto el selector de
+    // "a quién le agrego esta tarea" como las columnas del tablero de la
+    // cola (una operaria sin nada programado hoy igual necesita su columna
+    // vacía para poder recibir una tarjeta arrastrada desde otra).
+    _operariasPulido: [],
+
     _cargarOperariasProgramacion: async function () {
         try {
             const res = await fetch('/api/obtener_responsables?rol=PULIDO');
             const lista = await res.json();
             const nombres = (Array.isArray(lista) ? lista : []).map(r => (typeof r === 'string' ? r : r.nombre || r.responsable)).filter(Boolean);
+            this._operariasPulido = nombres;
 
-            const selectAsignar = document.getElementById('programacion-operaria-select');
-            const selectVer = document.getElementById('programacion-ver-operaria-select');
-            const opciones = nombres.map(n => `<option value="${n}">${n}</option>`).join('');
-            if (selectAsignar) selectAsignar.innerHTML = opciones || '<option value="">Sin operarias registradas</option>';
-            if (selectVer) selectVer.innerHTML = opciones || '<option value="">Sin operarias registradas</option>';
+            // Chips de "a quién(es) le asigno esta tarea" en el formulario --
+            // el checkbox real va oculto (ver .operaria-chip en styles.css),
+            // el <label> completo es lo que se ve y se clickea.
+            const cont = document.getElementById('programacion-operarias-checks');
+            if (cont) {
+                cont.innerHTML = nombres.length
+                    ? nombres.map(n => `
+                        <label class="operaria-chip">
+                            <input type="checkbox" class="operaria-check" value="${n}" onchange="ModuloPulido._onToggleOperariaChip(this)">
+                            <span class="chip-check"><i class="fas fa-check"></i></span>
+                            ${n}
+                        </label>`).join('')
+                    : '<span class="text-muted small">Sin operarias registradas</span>';
+            }
         } catch (e) {
             console.error('[Pulido] Error cargando operarias:', e);
         }
@@ -3544,7 +3560,6 @@ const ModuloPulido = {
     cargarPanelProgramacion: async function () {
         await Promise.all([this._cargarSaldoProgramacion(), this._cargarColaAdminProgramacion()]);
         this.renderColaOperariaAdmin();
-        this._recalcularSiguienteOrdenProgramacion();
     },
 
     _cargarSaldoProgramacion: async function () {
@@ -3631,78 +3646,193 @@ const ModuloPulido = {
         }
     },
 
-    // El orden que ve la operaria es simplemente el orden en que se van
-    // agregando tareas a la lista (como Inyección) -- no hay un campo de
-    // prioridad que llenar a mano. Se calcula UNA vez al abrir el panel o
-    // al cambiar de operaria (continúa después de lo que ya tenga
-    // programado hoy) y de ahí en adelante cada "Agregar" solo añade al
-    // arreglo; el número final se calcula recién al guardar (ver
-    // guardarProgramacion), así que quitar un item de la lista nunca deja
-    // huecos ni números viejos dando vueltas.
-    _siguienteOrdenBorrador: 1,
-
-    _recalcularSiguienteOrdenProgramacion: function () {
-        const operaria = document.getElementById('programacion-operaria-select')?.value;
-        const existentes = this._colaAdminProgramacion[operaria] || [];
-        const maxExistente = existentes.reduce((m, it) => Math.max(m, it.orden_prioridad || 0), 0);
-        this._siguienteOrdenBorrador = maxExistente + 1;
-    },
-
-    _alCambiarOperariaProgramacion: function () {
-        // Cambiar de operaria a mitad de un borrador sin guardar reasignaría
-        // en silencio tareas ya armadas para otra persona -- mejor limpiar y
-        // que la jefa de planta rearme la lista para la operaria correcta.
-        if (this._borradorProgramacion.length) {
-            this._borradorProgramacion = [];
-            this._renderBorradorProgramacion();
-        }
-        this._recalcularSiguienteOrdenProgramacion();
-    },
-
+    // ── Tablero de la cola del día: una columna por operaria, tarjetas
+    // arrastrables (ver _initDragDropColasPulido). Arrastrar dentro de la
+    // misma columna reordena; soltar en otra columna reasigna la operaria Y
+    // la deja en la posición exacta donde se soltó -- ambos casos persisten
+    // en _persistirOrdenColumnaTrasDrag.
     renderColaOperariaAdmin: function () {
-        const operaria = document.getElementById('programacion-ver-operaria-select')?.value;
         const cont = document.getElementById('programacion-cola-operaria-vista');
         if (!cont) return;
 
-        const items = this._colaAdminProgramacion[operaria] || [];
-        if (!items.length) {
-            cont.innerHTML = '<div class="text-center text-muted py-3">Sin tareas programadas para esta operaria hoy.</div>';
+        // Todas las operarias registradas, no solo las que ya tienen algo
+        // hoy -- una operaria sin tareas necesita su columna vacía para
+        // poder recibir una tarjeta arrastrada desde otra.
+        const operarias = Array.from(new Set([
+            ...(this._operariasPulido || []),
+            ...Object.keys(this._colaAdminProgramacion || {})
+        ])).sort();
+
+        if (!operarias.length) {
+            cont.innerHTML = '<div class="text-center text-muted py-3">Sin operarias registradas.</div>';
             return;
         }
 
-        const temaEstado = { PROGRAMADO: 'secondary', EN_PROCESO: 'success', FINALIZADO: 'primary' };
-        // Solo las tarjetas que la operaria todavía no inició se pueden tocar:
-        // una EN_PROCESO ya está amarrada a una fila real de db_pulido por
-        // id_pulido (mismo criterio que ProgramacionPulidoBloqueadaError en el
-        // backend, que es quien de verdad lo impide). Las demás muestran un
-        // candado en vez de los botones, para que se vea POR QUÉ no se pueden.
-        cont.innerHTML = items.map((t, idx) => {
-            const editable = t.estado === 'PROGRAMADO';
-            const acciones = editable
-                ? `<button class="btn btn-sm btn-link text-secondary p-1" title="Editar tarea"
-                           onclick="ModuloPulido.abrirModalEditarProgramacion(${t.id})">
-                       <i class="fas fa-pen-to-square"></i>
-                   </button>
-                   <button class="btn btn-sm btn-link text-danger p-1" title="Quitar de la cola"
-                           onclick="ModuloPulido.eliminarItemProgramacion(${t.id})">
-                       <i class="fas fa-trash-can"></i>
-                   </button>`
-                : `<i class="fas fa-lock text-muted small ms-2" title="La operaria ya inició esta tarea -- no se puede editar ni quitar"></i>`;
+        // Mismo lenguaje visual que las tarjetas de máquina de Inyección
+        // (mes_control.js: PROGRAMADO/EN_PROCESO/LIBRE) para que ambos
+        // tableros del MES se sientan consistentes.
+        const TEMA_TARJETA = {
+            PROGRAMADO: { border: '#94a3b8', bg: '#ffffff', text: '#475569', badgeBg: '#e2e8f0', icono: 'fa-hourglass-half' },
+            EN_PROCESO: { border: '#2563eb', bg: '#eff6ff', text: '#2563eb', badgeBg: '#dbeafe', icono: 'fa-gear fa-spin' },
+            FINALIZADO: { border: '#16a34a', bg: '#f0fdf4', text: '#16a34a', badgeBg: '#dcfce7', icono: 'fa-check' },
+        };
+
+        const iniciales = (nombre) => (nombre || '')
+            .trim().split(/\s+/).slice(0, 2).map(p => p[0]).join('').toUpperCase() || '?';
+
+        cont.innerHTML = operarias.map(operaria => {
+            const items = this._colaAdminProgramacion[operaria] || [];
+
+            // Solo las tarjetas que la operaria todavía no inició se pueden
+            // tocar/arrastrar: una EN_PROCESO ya está amarrada a una fila real
+            // de db_pulido por id_pulido (mismo criterio que
+            // ProgramacionPulidoBloqueadaError en el backend, que es quien de
+            // verdad lo impide). Las demás muestran un candado en vez de los
+            // botones, para que se vea POR QUÉ no se pueden tocar.
+            const cards = items.map((t) => {
+                const editable = t.estado === 'PROGRAMADO';
+                const tema = TEMA_TARJETA[t.estado] || TEMA_TARJETA.PROGRAMADO;
+                const acciones = editable
+                    ? `<button class="btn btn-sm btn-link text-secondary p-0 px-1" title="Editar tarea"
+                               onclick="ModuloPulido.abrirModalEditarProgramacion(${t.id})">
+                           <i class="fas fa-pen-to-square" style="font-size:.75rem"></i>
+                       </button>
+                       <button class="btn btn-sm btn-link text-danger p-0 px-1" title="Quitar de la cola"
+                               onclick="ModuloPulido.eliminarItemProgramacion(${t.id})">
+                           <i class="fas fa-trash-can" style="font-size:.75rem"></i>
+                       </button>`
+                    : `<i class="fas fa-lock" style="font-size:.65rem;color:#94a3b8" title="La operaria ya inició esta tarea -- no se puede editar ni quitar"></i>`;
+
+                return `
+                <div class="prog-card mb-2" draggable="${editable}" data-id="${t.id}" data-operaria="${operaria}"
+                     style="border-left:4px solid ${tema.border}; background:${tema.bg}; border-radius:10px; padding:9px 11px;
+                            box-shadow:0 1px 2px rgba(15,23,42,.05); ${editable ? 'cursor:grab;' : ''}">
+                    <div class="d-flex justify-content-between align-items-center mb-1" style="gap:6px">
+                        <div class="d-flex align-items-center gap-1" style="min-width:0">
+                            ${editable ? '<i class="fas fa-grip-vertical" style="font-size:.65rem;color:#cbd5e1"></i>' : ''}
+                            <span class="fw-bold text-truncate" style="font-size:.88rem;color:#0f172a">${t.codigo}</span>
+                        </div>
+                        <span class="badge rounded-pill flex-shrink-0" style="background:${tema.badgeBg};color:${tema.text};font-size:.58rem;font-weight:700;letter-spacing:.02em;padding:.3em .55em;">
+                            <i class="fas ${tema.icono} me-1"></i>${t.estado}
+                        </span>
+                    </div>
+                    <div class="d-flex flex-wrap align-items-center gap-2" style="font-size:.68rem;color:#64748b">
+                        <span title="Orden de producción"><i class="fas fa-file-lines me-1"></i>${t.orden_produccion || 'N/A'}</span>
+                        <span title="Cantidad objetivo"><i class="fas fa-layer-group me-1"></i>${t.cantidad_objetivo} pz</span>
+                        ${t.lote ? `<span title="Lote"><i class="fas fa-calendar-day me-1"></i>${t.lote}</span>` : ''}
+                    </div>
+                    <div class="d-flex justify-content-end align-items-center gap-1 mt-1">${acciones}</div>
+                </div>`;
+            }).join('');
 
             return `
-            <div class="d-flex justify-content-between align-items-center p-2 border rounded-3">
-                <div>
-                    <span class="badge rounded-pill bg-light text-dark border me-2">#${idx + 1}</span>
-                    <span class="fw-bold">${t.codigo}</span>
-                    <span class="text-muted small ms-1">OP: ${t.orden_produccion || 'N/A'} &middot; ${t.cantidad_objetivo} pz${t.lote ? ` &middot; Lote: ${t.lote}` : ''}</span>
+            <div class="prog-columna flex-shrink-0" style="width: 270px;">
+                <div class="d-flex align-items-center justify-content-between mb-2 px-1">
+                    <div class="d-flex align-items-center gap-2" style="min-width:0">
+                        <span class="flex-shrink-0" style="width:26px;height:26px;border-radius:50%;background:#e0e7ff;color:#4338ca;
+                            display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.65rem;">${iniciales(operaria)}</span>
+                        <span class="fw-bold small text-dark text-truncate">${operaria}</span>
+                    </div>
+                    <span class="badge rounded-pill bg-light text-dark border flex-shrink-0">${items.length}</span>
                 </div>
-                <div class="d-flex align-items-center gap-1">
-                    <span class="badge bg-${temaEstado[t.estado] || 'secondary'}">${t.estado}</span>
-                    ${acciones}
+                <div class="prog-columna-lista p-2 rounded-4" data-operaria="${operaria}" style="min-height: 70px; background: #f1f5f9;">
+                    ${cards || '<div class="text-center text-muted small py-4"><i class="fas fa-mug-hot mb-1 d-block" style="font-size:1.1rem;opacity:.4"></i>Sin tareas hoy</div>'}
                 </div>
-            </div>
-        `;
+            </div>`;
         }).join('');
+
+        this._initDragDropColasPulido();
+    },
+
+    // ── Motor de arrastrar-y-soltar (vanilla, sin librerías) ───────────
+    _initDragDropColasPulido: function () {
+        const cont = document.getElementById('programacion-cola-operaria-vista');
+        if (!cont) return;
+
+        let draggedEl = null;
+
+        cont.querySelectorAll('.prog-card[draggable="true"]').forEach(card => {
+            card.addEventListener('dragstart', () => {
+                draggedEl = card;
+                // En un microtask: si se oculta ya mismo, algunos navegadores
+                // cancelan el drag antes de que arranque.
+                setTimeout(() => card.classList.add('opacity-50'), 0);
+            });
+            card.addEventListener('dragend', () => {
+                card.classList.remove('opacity-50');
+                if (draggedEl) this._persistirOrdenColumnaTrasDrag(draggedEl);
+                draggedEl = null;
+            });
+        });
+
+        cont.querySelectorAll('.prog-columna-lista').forEach(lista => {
+            lista.addEventListener('dragover', (e) => {
+                if (!draggedEl) return;
+                e.preventDefault();
+                const despuesDe = this._elementoDespuesDe(lista, e.clientY);
+                if (despuesDe == null) lista.appendChild(draggedEl);
+                else lista.insertBefore(draggedEl, despuesDe);
+            });
+        });
+    },
+
+    _elementoDespuesDe: function (lista, y) {
+        const candidatos = [...lista.querySelectorAll('.prog-card[draggable="true"]:not(.opacity-50)')];
+        return candidatos.reduce((masCercano, el) => {
+            const box = el.getBoundingClientRect();
+            const offset = y - box.top - box.height / 2;
+            if (offset < 0 && offset > masCercano.offset) return { offset, element: el };
+            return masCercano;
+        }, { offset: -Infinity, element: null }).element;
+    },
+
+    // Tras soltar: si cambió de columna, primero reasigna la operaria en el
+    // backend; en cualquier caso, fija el orden EXACTO de la columna destino
+    // según cómo quedaron las tarjetas en el DOM (incluye tarjetas ya
+    // bloqueadas -- el backend las ignora al fijar orden_prioridad, ver
+    // ProgramacionPulidoService.reordenar_cola).
+    _persistirOrdenColumnaTrasDrag: async function (draggedEl) {
+        const id = parseInt(draggedEl.dataset.id, 10);
+        const operariaOrigen = draggedEl.dataset.operaria;
+        const listaDestino = draggedEl.closest('.prog-columna-lista');
+        const operariaDestino = listaDestino?.dataset.operaria;
+        if (!id || !listaDestino || !operariaDestino) return;
+
+        const idsEnOrden = [...listaDestino.querySelectorAll('.prog-card[data-id]')]
+            .map(el => parseInt(el.dataset.id, 10))
+            .filter(Boolean);
+
+        mostrarLoading(true, 'Actualizando cola...');
+        try {
+            if (operariaDestino !== operariaOrigen) {
+                const res = await fetch(`/api/pulido/programacion/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ operaria: operariaDestino })
+                });
+                const data = await res.json();
+                if (!data.success) {
+                    Swal.fire('No se pudo reasignar', data.error || 'Error del servidor.', 'error');
+                    return;
+                }
+            }
+
+            const resOrden = await fetch('/api/pulido/programacion/reordenar', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ operaria: operariaDestino, ids: idsEnOrden })
+            });
+            const dataOrden = await resOrden.json();
+            if (!dataOrden.success) {
+                Swal.fire('No se pudo guardar el nuevo orden', dataOrden.error || 'Error del servidor.', 'error');
+            }
+        } catch (e) {
+            console.error('[Pulido] Error en drag-and-drop de la cola:', e);
+            Swal.fire('Error de conexión', 'No se pudo guardar el cambio.', 'error');
+        } finally {
+            mostrarLoading(false);
+            await this.cargarPanelProgramacion();
+        }
     },
 
     // ── Editar / quitar una tarea ya programada ───────────────────────
@@ -3744,12 +3874,15 @@ const ModuloPulido = {
 
         this._itemEditando = item;
 
-        // El selector de operaria del modal se llena con las mismas opciones
-        // que el del formulario (ya cargadas por _cargarOperariasProgramacion).
-        const origen = document.getElementById('programacion-operaria-select');
+        // El selector de operaria del modal (reasignar UNA tarea puntual) se
+        // llena con la misma lista que alimenta los checks del formulario
+        // (ya cargada por _cargarOperariasProgramacion) -- aquí sí es un
+        // select simple porque solo se reasigna a una persona a la vez.
         const destino = document.getElementById('editar-prog-operaria-select');
-        if (origen && destino) destino.innerHTML = origen.innerHTML;
-        if (destino) destino.value = item.operaria;
+        if (destino) {
+            destino.innerHTML = (this._operariasPulido || []).map(n => `<option value="${n}">${n}</option>`).join('');
+            destino.value = item.operaria;
+        }
 
         document.getElementById('editar-prog-referencia-input').value = item.codigo || '';
         document.getElementById('editar-prog-op-input').value = item.orden_produccion || '';
@@ -3866,13 +3999,33 @@ const ModuloPulido = {
         }
     },
 
+    // Chips de operaria: el checkbox real va oculto, el chip visual se
+    // resalta con la clase .chip-activa (ver styles.css).
+    _onToggleOperariaChip: function (checkbox) {
+        checkbox.closest('.operaria-chip')?.classList.toggle('chip-activa', checkbox.checked);
+    },
+
+    // Checkbox "Todas" arriba de la lista de operarias del formulario.
+    _toggleTodasOperariasCheck: function (marcar) {
+        document.querySelectorAll('#programacion-operarias-checks .operaria-check').forEach(cb => {
+            cb.checked = marcar;
+            this._onToggleOperariaChip(cb);
+        });
+    },
+
     agregarItemBorradorProgramacion: function () {
+        const operariasSeleccionadas = [...document.querySelectorAll('#programacion-operarias-checks .operaria-check:checked')]
+            .map(cb => cb.value);
         const codigo = document.getElementById('programacion-referencia-input')?.value?.trim();
         const orden_produccion = document.getElementById('programacion-op-input')?.value?.trim();
         const lote = document.getElementById('programacion-lote-input')?.value || '';
         const cantidad_objetivo = parseFloat(document.getElementById('programacion-cantidad-input')?.value || '0');
         const observaciones = document.getElementById('programacion-observaciones-input')?.value || '';
 
+        if (!operariasSeleccionadas.length) {
+            Swal.fire('Falta la operaria', 'Marca al menos una operaria (o "Todas") para asignarle esta tarea.', 'warning');
+            return;
+        }
         if (!orden_produccion || !codigo) {
             Swal.fire('Falta OP/Referencia', 'Escribe la referencia y la OP tal como están en la bolsa.', 'warning');
             return;
@@ -3882,11 +4035,19 @@ const ModuloPulido = {
             return;
         }
 
-        // Sin orden_prioridad todavía: la posición final se calcula recién
-        // al guardar, a partir del orden en que quedan en este arreglo (ver
-        // guardarProgramacion) -- así quitar un item nunca deja huecos.
-        this._borradorProgramacion.push({ orden_produccion, codigo, lote, cantidad_objetivo, observaciones });
+        // Una tarea por cada operaria marcada, misma referencia/OP/lote/
+        // cantidad -- así un solo "Agregar" reparte la misma tarea entre
+        // varias personas a la vez (pedido del usuario 2026-09-04: marcar
+        // por checks a quién(es) se le asigna, no elegir una operaria por
+        // tarea). orden_prioridad no se calcula aquí: sale del orden final
+        // de esta lista POR OPERARIA (ver guardarProgramacion), así
+        // arrastrar para reordenar nunca deja huecos ni números viejos.
+        operariasSeleccionadas.forEach(operaria => {
+            this._borradorProgramacion.push({ operaria, orden_produccion, codigo, lote, cantidad_objetivo, observaciones });
+        });
 
+        // Los checks de operarias se dejan marcados a propósito: es normal
+        // seguir agregando más bolsas para el mismo grupo de gente.
         document.getElementById('programacion-referencia-input').value = '';
         document.getElementById('programacion-op-input').value = '';
         document.getElementById('programacion-lote-input').value = '';
@@ -3903,20 +4064,79 @@ const ModuloPulido = {
         const cont = document.getElementById('programacion-borrador-lista');
         if (!cont) return;
         if (!this._borradorProgramacion.length) {
-            cont.innerHTML = '';
+            cont.innerHTML = '<div class="text-center text-muted small py-4" style="background:#f8fafc;border-radius:12px;">' +
+                '<i class="fas fa-inbox mb-1 d-block" style="font-size:1.2rem;opacity:.4"></i>Aún no has agregado ninguna tarea</div>';
             return;
         }
-        // El número mostrado es la posición dentro de esta lista (lo único
-        // que le importa a la jefa de planta: en qué orden las va agregando),
-        // no el orden_prioridad real que se calcula al guardar.
-        cont.innerHTML = this._borradorProgramacion.map((item, idx) => `
-            <div class="d-flex justify-content-between align-items-center p-2 bg-light rounded-3 small">
-                <span><b>#${idx + 1}</b> ${item.codigo} (OP ${item.orden_produccion})${item.lote ? ' · Lote ' + item.lote : ''} &middot; ${item.cantidad_objetivo} pz</span>
-                <button class="btn btn-sm btn-link text-danger p-0" onclick="ModuloPulido._quitarItemBorradorProgramacion(${idx})">
+        // El número mostrado es la posición de esa tarea DENTRO DE LA COLA DE
+        // SU PROPIA OPERARIA en este borrador (no la posición global en la
+        // lista): si Leidy y Laura reciben la misma tarea marcando varios
+        // checks a la vez, cada una debe ver su propio "#1", no un contador
+        // que salta entre personas distintas. No es el orden_prioridad real
+        // (ese se calcula al guardar, continuando lo que cada operaria ya
+        // tenga programado hoy) -- ver guardarProgramacion. Arrastrable
+        // (misma mecánica que el tablero de la cola ya guardada) para poder
+        // corregir el orden antes de guardar sin borrar y repetir.
+        const contadorPorOperaria = {};
+        cont.innerHTML = this._borradorProgramacion.map((item, idx) => {
+            contadorPorOperaria[item.operaria] = (contadorPorOperaria[item.operaria] || 0) + 1;
+            const numeroEnCola = contadorPorOperaria[item.operaria];
+            return `
+            <div class="d-flex justify-content-between align-items-center p-2 borrador-item small" draggable="true" data-idx="${idx}"
+                 style="cursor:grab;background:#fff;border-left:3px solid #3b82f6;border-radius:8px;box-shadow:0 1px 2px rgba(15,23,42,.06);">
+                <span class="d-flex align-items-center gap-1" style="min-width:0">
+                    <i class="fas fa-grip-vertical text-muted" style="font-size:.7rem"></i>
+                    <span class="badge rounded-pill bg-light text-dark border flex-shrink-0">#${numeroEnCola}</span>
+                    <span class="text-truncate"><b>${item.codigo}</b> (OP ${item.orden_produccion})${item.lote ? ' · Lote ' + item.lote : ''} &middot; ${item.cantidad_objetivo} pz</span>
+                    <span class="badge rounded-pill flex-shrink-0" style="background:#eff6ff;color:#1d4ed8;"><i class="fas fa-user me-1"></i>${item.operaria}</span>
+                </span>
+                <button class="btn btn-sm btn-link text-danger p-0 flex-shrink-0" onclick="ModuloPulido._quitarItemBorradorProgramacion(${idx})">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
-        `).join('');
+        `;
+        }).join('');
+
+        this._initDragDropBorrador();
+    },
+
+    _initDragDropBorrador: function () {
+        const cont = document.getElementById('programacion-borrador-lista');
+        if (!cont) return;
+        let draggedEl = null;
+
+        cont.querySelectorAll('.borrador-item').forEach(fila => {
+            fila.addEventListener('dragstart', () => {
+                draggedEl = fila;
+                setTimeout(() => fila.classList.add('opacity-50'), 0);
+            });
+            fila.addEventListener('dragend', () => {
+                fila.classList.remove('opacity-50');
+                draggedEl = null;
+                // Recalcula el arreglo real a partir del orden final en el DOM
+                // y vuelve a renderizar para que los "#n" queden correctos.
+                const nuevoOrden = [...cont.querySelectorAll('.borrador-item')]
+                    .map(el => this._borradorProgramacion[parseInt(el.dataset.idx, 10)]);
+                this._borradorProgramacion = nuevoOrden;
+                this._renderBorradorProgramacion();
+            });
+        });
+
+        cont.addEventListener('dragover', (e) => {
+            if (!draggedEl) return;
+            e.preventDefault();
+            // _elementoDespuesDe busca .prog-card[draggable="true"]; el
+            // borrador usa otra clase, así que se resuelve inline aquí.
+            const candidatos = [...cont.querySelectorAll('.borrador-item:not(.opacity-50)')];
+            const target = candidatos.reduce((masCercano, el) => {
+                const box = el.getBoundingClientRect();
+                const offset = e.clientY - box.top - box.height / 2;
+                if (offset < 0 && offset > masCercano.offset) return { offset, element: el };
+                return masCercano;
+            }, { offset: -Infinity, element: null }).element;
+            if (target == null) cont.appendChild(draggedEl);
+            else cont.insertBefore(draggedEl, target);
+        });
     },
 
     _quitarItemBorradorProgramacion: function (idx) {
@@ -3925,45 +4145,34 @@ const ModuloPulido = {
     },
 
     guardarProgramacion: async function () {
-        const operaria = document.getElementById('programacion-operaria-select')?.value;
         const fecha = document.getElementById('programacion-fecha-input')?.value;
 
-        if (!operaria) {
-            Swal.fire('Falta la operaria', 'Selecciona a quién se le asigna la cola.', 'warning');
-            return;
-        }
         if (!this._borradorProgramacion.length) {
             Swal.fire('Cola vacía', 'Agrega al menos una tarea antes de guardar.', 'warning');
             return;
         }
-
-        // El orden final se calcula justo aquí, a partir de la posición de
-        // cada item en la lista que se fue armando -- lo único que la jefa
-        // de planta controló fue en qué orden las agregó.
-        const base = this._siguienteOrdenBorrador || 1;
-        const items = this._borradorProgramacion.map((item, i) => ({ ...item, orden_prioridad: base + i }));
 
         mostrarLoading(true, 'Guardando programación...');
         try {
             const res = await fetch('/api/pulido/programacion', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ operaria, fecha, items })
+                body: JSON.stringify({ fecha, items: this._borradorProgramacion })
             });
             const data = await res.json();
 
             if (data.success) {
                 const advertencias = data.data?.advertencias || [];
+                const operariasAfectadas = [...new Set(this._borradorProgramacion.map(i => i.operaria))];
                 this._borradorProgramacion = [];
                 this._renderBorradorProgramacion();
                 await this.cargarPanelProgramacion();
-                this._recalcularSiguienteOrdenProgramacion();
 
                 Swal.fire({
                     title: 'Programación guardada',
                     html: advertencias.length
                         ? `Se guardó, pero revisa:<br><small>${advertencias.join('<br>')}</small>`
-                        : `Cola asignada a ${operaria}.`,
+                        : `Cola asignada a ${operariasAfectadas.join(', ')}.`,
                     icon: advertencias.length ? 'warning' : 'success'
                 });
             } else {

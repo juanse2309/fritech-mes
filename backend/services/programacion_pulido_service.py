@@ -121,9 +121,15 @@ class ProgramacionPulidoService:
     # CREACIÓN DE LA COLA
     # ------------------------------------------------------------------
     @staticmethod
-    def crear_items(fecha_str, operaria, items, responsable_planta) -> dict:
+    def crear_items(fecha_str, items, responsable_planta) -> dict:
         """
-        items: [{orden_produccion, codigo, cantidad_objetivo, orden_prioridad, observaciones}]
+        items: [{operaria, orden_produccion, codigo, cantidad_objetivo, lote, observaciones}]
+
+        Cada tarea trae su PROPIA operaria (pedido del usuario 2026-09-04:
+        repartir la cola de hoy entre varias personas en un solo guardado,
+        no una operaria por POST como antes). orden_prioridad NO llega del
+        frontend: se calcula aquí, continuando la cola existente de cada
+        operaria, en el orden en que sus tareas aparecen dentro de `items`.
 
         La validación de saldo es BLANDA a propósito (advertencia, no
         bloqueo): el ADMIN es quien decide con la info completa si de
@@ -131,12 +137,28 @@ class ProgramacionPulidoService:
         está mal) -- el bloqueo DURO real sigue viviendo donde ya vivía,
         en PulidoService.validar_saldo_op al momento de reportar.
         """
-        if not operaria or not str(operaria).strip():
-            raise ValueError('Falta indicar la operaria a la que se le asigna la programación')
         if not items:
             raise ValueError('No se enviaron tareas para programar')
 
         fecha_obj = _parsear_fecha(fecha_str)
+
+        operarias_en_items = {str(it.get('operaria') or '').strip() for it in items}
+        operarias_en_items.discard('')
+        if not operarias_en_items:
+            raise ValueError('Falta indicar la operaria en al menos una tarea')
+
+        # Próximo orden_prioridad libre por operaria, calculado UNA vez por
+        # cada una (no una sola base global): así el mismo guardado puede
+        # repartir tareas entre varias personas sin pisar el orden de nadie.
+        siguiente_orden = {}
+        for operaria in operarias_en_items:
+            maximo = db.session.query(
+                db.func.max(ProgramacionPulido.orden_prioridad)
+            ).filter(
+                ProgramacionPulido.operaria == operaria,
+                ProgramacionPulido.fecha == fecha_obj,
+            ).scalar()
+            siguiente_orden[operaria] = int(maximo or 0) + 1
 
         saldo_map = {
             (str(f['orden_produccion'] or '').strip(), _normalizar_referencia(f['referencia'])): f['disponible']
@@ -147,10 +169,11 @@ class ProgramacionPulidoService:
         advertencias = []
         try:
             for item in items:
+                operaria = str(item.get('operaria') or '').strip()
                 op = str(item.get('orden_produccion') or '').strip()
                 codigo = str(item.get('codigo') or '').strip()
                 cantidad = float(item.get('cantidad_objetivo') or 0)
-                if not op or not codigo or cantidad <= 0:
+                if not operaria or not op or not codigo or cantidad <= 0:
                     continue
 
                 key = (op, _normalizar_referencia(codigo))
@@ -173,11 +196,12 @@ class ProgramacionPulidoService:
                     lote=(item.get('lote') or '').strip() or None,
                     cantidad_objetivo=cantidad,
                     operaria=operaria,
-                    orden_prioridad=int(item.get('orden_prioridad') or 1),
+                    orden_prioridad=siguiente_orden[operaria],
                     estado='PROGRAMADO',
                     responsable_planta=responsable_planta,
                     observaciones=(item.get('observaciones') or '').strip() or None,
                 )
+                siguiente_orden[operaria] += 1
                 db.session.add(nuevo)
                 db.session.flush()
                 creados.append(nuevo.id)
@@ -188,6 +212,51 @@ class ProgramacionPulidoService:
             db.session.rollback()
             if not isinstance(e, ValueError):
                 logger.error(f"Error en ProgramacionPulidoService.crear_items: {e}")
+            raise
+
+    @staticmethod
+    def reordenar_cola(operaria, ids_en_orden) -> dict:
+        """
+        Fija orden_prioridad = 1..N para las tareas PROGRAMADO de `operaria`
+        según el orden exacto de `ids_en_orden` (arrastrar y soltar en el
+        tablero del ADMIN). Ids que no existan, no sean de esa operaria o ya
+        no estén en PROGRAMADO simplemente se ignoran -- una tarjeta
+        bloqueada no debería llegar aquí desde el frontend, pero se
+        revalida por si el estado cambió justo entre que se cargó el panel
+        y se soltó la tarjeta (ver ProgramacionPulidoBloqueadaError).
+        """
+        if not operaria or not ids_en_orden:
+            return {'actualizados': 0}
+        try:
+            ids_int = []
+            for i in ids_en_orden:
+                try:
+                    ids_int.append(int(i))
+                except (TypeError, ValueError):
+                    continue
+
+            items = db.session.query(ProgramacionPulido).filter(
+                ProgramacionPulido.operaria == operaria,
+                ProgramacionPulido.estado == 'PROGRAMADO',
+                ProgramacionPulido.id.in_(ids_int)
+            ).all()
+            por_id = {i.id: i for i in items}
+
+            orden = 1
+            actualizados = 0
+            for id_ in ids_int:
+                item = por_id.get(id_)
+                if not item:
+                    continue
+                item.orden_prioridad = orden
+                orden += 1
+                actualizados += 1
+
+            db.session.commit()
+            return {'actualizados': actualizados}
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error en ProgramacionPulidoService.reordenar_cola: {e}")
             raise
 
     # ------------------------------------------------------------------

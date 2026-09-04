@@ -35,12 +35,12 @@ def obtener_saldo_programacion():
 @programacion_pulido_bp.route('/api/pulido/programacion', methods=['POST'])
 @require_role(ROL_ADMINS)
 def crear_programacion_pulido():
-    """Agrega una o varias tareas a la cola de una operaria para una fecha."""
+    """Agrega una o varias tareas a la cola del día. Cada tarea trae su
+    propia 'operaria' -- un mismo guardado puede repartir entre varias."""
     data = request.get_json() or {}
     try:
         resultado = ProgramacionPulidoService.crear_items(
             fecha_str=data.get('fecha'),
-            operaria=data.get('operaria'),
             items=data.get('items', []),
             responsable_planta=session.get('user', 'ADMIN'),
         )
@@ -49,6 +49,23 @@ def crear_programacion_pulido():
         return api_error(str(e), status_code=400)
     except Exception as e:
         logger.error(f"❌ Error creando programación de Pulido: {e}")
+        return api_error(str(e), status_code=500)
+
+
+@programacion_pulido_bp.route('/api/pulido/programacion/reordenar', methods=['PUT'])
+@require_role(ROL_ADMINS)
+def reordenar_programacion_pulido():
+    """Fija el orden exacto (arrastrar y soltar en el tablero) de la cola
+    PROGRAMADO de una operaria."""
+    data = request.get_json() or {}
+    try:
+        resultado = ProgramacionPulidoService.reordenar_cola(
+            operaria=data.get('operaria'),
+            ids_en_orden=data.get('ids', []),
+        )
+        return api_success(data=resultado)
+    except Exception as e:
+        logger.error(f"❌ Error reordenando programación de Pulido: {e}")
         return api_error(str(e), status_code=500)
 
 

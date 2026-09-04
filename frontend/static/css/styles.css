@@ -5103,3 +5103,61 @@ body:not(.logged-in) [id^="toggle-sidebar"] {
     text-transform: uppercase;
     letter-spacing: 0.4px;
 }
+
+/* ===== PROGRAMACIÓN DE PULIDO: chips de operaria en "Asignar tarea" ===== */
+/* Checkbox real oculto -- el chip (label) es lo que se ve y se clickea. */
+.operaria-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 999px;
+    border: 1px solid #e2e8f0;
+    background: #f8fafc;
+    color: #475569;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.operaria-chip:hover {
+    border-color: #cbd5e1;
+    background: #f1f5f9;
+}
+.operaria-chip input {
+    display: none;
+}
+.operaria-chip.chip-activa {
+    background: #eff6ff;
+    border-color: #3b82f6;
+    color: #1d4ed8;
+    font-weight: 700;
+    box-shadow: 0 1px 3px rgba(59, 130, 246, 0.25);
+}
+.operaria-chip .chip-check {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 1.5px solid #cbd5e1;
+    font-size: 0.55rem;
+    color: transparent;
+    flex-shrink: 0;
+}
+.operaria-chip.chip-activa .chip-check {
+    background: #3b82f6;
+    border-color: #3b82f6;
+    color: #fff;
+}
+
+/* ===== PROGRAMACIÓN DE PULIDO: tarjetas del tablero de la cola ===== */
+.prog-card {
+    transition: box-shadow 0.15s, transform 0.1s;
+}
+.prog-card[draggable="true"]:hover {
+    box-shadow: 0 3px 10px rgba(15, 23, 42, 0.1);
+    transform: translateY(-1px);
+}
