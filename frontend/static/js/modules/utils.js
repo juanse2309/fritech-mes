@@ -607,3 +607,72 @@ function aplicarFallbackImagenes(root) {
 // Exponer al scope global para uso explícito en otros módulos
 window.validarImagen = validarImagen;
 window.aplicarFallbackImagenes = aplicarFallbackImagenes;
+
+/**
+ * Convierte 'dd/mm HH:MM' (formato de PulidoService._fmt_hora) en un entero
+ * ordenable cronológicamente dentro del mismo año. null si no matchea.
+ */
+function parseHoraCorta(str) {
+    const m = /^(\d{2})\/(\d{2})\s+(\d{2}):(\d{2})$/.exec(str || '');
+    if (!m) return null;
+    const [, dd, mm, HH, MM] = m.map(Number);
+    return ((mm * 31 + dd) * 24 + HH) * 60 + MM;
+}
+window.parseHoraCorta = parseHoraCorta;
+
+/**
+ * Vuelve ordenable por columnas cualquier tabla: cada <th data-sort-key="x">
+ * se vuelve clicable y reordena las filas de su <tbody> según el atributo
+ * data-sort-x de cada <tr> (numérico si es parseable, alfabético si no).
+ * Alterna asc/desc en el mismo click y marca la columna activa con una
+ * flechita. Reutilizable en cualquier tabla de la app -- no depende de cómo
+ * se generó el HTML de la tabla, solo de esos atributos data-*.
+ */
+function hacerTablaOrdenable(tabla) {
+    if (!tabla || tabla.dataset.ordenableInit === 'true') return;
+    tabla.dataset.ordenableInit = 'true';
+
+    const encabezados = Array.from(tabla.querySelectorAll('thead th[data-sort-key]'));
+    encabezados.forEach(th => {
+        th.style.cursor = 'pointer';
+        th.style.userSelect = 'none';
+        if (!th.querySelector('.sort-arrow')) {
+            th.insertAdjacentHTML('beforeend', ' <span class="sort-arrow" style="opacity:.35;font-size:.7em;display:inline-block;width:.9em;"></span>');
+        }
+        th.addEventListener('click', () => {
+            const key = th.getAttribute('data-sort-key');
+            const dirNueva = th.getAttribute('data-sort-dir') === 'asc' ? 'desc' : 'asc';
+
+            encabezados.forEach(h => {
+                h.removeAttribute('data-sort-dir');
+                const arrow = h.querySelector('.sort-arrow');
+                if (arrow) { arrow.textContent = ''; arrow.style.opacity = '.35'; }
+            });
+            th.setAttribute('data-sort-dir', dirNueva);
+            const arrow = th.querySelector('.sort-arrow');
+            if (arrow) { arrow.textContent = dirNueva === 'asc' ? '▲' : '▼'; arrow.style.opacity = '1'; }
+
+            const tbody = tabla.querySelector('tbody');
+            if (!tbody) return;
+            const attr = `data-sort-${key}`;
+            const filas = Array.from(tbody.querySelectorAll('tr'));
+            filas.sort((a, b) => {
+                const va = a.getAttribute(attr);
+                const vb = b.getAttribute(attr);
+                const aVacio = va === null || va === '';
+                const bVacio = vb === null || vb === '';
+                // Filas sin dato en esta columna siempre al final, sea cual sea la dirección.
+                if (aVacio && bVacio) return 0;
+                if (aVacio) return 1;
+                if (bVacio) return -1;
+                const na = Number(va), nb = Number(vb);
+                const cmp = (!Number.isNaN(na) && !Number.isNaN(nb))
+                    ? na - nb
+                    : String(va).localeCompare(String(vb), 'es', { numeric: true, sensitivity: 'base' });
+                return dirNueva === 'asc' ? cmp : -cmp;
+            });
+            filas.forEach(fila => tbody.appendChild(fila));
+        });
+    });
+}
+window.hacerTablaOrdenable = hacerTablaOrdenable;

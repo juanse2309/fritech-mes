@@ -1782,6 +1782,13 @@ window.ModuloDashboard = (function () {
         return `hsl(${Math.round((idx * 137.508) % 360)}, 62%, 55%)`;
     }
 
+    // Sin dato o formato inesperado -> Infinity, para que esa referencia
+    // caiga al final del criterio de hora y decida el desempate por volumen.
+    function horaInicioKey(str) {
+        const key = parseHoraCorta(str);
+        return key === null ? Infinity : key;
+    }
+
     // Tope de referencias con color propio cuando el rango filtrado es largo
     // (ej. un mes); el resto se agrupa en "Otras referencias" para que la
     // leyenda siga siendo legible. Pedido del usuario 2026-09-01: en rangos
@@ -1841,15 +1848,31 @@ window.ModuloDashboard = (function () {
 
         const labels = ops.map(o => o.nombre);
 
-        // Referencias ordenadas por volumen total entre las operarias visibles
+        // Referencias ordenadas por el orden REAL en que se van reportando
+        // (pedido del usuario 2026-09-04): la primera referencia que empieza a
+        // pulirse va primero en la barra apilada (más "atrás"/a la base), y
+        // la siguiente que se reporta va como siguiente tramo/color -- no por
+        // volumen. 'hora_inicio' ya viene por operaria+referencia en formato
+        // 'dd/mm HH:MM' (hora Colombia); se toma la más temprana entre todas
+        // las operarias visibles para cada referencia.
         const totalPorRef = {};
+        const primeraHoraPorRef = {};
         ops.forEach(o => {
             const refs = opRef[o.nombre] || {};
             Object.keys(refs).forEach(r => {
                 totalPorRef[r] = (totalPorRef[r] || 0) + (refs[r].cantidad_total || 0);
+                const key = horaInicioKey(refs[r].hora_inicio);
+                if (primeraHoraPorRef[r] === undefined || key < primeraHoraPorRef[r]) {
+                    primeraHoraPorRef[r] = key;
+                }
             });
         });
-        const refsOrdenadas = Object.keys(totalPorRef).sort((a, b) => totalPorRef[b] - totalPorRef[a]);
+        const refsOrdenadas = Object.keys(totalPorRef).sort((a, b) => {
+            const diff = primeraHoraPorRef[a] - primeraHoraPorRef[b];
+            // Sin dato de hora en ninguna de las dos: cae al orden por volumen
+            // (comportamiento anterior) en vez de quedar en orden arbitrario.
+            return diff !== 0 ? diff : (totalPorRef[b] - totalPorRef[a]);
+        });
         const limiteRefs = limiteReferenciasMix();
         const refsTop = refsOrdenadas.slice(0, limiteRefs);
         const refsResto = refsOrdenadas.slice(limiteRefs);
@@ -2292,15 +2315,26 @@ window.ModuloDashboard = (function () {
             container.classList.add('d-flex', 'flex-column');
         }
 
-        const chartPulido = document.getElementById('dashboard-section-pulido-leaderboard');
+        // 'dashboard-section-pulido-leaderboard' NUNCA existió en index.html (el id
+        // real es '-kpis'), así que ese lookup siempre daba null. Pero el problema
+        // real es más de fondo: dashboard-section-pulido-kpis/-mix/-table NO son
+        // hijos directos de este `container` (verificado en vivo con el DOM real)
+        // -- viven más abajo en el HTML, fuera de él, como hermanos de todo el
+        // bloque .container-fluid dentro de #dashboard-page. `style.order` SOLO
+        // reordena hermanos dentro del MISMO padre flex, así que asignárselo a
+        // estos 3 nunca los movía arriba de verdad -- por eso una operaria de
+        // Pulido veía un salto en blanco (todo lo de arriba oculto por rol) y
+        // tenía que scrollear hasta donde de verdad viven estas 3 secciones.
+        // Se mueven los NODOS de verdad con insertBefore (funciona sin importar
+        // el padre original), en su orden de lectura natural.
+        const rankingPulido = document.getElementById('dashboard-section-pulido-kpis');
+        const mixPulido = document.getElementById('dashboard-section-pulido-mix');
         const tablaPulido = document.getElementById('dashboard-section-pulido-table');
 
-        if (rolUsuario.includes('PULIDO')) {
-            if (chartPulido) chartPulido.style.order = '-2';
-            if (tablaPulido) tablaPulido.style.order = '-1';
-        } else {
-            if (chartPulido) chartPulido.style.order = '';
-            if (tablaPulido) tablaPulido.style.order = '';
+        if (rolUsuario.includes('PULIDO') && container) {
+            [tablaPulido, mixPulido, rankingPulido].forEach(el => {
+                if (el) container.insertBefore(el, container.firstChild);
+            });
         }
 
         const secciones = document.querySelectorAll('[data-role-access]');
@@ -2402,9 +2436,18 @@ window.ModuloDashboard = (function () {
         const cont = document.getElementById('dashboard-indice-rapido');
         if (!cont) return;
 
+        // offsetParent (no getComputedStyle) a propósito: varias de estas secciones
+        // (Comparativo Anual, Rendimiento Mensual, Top Productos...) NO tienen su
+        // propio data-role-access -- viven ANIDADAS dentro de un contenedor padre
+        // (ej. dashboard-section-jefatura) que es el que de verdad se oculta por
+        // rol. getComputedStyle(el).display devuelve el display propio del
+        // elemento, sin importar si un ANCESTRO está en display:none -- por eso
+        // esos pills aparecían igual para roles que no debían verlos (ej. Pulido).
+        // offsetParent es null tanto si el elemento como si cualquier ancestro
+        // está oculto, así que sí refleja la visibilidad real en pantalla.
         const disponibles = SECCIONES_DASHBOARD_NAV.filter(s => {
             const el = document.getElementById(s.id);
-            return el && getComputedStyle(el).display !== 'none';
+            return el && el.offsetParent !== null;
         });
 
         if (disponibles.length === 0) {
@@ -2704,10 +2747,21 @@ window.ModuloDashboard = (function () {
                     return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
                 };
 
+                // Solo la hora en la celda (la fecha de PulidoService._fmt_hora
+                // sigue viva en el título/tooltip y en la clave de orden, por si
+                // el rango filtrado cruza más de un día) -- pedido del usuario
+                // 2026-09-04.
+                const soloHora = (str) => {
+                    const m = /^\d{2}\/\d{2}\s+(\d{2}:\d{2})$/.exec(str || '');
+                    return m ? m[1] : (str || '—');
+                };
+
                 const filasHtml = arr.map(item => {
+                    const iniKey = parseHoraCorta(item.ini);
+                    const finKey = parseHoraCorta(item.fin);
                     const celdasTiempo = conTiempos ? `
-                            <td class="text-nowrap text-muted">${item.ini || '—'}</td>
-                            <td class="text-nowrap text-muted">${item.fin || '—'}</td>
+                            <td class="text-nowrap text-muted" title="${item.ini || ''}">${soloHora(item.ini)}</td>
+                            <td class="text-nowrap text-muted" title="${item.fin || ''}">${soloHora(item.fin)}</td>
                             <td class="text-nowrap">${fmtDuracion(item.min)}</td>
                             <td class="text-nowrap fw-bold ${item.spz === null || item.spz === undefined ? 'text-muted' : 'text-primary'}" style="font-family: 'JetBrains Mono', monospace;">
                                 ${item.spz === null || item.spz === undefined ? '—' : `${Number(item.spz).toFixed(1)} seg/pz`}
@@ -2716,8 +2770,15 @@ window.ModuloDashboard = (function () {
                     const badgeLotes = (conTiempos && (item.lotes || 0) > 1)
                         ? `<span class="badge bg-light text-secondary border ms-1" title="Suma de ${item.lotes} reportes: la hora de inicio es la del primero y la de fin la del último.">${item.lotes} lotes</span>`
                         : '';
+                    // Los data-sort-* van en el <tr> (no en cada <td>): es la fila
+                    // la que lee hacerTablaOrdenable al comparar -- ponerlos en
+                    // la celda hacía que TODAS las filas "empataran" siempre y
+                    // el clic en el encabezado no reordenara nada.
                     return `
-                        <tr class="modal-ref-item" data-search="${String(item.ref || '').toLowerCase()}">
+                        <tr class="modal-ref-item" data-search="${String(item.ref || '').toLowerCase()}"
+                            data-sort-ref="${String(item.ref || '').toLowerCase()}" data-sort-cantidad="${item.cantidad || 0}"
+                            data-sort-ini="${iniKey ?? ''}" data-sort-fin="${finKey ?? ''}"
+                            data-sort-min="${item.min || 0}" data-sort-spz="${item.spz === null || item.spz === undefined ? '' : item.spz}">
                             <td class="text-start fw-bold fs-6"><i class="fas fa-cube text-muted me-1"></i> ${item.ref}${badgeLotes}</td>
                             <td><span class="badge bg-light text-dark border fs-6 px-3 py-2">${(item.cantidad || 0).toLocaleString()}</span></td>
                             ${celdasTiempo}
@@ -2726,19 +2787,19 @@ window.ModuloDashboard = (function () {
                 }).join('');
 
                 const encabezadosTiempo = conTiempos ? `
-                                    <th class="text-nowrap">Hora inicio</th>
-                                    <th class="text-nowrap">Hora fin</th>
-                                    <th class="text-nowrap">Tiempo total</th>
-                                    <th class="text-nowrap">Prom. por pieza</th>
+                                    <th class="text-nowrap" data-sort-key="ini">Hora inicio</th>
+                                    <th class="text-nowrap" data-sort-key="fin">Hora fin</th>
+                                    <th class="text-nowrap" data-sort-key="min">Tiempo total</th>
+                                    <th class="text-nowrap" data-sort-key="spz">Prom. por pieza</th>
                 ` : '';
 
                 mixLines = `
                     <div class="table-responsive mt-3">
-                        <table class="table table-hover text-center align-middle" style="font-size: 1rem;">
+                        <table id="modal-tabla-referencias" class="table table-hover text-center align-middle" style="font-size: 1rem;">
                             <thead class="table-light text-secondary">
                                 <tr style="font-size: 0.8rem;">
-                                    <th class="text-start">Referencia</th>
-                                    <th>Cantidad</th>
+                                    <th class="text-start" data-sort-key="ref">Referencia</th>
+                                    <th data-sort-key="cantidad">Cantidad</th>
                                     ${encabezadosTiempo}
                                 </tr>
                             </thead>
@@ -2844,6 +2905,9 @@ window.ModuloDashboard = (function () {
             customClass: { confirmButton: 'btn rounded-pill px-4 shadow-sm' },
             width: window.innerWidth > 1200 ? '75em' : '95%',
             didOpen: () => {
+                const tablaRefs = document.getElementById('modal-tabla-referencias');
+                if (tablaRefs) hacerTablaOrdenable(tablaRefs);
+
                 const searchInput = document.getElementById('modal-search-ref');
                 if (searchInput) {
                     searchInput.addEventListener('input', (e) => {

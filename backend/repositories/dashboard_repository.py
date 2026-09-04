@@ -44,10 +44,16 @@ class DashboardRepository:
     """Repositorio para KPIs, rankings y analítica de Dashboard/Jefatura vía SQL crudo."""
 
     @classmethod
-    def get_dashboard_kpis(cls, desde=None, hasta=None):
+    def get_dashboard_kpis(cls, desde=None, hasta=None, incluir_costeo_scrap=True):
         """
         Calcula KPIs de producción 100% SQL-Native con CAST ROBUSTO.
         Resistente a strings inválidos como '30/12/1899' en columnas TEXT.
+
+        incluir_costeo_scrap=False (pedido del usuario 2026-09-04, vista
+        liviana de Pulido en /api/dashboard/stats): se salta
+        get_perdida_economica_scrap -- costea TODO el detalle de PNC contra
+        db_costos y solo alimenta 'Resumen' y 'Análitica de Scrap y PNC',
+        ninguna de las 2 secciones que una operaria de Pulido puede ver.
         """
         try:
             params = {'desde': desde, 'hasta': hasta}
@@ -117,9 +123,13 @@ class DashboardRepository:
             # --- Pérdida en Dinero ---
             # Costeo por referencia (JOIN a db_costos + agregación fila a fila): no es
             # un escalar simple, se mantiene como llamada propia fuera del consolidado.
-            scrap_resumen = cls.get_perdida_economica_scrap(desde, hasta)
-            perdida_dinero = scrap_resumen.get("total_perdida", 0)
-            scrap_ranking = scrap_resumen.get("ranking_productos", [])
+            if incluir_costeo_scrap:
+                scrap_resumen = cls.get_perdida_economica_scrap(desde, hasta)
+                perdida_dinero = scrap_resumen.get("total_perdida", 0)
+                scrap_ranking = scrap_resumen.get("ranking_productos", [])
+            else:
+                perdida_dinero = 0
+                scrap_ranking = []
 
             # --- Cálculo FPY y % PNC Global ---
             scrap_tot = iny_pnc + pul_pnc + ens_pnc

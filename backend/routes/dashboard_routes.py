@@ -11,13 +11,41 @@ from backend.repositories.producto_repository import producto_repo
 from backend.services.dashboard_service import DashboardService
 from backend.services.pulido_service import PulidoService
 from backend.utils.formatters import parsear_fecha_dashboard
+from backend.utils.time_utils import get_colombia_time
 import logging
 from backend.utils.cache_manager import cached_route
-from backend.utils.auth_middleware import require_role, ROL_ADMINS, ROL_COMERCIALES, ROL_DASHBOARD_OPERATIVO
+from backend.utils.auth_middleware import (
+    require_role, ROL_ADMINS, ROL_COMERCIALES, ROL_DASHBOARD_OPERATIVO,
+    obtener_identidad_segura,
+)
 
 logger = logging.getLogger(__name__)
 
 dashboard_bp = Blueprint('dashboard', __name__)
+
+
+def _es_operaria_pulido(rol):
+    """
+    'PULIDO' puro (operaria de línea) vs 'JEFE PULIDO'/ADMIN/etc, que ya
+    entraban por ROL_DASHBOARD_OPERATIVO y sí ven el dashboard completo.
+    Comparación exacta a propósito -- 'JEFE PULIDO' NO debe caer en el
+    camino liviano, solo la operaria rasa.
+    """
+    return (rol or '').strip().upper() == 'PULIDO'
+
+
+def _stats_cache_key():
+    """
+    Cache key de /api/dashboard/stats: además de ruta+query params (llave
+    por defecto de cached_route), incluye si la respuesta es la versión
+    liviana de Pulido o la completa -- si no, una operaria de Pulido podría
+    recibir de caché la respuesta completa ya calculada para un ADMIN (sin
+    problema) o, peor, un ADMIN podría recibir de caché la versión recortada
+    que se calculó para una operaria de Pulido con los mismos parámetros.
+    """
+    query_params = tuple(sorted(request.args.items()))
+    _, rol = obtener_identidad_segura(request)
+    return (request.path, query_params, 'pulido' if _es_operaria_pulido(rol) else 'full')
 
 
 
@@ -49,37 +77,69 @@ def obtener_dashboard():
         }), 500
 
 @dashboard_bp.route('/stats', methods=['GET'])
-@require_role(ROL_DASHBOARD_OPERATIVO)
-@cached_route(namespace='dashboard', ttl=600)
+@require_role(ROL_DASHBOARD_OPERATIVO + ['PULIDO'])
+@cached_route(namespace='dashboard', ttl=600, key_builder=_stats_cache_key)
 def obtener_metricas_bi():
     """
     Endpoint Unificado para Visión de Científico de Datos.
     Soporta ?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
+
+    Una operaria de Pulido (rol exacto 'PULIDO', ver _es_operaria_pulido) solo
+    puede ver 3 secciones en el frontend (Ranking Pulido / Mix de Producción /
+    Tabla Pulido -- data-role-access="ADMIN,PULIDO" en index.html): antes de
+    este cambio esta ruta le devolvía 403 (ROL_DASHBOARD_OPERATIVO no incluía
+    'PULIDO', solo 'JEFE PULIDO') y el Dashboard le quedaba completamente
+    vacío pese a que el menú ya la dejaba entrar. Ahora se le da acceso, pero
+    se saltan las consultas de Inyección/máquinas/tendencia/stock/insights
+    que ella no ve en pantalla -- pedido explícito del usuario 2026-09-04:
+    "que no se les cargue todo para que no se demore".
     """
     try:
         desde_str = request.args.get('desde')
         hasta_str = request.args.get('hasta')
-        
+
         desde = parsear_fecha_dashboard(desde_str) if desde_str else None
         hasta = parsear_fecha_dashboard(hasta_str) if hasta_str else None
 
+        _, rol_actual = obtener_identidad_segura(request)
+        solo_pulido = _es_operaria_pulido(rol_actual)
+
+        # Sin filtro de fecha (primera carga: los inputs de fecha del
+        # Dashboard arrancan vacíos), TODAS las consultas de abajo barrerían
+        # el histórico completo de db_pulido -- lento para cualquiera, pero
+        # una operaria de Pulido solo necesita ver "cómo van hoy", no el
+        # histórico. Se acota a hoy SOLO en su camino liviano; el default de
+        # Admin (histórico completo) no cambia.
+        if solo_pulido and not desde and not hasta:
+            hoy = get_colombia_time().date()
+            desde = hoy
+            hasta = hoy
+
         # --- RECOPILACIÓN DE DATOS (Separación de responsabilidades) ---
         try:
-            kpis = DashboardRepository.get_dashboard_kpis(desde, hasta)
-            ranking_iny_ops = DashboardRepository.get_ranking_operarios_inyeccion(desde, hasta)
-            ranking_maquinas_raw = DashboardRepository.get_ranking_maquinas(desde, hasta)
+            kpis = DashboardRepository.get_dashboard_kpis(desde, hasta, incluir_costeo_scrap=not solo_pulido)
 
-            maquinas_con_pct = DashboardService.calcular_porcentajes_maquinas(ranking_maquinas_raw)
+            if solo_pulido:
+                ranking_iny_ops = []
+                maquinas_con_pct = []
+                analytics_inyeccion = {}
+                stock_critico = []
+                tendencia = []
+            else:
+                ranking_iny_ops = DashboardRepository.get_ranking_operarios_inyeccion(desde, hasta)
+                ranking_maquinas_raw = DashboardRepository.get_ranking_maquinas(desde, hasta)
+                maquinas_con_pct = DashboardService.calcular_porcentajes_maquinas(ranking_maquinas_raw)
+                analytics_inyeccion = DashboardRepository.get_analytics_inyeccion(desde, hasta)
+                stock_critico = producto_repo.get_stock_critico_sql()
+                tendencia = DashboardRepository.get_tendencia_produccion_sql(desde, hasta)
 
             # 2. Analítica de Pulido → PulidoService (lógica de negocio aislada)
+            # Se calcula SIEMPRE (también para solo_pulido): es justo lo que
+            # alimenta las 3 secciones que ella sí ve.
             pulido_profundo  = PulidoService.get_ranking_leaderboard(desde, hasta)
             pulido_evolucion = PulidoService.get_evolucion_operarias(desde, hasta)
             analytics_pulido = PulidoService.get_analytics_completo(desde, hasta)
             analytics_pulido["eficiencia_referencia"] = DashboardService.calcular_eficiencia_pulido_por_referencia(desde, hasta)
-            analytics_inyeccion = DashboardRepository.get_analytics_inyeccion(desde, hasta)
-
-            stock_critico = producto_repo.get_stock_critico_sql()
-            tendencia = DashboardRepository.get_tendencia_produccion_sql(desde, hasta)
         except Exception as db_err:
             rollback_seguro()
             logger.error(f"❌ Error en consultas SQL de Dashboard BI: {db_err}")
@@ -92,8 +152,10 @@ def obtener_metricas_bi():
             kpis.get('inyeccion_ok', 0), kpis.get('pedidos_solicitados', 0)
         )
 
-        # IA INSIGHTS (Reporte Avanzado del Bot de Planta)
-        insights = DashboardService.generar_insights_bot_planta(
+        # IA INSIGHTS (Reporte Avanzado del Bot de Planta): alimenta el panel
+        # de Resumen/KPIs que solo_pulido no ve -- se omite en su camino
+        # liviano en vez de generarlo con listas vacías de Inyección/stock.
+        insights = [] if solo_pulido else DashboardService.generar_insights_bot_planta(
             kpis=kpis,
             stock_critico=stock_critico,
             pulido_profundo=pulido_profundo,
