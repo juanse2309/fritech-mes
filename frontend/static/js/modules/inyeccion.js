@@ -582,6 +582,11 @@ const ModuloInyeccion = {
 
                 // Payload unificado de validación. No lleva identidad del
                 // validador: la firma la resuelve el backend desde el JWT.
+                // Incluye Contador/Cav./Buenas editados en esta pantalla --
+                // antes solo viajaba el PNC y el backend recalculaba todo
+                // desde el registro original, así que cualquier corrección
+                // hecha aquí (necesaria para que lo exportado a WO cuadre)
+                // se perdía en silencio.
                 const payload = {
                     items: this.items.map(i => ({
                         codigo: i.codigo_producto,
@@ -589,7 +594,12 @@ const ModuloInyeccion = {
                         pnc_pulido: i.pnc_pulido || 0,
                         operaria_pulido: i.operaria_pulido || '',
                         pnc_list: i.pnc_list || [],
-                        pnc_pulido_list: i.pnc_pulido_list || []
+                        pnc_pulido_list: i.pnc_pulido_list || [],
+                        disparos: i.disparos || 0,
+                        no_cavidades: i.no_cavidades || 1,
+                        buenas: (i.piezasBuenas !== undefined && i.piezasBuenas !== null)
+                            ? i.piezasBuenas
+                            : (i.manual_buenas != null ? i.manual_buenas : 0)
                     }))
                 };
 

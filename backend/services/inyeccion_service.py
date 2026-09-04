@@ -817,7 +817,7 @@ class InyeccionService:
         ValidadorRequeridoException u OwnershipMismatchException — el
         controlador las traduce a HTTP.
         """
-        from backend.utils.formatters import normalizar_codigo_sin_prefijo, to_float
+        from backend.utils.formatters import normalizar_codigo_sin_prefijo, to_float, to_int
         from backend.services.bom_service import calcular_descuentos_ensamble
         from backend.services.stock_service import StockService
 
@@ -859,12 +859,28 @@ class InyeccionService:
                     continue
 
                 codigo = normalizar_codigo_sin_prefijo(reg.id_codigo)
-                cantidad_inyectada = reg.cantidad_real or 0
                 item_payload = items_dict.get(codigo, {})
 
                 # Sobreescritura oficial desde el Payload de Validación
                 pnc_inyeccion = float(item_payload.get('pnc_inyeccion', 0) or 0)
                 pnc_pulido = to_float(item_payload.get('pnc_pulido') or 0)
+
+                # Buenas/Contador/Cav. editados en la pantalla de Validación:
+                # si el payload los trae, son la fuente de verdad para lo que
+                # se descuenta de materia prima, se acredita a por_pulir y
+                # queda auditado en `cantidad_real` (de ahí sale WO). Sin
+                # payload (llamador viejo) se cae al registro original, tal
+                # como se comportaba antes.
+                buenas_payload = item_payload.get('buenas', None)
+                if buenas_payload is not None:
+                    buenas_neta = max(0.0, to_float(buenas_payload))
+                    cantidad_inyectada = buenas_neta + pnc_inyeccion
+                else:
+                    cantidad_inyectada = reg.cantidad_real or 0
+                    buenas_neta = max(0.0, cantidad_inyectada - pnc_inyeccion)
+
+                disparos_payload = item_payload.get('disparos', None)
+                cavidades_payload = item_payload.get('no_cavidades', None)
                 # Desglose estructurado que el frontend YA envía por item.
                 pnc_list_item = item_payload.get('pnc_list', [])
                 pnc_pulido_list_item = item_payload.get('pnc_pulido_list', [])
@@ -976,6 +992,17 @@ class InyeccionService:
                 reg.estado = 'CERRADO'
                 reg.fecha_fin = datetime.now()
                 reg.pnc_total = pnc_inyeccion
+                # `cantidad_real` queda con la neta (buenas) auditada en esta
+                # validación -- antes se dejaba el bruto original del reporte
+                # de máquina sin tocar, y WoExportService._lineas_inyeccion
+                # sale de esta misma columna para el 'buenas' que sube a WO.
+                reg.cantidad_real = buenas_neta
+                if disparos_payload is not None:
+                    reg.cant_contador = to_int(disparos_payload)
+                if cavidades_payload is not None:
+                    reg.cavidades = to_int(cavidades_payload)
+                if disparos_payload is not None or cavidades_payload is not None:
+                    reg.produccion_teorica = to_float(reg.cant_contador) * to_float(reg.cavidades or 1)
 
                 items_resultado.append({
                     'codigo':             codigo,

@@ -115,12 +115,21 @@ class WoExportService:
         están auditados contra PNC, así que exportarlos mandaría cifras
         provisionales a WO como si fueran definitivas.
 
+        `bruto` = cant_contador: lo que marcó la máquina (Contador, editable
+        en Validación), va en 'Detalle:Cantidad'. `buenas` = cantidad_real:
+        la cantidad neta ya auditada en Validación, va en 'Detalle:Cantidad
+        Recibida'. Antes 'Detalle:Cantidad' se reconstruía como buenas+pnc,
+        que colapsaba contra Cantidad Recibida en cualquier lote sin PNC
+        reportado aunque Contador y Buenas fueran distintos -- confirmado en
+        vivo el 2026-09-04 con las OP del 1-sep.
+
         peso_lote se arrastra para calcular el reparto de costo -- ver
         _asignar_porcentajes.
         """
         filas = db.session.query(
             ProduccionInyeccion.id_codigo,
             func.sum(ProduccionInyeccion.cantidad_real).label('buenas'),
+            func.sum(func.coalesce(ProduccionInyeccion.cant_contador, 0)).label('bruto'),
             func.sum(func.coalesce(ProduccionInyeccion.pnc_total, 0)).label('pnc'),
             func.sum(func.coalesce(ProduccionInyeccion.peso_lote, 0)).label('peso'),
         ).filter(
@@ -131,6 +140,7 @@ class WoExportService:
         return [{
             'codigo': f.id_codigo,
             'buenas': float(f.buenas or 0),
+            'bruto': float(f.bruto or 0),
             'pnc': float(f.pnc or 0),
             'peso': float(f.peso or 0),
         } for f in filas]
@@ -160,6 +170,7 @@ class WoExportService:
         return [{
             'codigo': f.id_codigo,
             'buenas': float(f.realizado or 0),
+            'bruto': float(f.realizado or 0),
             'pnc': 0.0,
             'peso': 0.0,
         } for f in filas if float(f.realizado or 0) > 0]
@@ -176,6 +187,7 @@ class WoExportService:
         return [{
             'codigo': f.id_codigo,
             'buenas': float(f.cant or 0),
+            'bruto': float(f.cant or 0),
             'pnc': 0.0,
             'peso': 0.0,
         } for f in filas]
@@ -263,13 +275,13 @@ class WoExportService:
             return
 
         total_peso = sum(l['peso'] for l in lineas)
-        total_cant = sum(l['buenas'] + l['pnc'] for l in lineas)
+        total_cant = sum(l['bruto'] for l in lineas)
 
         if total_peso > 0:
             base = [l['peso'] for l in lineas]
             total = total_peso
         elif total_cant > 0:
-            base = [l['buenas'] + l['pnc'] for l in lineas]
+            base = [l['bruto'] for l in lineas]
             total = total_cant
         else:
             base = [1] * len(lineas)
@@ -334,15 +346,18 @@ class WoExportService:
                     'Encab: Fecha Final': fecha,
                     'Encab: Nota': nota,
                     'Detalle:Producto': linea['codigo_wo'],
-                    # Cantidad = todo lo que se produjo (PNC incluido: el
-                    # material se consumió igual). Cantidad Recibida = lo bueno
-                    # que entra a stock. La diferencia es la merma -- WO no
-                    # necesita el desglose de PNC, le basta con estas dos.
+                    # Cantidad = bruto (Contador en inyección; en ensamble/
+                    # empaque no hay distinción y es igual a Recibida).
+                    # Cantidad Recibida = cantidad_real, lo bueno que entra a
+                    # stock. Decisión 2026-09-04: no se reconstruye desde
+                    # buenas+pnc porque colapsaba las dos columnas en
+                    # cualquier lote sin PNC reportado, aunque Contador y
+                    # Buenas fueran distintos.
                     # int, no float: verificado contra el archivo real de WO
                     # (columnas 31/32 son int puro, ej. 120/118). Una unidad
                     # producida siempre es entera; dejarlo en float escribiría
                     # '500.0' en vez de '500' en el archivo final.
-                    'Detalle:Cantidad': int(round(linea['buenas'] + linea['pnc'])),
+                    'Detalle:Cantidad': int(round(linea['bruto'])),
                     'Detalle:Cantidad Recibida': int(round(linea['buenas'])),
                     'Detalle:Nota': nota,
                     'Detalle:Porcentaje de Distribución': linea['porcentaje'],
