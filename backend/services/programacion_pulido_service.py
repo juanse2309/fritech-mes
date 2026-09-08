@@ -217,13 +217,28 @@ class ProgramacionPulidoService:
     @staticmethod
     def reordenar_cola(operaria, ids_en_orden) -> dict:
         """
-        Fija orden_prioridad = 1..N para las tareas PROGRAMADO de `operaria`
-        según el orden exacto de `ids_en_orden` (arrastrar y soltar en el
-        tablero del ADMIN). Ids que no existan, no sean de esa operaria o ya
-        no estén en PROGRAMADO simplemente se ignoran -- una tarjeta
-        bloqueada no debería llegar aquí desde el frontend, pero se
-        revalida por si el estado cambió justo entre que se cargó el panel
-        y se soltó la tarjeta (ver ProgramacionPulidoBloqueadaError).
+        Fija orden_prioridad = 1..N para TODAS las tarjetas de `operaria` que
+        vienen en `ids_en_orden`, en ese orden exacto -- sin importar el
+        estado. `ids_en_orden` es la columna COMPLETA tal como quedó en
+        pantalla tras soltar (ver _persistirOrdenColumnaTrasDrag en
+        pulido.js: junta TODAS las `.prog-card` del contenedor, bloqueadas
+        incluidas -- no se puede arrastrar una tarjeta FINALIZADO/EN_PROCESO,
+        pero sí puede cambiar de posición relativa cuando el ADMIN suelta una
+        editable antes o después de ella).
+
+        Antes esto solo renumeraba las tarjetas PROGRAMADO, dejando a las
+        bloqueadas con el orden_prioridad viejo intacto. Como ambos grupos
+        comparten el mismo rango de enteros (1, 2, 3...), cada arrastre volvía
+        a repartir 1..N entre las editables y eso CHOCABA con lo que ya
+        tenían las bloqueadas -- con varias tarjetas empatadas en el mismo
+        número, el ORDER BY orden_prioridad, id (ver obtener_cola_admin)
+        desempataba por id, no por lo que el ADMIN acababa de armar, y la
+        columna se veía "desordenada" en tarjetas que nadie tocó. orden_prioridad
+        no se usa en ningún otro lado del sistema (solo para ordenar estas dos
+        listas), así que renumerar la columna entera -- bloqueadas incluidas --
+        es seguro y es lo que de verdad evita el choque.
+
+        Ids que no existan o no sean de esa operaria simplemente se ignoran.
         """
         if not operaria or not ids_en_orden:
             return {'actualizados': 0}
@@ -237,19 +252,16 @@ class ProgramacionPulidoService:
 
             items = db.session.query(ProgramacionPulido).filter(
                 ProgramacionPulido.operaria == operaria,
-                ProgramacionPulido.estado == 'PROGRAMADO',
                 ProgramacionPulido.id.in_(ids_int)
             ).all()
             por_id = {i.id: i for i in items}
 
-            orden = 1
             actualizados = 0
-            for id_ in ids_int:
+            for posicion, id_ in enumerate(ids_int, start=1):
                 item = por_id.get(id_)
                 if not item:
                     continue
-                item.orden_prioridad = orden
-                orden += 1
+                item.orden_prioridad = posicion
                 actualizados += 1
 
             db.session.commit()
