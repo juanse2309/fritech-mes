@@ -1197,13 +1197,14 @@ window.ModuloInventario = {
             antiguedadHoras > this.UMBRAL_ANTIGUEDAD_WO_HORAS;
 
         const confirmResult = await Swal.fire({
-            title: '¿Sincronizar Stock con World Office?',
-            html: 'Esta acción sobrescribirá la columna de Producto Terminado en FriTech con el stock recibido de World Office.' +
+            title: '¿Sincronizar Catálogo con World Office?',
+            html: 'Esta acción crea en FriTech los productos nuevos que existan en World Office y actualiza precio/descripción de los existentes.' +
+                '<br><strong>No modifica las existencias (Por Pulir / Producto Terminado) de productos ya existentes</strong> — el inventario físico se maneja desde la app.' +
                 `<br><br><strong>${this.formatearAntiguedadWO(antiguedadHoras)}</strong>` +
-                (esDesactualizado ? '<br><span style="color:#dc3545">Los datos pueden no coincidir con World Office ahora mismo. Si necesitas el stock actual, pide que corran primero el agente WO.</span>' : ''),
+                (esDesactualizado ? '<br><span style="color:#dc3545">Los datos de catálogo pueden no coincidir con World Office ahora mismo. Si necesitas lo más reciente, pide que corran primero el agente WO.</span>' : ''),
             icon: esDesactualizado ? 'warning' : 'question',
             showCancelButton: true,
-            confirmButtonText: 'Sí, unificar stock',
+            confirmButtonText: 'Sí, sincronizar catálogo',
             cancelButtonText: 'Cancelar',
             confirmButtonColor: '#10b981',
             cancelButtonColor: '#6c757d'
@@ -1235,8 +1236,8 @@ window.ModuloInventario = {
             if (result.success) {
                 await Swal.fire({
                     icon: 'success',
-                    title: '¡Stock Unificado!',
-                    html: `Se actualizaron con éxito ${result.actualizados} productos en el inventario real.` +
+                    title: '¡Catálogo Sincronizado!',
+                    html: `Se procesaron ${result.actualizados} productos (nuevos y/o precio/descripción actualizados). Las existencias no se modificaron.` +
                         `<br><small>${this.formatearAntiguedadWO(result.antiguedad_horas)}</small>`,
                     confirmButtonText: 'Excelente',
                     confirmButtonColor: '#10b981'
@@ -1287,7 +1288,7 @@ async function abrirModalComprometidos(codigo) {
                 <td>${it.fecha || '-'}</td>
                 <td><span class="badge bg-secondary">${it.estado || '-'}</span></td>
                 <td class="text-end">${formatNumber(it.cantidad)}</td>
-                <td class="text-end">${formatNumber(it.cant_alistada)}</td>
+                <td class="text-end">${formatNumber(it.despachado)}</td>
                 <td class="text-end fw-bold text-danger">${formatNumber(it.pendiente)}</td>
             </tr>
         `).join('');
@@ -1301,7 +1302,7 @@ async function abrirModalComprometidos(codigo) {
                         <th>Fecha</th>
                         <th>Estado</th>
                         <th class="text-end">Cant.</th>
-                        <th class="text-end">Alistada</th>
+                        <th class="text-end">Despachado</th>
                         <th class="text-end">Pendiente</th>
                     </tr>
                 </thead>

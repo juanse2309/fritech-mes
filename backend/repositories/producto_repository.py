@@ -231,17 +231,25 @@ class ProductoRepository:
         p_terminado}. Se procesa en sub-lotes de BATCH_SIZE_UPSERT_PRODUCTOS
         dentro de una única transacción atómica.
 
-        Sobre filas EXISTENTES solo se tocan p_terminado/precio/descripcion
-        (nunca id_codigo, imagen, stock_minimo, etc. -- son datos propios del
-        catálogo que WO no gestiona). p_terminado se actualiza siempre porque
-        representa el saldo real de WO; precio/descripcion vacíos en el
+        Sobre filas EXISTENTES solo se tocan precio/descripcion (nunca
+        id_codigo, imagen, stock_minimo, etc. -- son datos propios del
+        catálogo que WO no gestiona). precio/descripcion vacíos en el
         payload NO sobreescriben un valor ya existente (agente_wo.py en modo
         fallback sincroniza productos sin esos datos -- ver
         backend/integration/agente_wo.py).
 
-        Sobre filas NUEVAS se inserta codigo_sistema/id_codigo (igual al
-        código de WO, ya normalizado), descripcion, precio y p_terminado; el
-        resto de columnas toma los defaults del modelo (stock_minimo=10,
+        IMPORTANTE (decisión 2026-09-08): p_terminado del producto EXISTENTE
+        ya NO se toca en el UPDATE. El inventario físico (por_pulir/
+        p_terminado) pasó a manejarse 100% dentro de la app (inyección,
+        pulido, despachos, conteo) -- antes, un "Unificar WO" hecho después
+        de esos movimientos los pisaba en silencio con el saldo viejo de WO.
+        WO sigue siendo la fuente para crear productos nuevos y mantener
+        precio/descripcion al día, pero deja de ser fuente de stock físico.
+
+        Sobre filas NUEVAS (que no existían aún) sí se inserta p_terminado
+        con el saldo de WO como valor inicial -- para un producto que la app
+        todavía no conoce, es la única fuente de stock disponible. El resto
+        de columnas toma los defaults del modelo (stock_minimo=10,
         stock_maximo=100, punto_reorden=20, etc.).
 
         Retorna la cantidad de filas procesadas (insertadas o actualizadas).
@@ -269,7 +277,9 @@ class ProductoRepository:
                 stmt = stmt.on_conflict_do_update(
                     index_elements=['codigo_sistema'],
                     set_={
-                        'p_terminado': stmt.excluded.p_terminado,
+                        # p_terminado NO se incluye aquí a propósito: sobre
+                        # filas existentes el UPSERT deja el stock físico tal
+                        # cual está en la app (ver docstring del método).
                         'precio': func.coalesce(func.nullif(stmt.excluded.precio, 0), Producto.precio),
                         'descripcion': func.coalesce(
                             func.nullif(func.trim(stmt.excluded.descripcion), ''),

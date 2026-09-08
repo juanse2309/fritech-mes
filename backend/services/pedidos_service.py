@@ -5,7 +5,11 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from datetime import datetime
 from backend.models.sql_models import Pedido, DistribucionOpPedidos
-from backend.utils.formatters import preservar_o_normalizar_prefijo
+from backend.utils.formatters import (
+    preservar_o_normalizar_prefijo,
+    normalizar_codigo_sin_prefijo,
+    sql_expr_codigo_sin_prefijo_fr,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +243,21 @@ def reiniciar_pedido_wo(id_pedido_numero, db_session):
 
 ESTADOS_INMUTABLES_PEDIDO = {'DESPACHADO', 'DESPACHADO PARCIAL', 'FACTURADO', 'CERRADO', 'CANCELADO'}
 
+# Estados en los que un pedido/línea ya se considera resuelto para efectos de
+# `comprometido` (documento externo emitido, cerrado o cancelado) -- no
+# cuentan como reserva pendiente contra el stock físico, sin importar si
+# quedó o no una fila en db_despachos_pedido para esa línea. A propósito NO
+# incluye 'DESPACHADO PARCIAL': ese estado sí puede tener saldo genuino
+# pendiente, que se calcula neteando contra su propio despachado (ver
+# PedidosService.obtener_desglose_comprometido). Única fuente de verdad para
+# esta regla -- tanto el total persistido en db_productos.comprometido
+# (recalcular_comprometido) como el drill-down por pedido de
+# /api/productos/comprometidos/<codigo> (productos_routes.py) importan esta
+# constante para no divergir en qué cuenta como "pendiente" (ver hallazgo del
+# backfill 2026-09-08: antes cada lugar tenía su propia lista de estados y su
+# propio cálculo, y mostraban totales distintos para el mismo producto).
+ESTADOS_EXCLUIDOS_COMPROMETIDO = {'CANCELADO', 'DESPACHADO', 'FACTURADO', 'CERRADO', 'EXPORTADO_WO'}
+
 # Estados "sensibles": no bloquean la reasignación de forma permanente (a
 # diferencia de ESTADOS_INMUTABLES_PEDIDO), pero exigen autorización explícita
 # porque ya existe un documento correspondiente en un sistema externo.
@@ -411,6 +430,126 @@ class PedidosService:
     reasignar_cliente_pedido, reiniciar_pedido_wo) se mantienen tal cual para
     no romper a sus callers actuales -- código nuevo se agrega aquí.
     """
+
+    @staticmethod
+    def obtener_desglose_comprometido(codigo, db_session):
+        """
+        Desglose por pedido de lo que compone `comprometido` para un código:
+        para cada línea de db_pedidos que matchea el código y cuyo estado NO
+        está en ESTADOS_EXCLUIDOS_COMPROMETIDO, resta lo ya despachado PARA
+        ESE MISMO id_pedido (nunca el de otro pedido) vía db_despachos_pedido,
+        y se queda con el residuo si es positivo.
+
+        Netear por pedido individual (no a nivel global del código) importa:
+        hallazgo del backfill 2026-09-08 -- hay pedidos históricos en estado
+        'DESPACHADO' (132 filas de FR-9703, 33.323 unidades) con solo 68
+        registros reales en db_despachos_pedido (4.356 unidades), un hueco de
+        datos de cuando ese estado se fijaba por un camino distinto al
+        endpoint /api/pedidos/despacho actual. Restar el despachado total del
+        código contra el pedido total del código mezclaba ese hueco con
+        pedidos genuinamente abiertos y disparaba comprometido muy por
+        encima del stock físico real (ej. 42.308 comprometido vs ~16.000 en
+        p_terminado). Por eso los estados ya resueltos se excluyen por
+        completo pase lo que pase en db_despachos_pedido, y solo los pedidos
+        genuinamente abiertos se netean contra su propio despachado.
+
+        Única fuente de verdad para el desglose -- tanto
+        recalcular_comprometido (persiste el total en db_productos) como el
+        endpoint /api/productos/comprometidos/<codigo> (drill-down del
+        frontend) llaman a esta función, para que la lista que ve el usuario
+        siempre sume exactamente el mismo total que la columna COMPROMETIDO.
+
+        :return: (items, total) -- items es una lista de dicts con id_pedido,
+            cliente, fecha, estado, cantidad, despachado, pendiente,
+            wo_consecutivo, ordenados por fecha ascendente; total es la suma
+            de 'pendiente' (== lo que debe quedar en db_productos.comprometido).
+        """
+        from backend.models.sql_models import DespachoPedido
+        from sqlalchemy import func
+
+        codigo_norm = normalizar_codigo_sin_prefijo(codigo)
+        if not codigo_norm:
+            return [], 0.0
+
+        lineas = db_session.query(Pedido).filter(
+            sql_expr_codigo_sin_prefijo_fr(Pedido.id_codigo) == codigo_norm
+        ).order_by(Pedido.fecha.asc()).all()
+
+        despachos_por_pedido = dict(
+            db_session.query(DespachoPedido.id_pedido, func.sum(DespachoPedido.cantidad_enviada))
+            .filter(sql_expr_codigo_sin_prefijo_fr(DespachoPedido.id_codigo) == codigo_norm)
+            .group_by(DespachoPedido.id_pedido)
+            .all()
+        )
+
+        items = []
+        for p in lineas:
+            estado = str(p.estado or '').strip().upper()
+            if estado in ESTADOS_EXCLUIDOS_COMPROMETIDO:
+                continue
+            cantidad = float(p.cantidad or 0)
+            despachado = float(despachos_por_pedido.get(p.id_pedido, 0) or 0)
+            pendiente = max(0.0, cantidad - despachado)
+            if pendiente <= 0:
+                continue
+            items.append({
+                'id_pedido': p.id_pedido,
+                'cliente': p.cliente,
+                'fecha': p.fecha.strftime('%Y-%m-%d') if p.fecha else '',
+                'estado': p.estado,
+                'cantidad': cantidad,
+                'despachado': despachado,
+                'pendiente': pendiente,
+                'wo_consecutivo': p.wo_consecutivo,
+            })
+
+        total = sum(i['pendiente'] for i in items)
+        return items, total
+
+    @staticmethod
+    def recalcular_comprometido(codigos, db_session):
+        """
+        Recalcula `comprometido` en db_productos para cada código dado,
+        usando obtener_desglose_comprometido como única fuente de verdad
+        (ver su docstring para la regla de negocio completa).
+
+        Se RECALCULA desde el origen en cada llamada, nunca se incrementa/
+        decrementa un delta: sumar/restar en cada endpoint (crear, editar,
+        eliminar línea, despachar) es frágil ante ediciones parciales,
+        eliminaciones por SQL crudo o reintentos -- cualquier bug puntual deja
+        un drift permanente. Recomputar siempre desde Pedido + DespachoPedido
+        es idempotente y se autocorrige solo, igual que StockService debería
+        hacer con el stock físico (ver auditoría de inventario 2026-09-08).
+
+        No hace commit -- mismo contrato que el resto de PedidosService: el
+        caller (route) decide cuándo confirmar/abortar la transacción
+        completa (pedido + comprometido como una sola unidad atómica).
+        """
+        from backend.models.sql_models import Producto
+
+        codigos_validos = {str(c).strip().upper() for c in (codigos or []) if str(c or '').strip()}
+        if not codigos_validos:
+            return
+
+        for codigo in codigos_validos:
+            codigo_norm = normalizar_codigo_sin_prefijo(codigo)
+            if not codigo_norm:
+                continue
+
+            _, pendiente = PedidosService.obtener_desglose_comprometido(codigo, db_session)
+
+            producto = db_session.query(Producto).filter(
+                sql_expr_codigo_sin_prefijo_fr(Producto.codigo_sistema) == codigo_norm
+            ).first()
+            if producto:
+                producto.comprometido = pendiente
+            else:
+                logger.warning(
+                    f"[recalcular_comprometido] Código '{codigo}' referenciado en pedidos "
+                    f"pero no existe en db_productos -- no se pudo fijar comprometido={pendiente}."
+                )
+
+        db_session.flush()
 
     @staticmethod
     def _clean_num(val):

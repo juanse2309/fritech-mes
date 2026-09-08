@@ -71,25 +71,18 @@ def detalle_producto(codigo_sistema):
             # La suma que solicita el usuario: Por Pulir + Terminado
             stock_total_calculado = v_por_pulir + v_p_terminado
             comp = float(p_sql.comprometido or 0)
-            
-            # Cálculo de Backorder (Pedidos Pendientes)
-            from backend.models.sql_models import Pedido
-            pedidos_activos = sql_db.session.query(Pedido).filter(
-                Pedido.id_codigo == p_sql.id_codigo,
-                Pedido.estado.in_(['PENDIENTE', 'ABIERTO', 'Alistamiento', 'ALISTADO'])
-            ).all()
-            total_pendientes = 0
-            for p_obj in pedidos_activos:
-                try:
-                    import re
-                    c_sol_str = re.sub(r'[^0-9.]', '', str(p_obj.cantidad or '0'))
-                    c_sol = float(c_sol_str) if c_sol_str else 0.0
-                    c_ali_str = re.sub(r'[^0-9.]', '', str(p_obj.cant_alistada or '0'))
-                    c_ali = float(c_ali_str) if c_ali_str else 0.0
-                except:
-                    c_sol = 0.0
-                    c_ali = 0.0
-                total_pendientes += max(0.0, c_sol - c_ali)
+
+            # Backorder (Pedidos Pendientes): antes filtraba por
+            # ['PENDIENTE', 'ABIERTO', 'Alistamiento', 'ALISTADO'], una lista
+            # de estados que no existe en los datos reales de producción (los
+            # estados reales son 'LISTO PARA DESPACHO', 'EN ALISTAMIENTO',
+            # 'DESPACHADO PARCIAL', 'EXPORTADO_WO', etc.) -- nunca hacía match
+            # y siempre devolvía 0. Es exactamente lo mismo que ya calcula
+            # PedidosService.obtener_desglose_comprometido (misma regla de
+            # negocio que la columna COMPROMETIDO), así que se reusa en vez
+            # de reimplementar el filtro (2026-09-08).
+            from backend.services.pedidos_service import PedidosService
+            _, total_pendientes = PedidosService.obtener_desglose_comprometido(codigo_sistema, sql_db.session)
             
             res_data = {
                 "id_codigo": p_sql.id_codigo,
@@ -385,56 +378,20 @@ def listar_comprometidos(codigo_sistema):
     para la columna COMPROMETIDO en Productos y Existencias (antes solo
     mostraba el número, sin poder ver qué pedidos lo componen).
 
-    Mismo cálculo de pendiente (cantidad - cant_alistada) que ya usa
-    detalle_producto() más arriba, solo que aquí se expone la lista completa
-    en vez del total agregado -- pero el filtro de "pedido activo" es el de
-    VentasRepository.get_pedidos_pendientes() (exclusión de estados cerrados),
-    no el de detalle_producto(): ese usa una lista fija de estados
-    ('PENDIENTE', 'ABIERTO', 'Alistamiento', 'ALISTADO') que no existen en los
-    datos reales de producción (los estados reales son 'LISTO PARA DESPACHO',
-    'EN ALISTAMIENTO', 'DESPACHO PARCIAL', 'EXPORTADO_WO', etc.) y por eso
-    nunca hace match -- confirmado en vivo 2026-09-02, devolvía 0 pedidos para
-    cualquier producto con comprometido > 0.
+    Delega en PedidosService.obtener_desglose_comprometido, la misma función
+    que usa recalcular_comprometido para fijar db_productos.comprometido --
+    antes este endpoint tenía su propio cálculo (cantidad - cant_alistada,
+    con su propia lista de estados cerrados) que daba un total DISTINTO al
+    que quedaba persistido en la columna COMPROMETIDO de la tabla, confundiendo
+    al usuario (la columna decía un número, el detalle sumaba otro). Ver
+    docstring de obtener_desglose_comprometido para la regla de negocio
+    completa (2026-09-08).
     """
     try:
-        import re
-        from backend.models.sql_models import Pedido
+        from backend.services.pedidos_service import PedidosService
 
-        codigo_raw = str(codigo_sistema).strip().upper()
-        codigo_numerico = re.sub(r'^[A-Z]+-', '', codigo_raw).strip()
+        items, total = PedidosService.obtener_desglose_comprometido(codigo_sistema, sql_db.session)
 
-        ESTADOS_CERRADOS = ['COMPLETADO', 'DESPACHADO', 'ENTREGADO', 'FACTURADO', 'CANCELADO']
-        pedidos = Pedido.query.filter(
-            (Pedido.id_codigo == codigo_raw) | (Pedido.id_codigo == codigo_numerico),
-            Pedido.estado.isnot(None),
-            sql_db.func.upper(Pedido.estado).notin_(ESTADOS_CERRADOS)
-        ).order_by(Pedido.fecha.asc()).all()
-
-        items = []
-        for p in pedidos:
-            try:
-                cant = float(re.sub(r'[^0-9.]', '', str(p.cantidad or '0')) or 0)
-            except (ValueError, TypeError):
-                cant = 0.0
-            try:
-                alistada = float(re.sub(r'[^0-9.]', '', str(p.cant_alistada or '0')) or 0)
-            except (ValueError, TypeError):
-                alistada = 0.0
-            pendiente = max(0.0, cant - alistada)
-            if pendiente <= 0:
-                continue
-            items.append({
-                'id_pedido': p.id_pedido,
-                'cliente': p.cliente,
-                'fecha': p.fecha.strftime('%Y-%m-%d') if p.fecha else '',
-                'estado': p.estado,
-                'cantidad': cant,
-                'cant_alistada': alistada,
-                'pendiente': pendiente,
-                'wo_consecutivo': p.wo_consecutivo
-            })
-
-        total = sum(i['pendiente'] for i in items)
         return jsonify({
             'status': 'success', 'success': True,
             'items': items,

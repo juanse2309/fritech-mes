@@ -462,6 +462,13 @@ class InventarioService:
         preservar_o_normalizar_prefijo en backend/utils/formatters.py y
         [[feedback-prefijos-codigo-producto]]). Códigos que YA traen prefijo
         propio (MT-, CAR-, CB-...) se preservan intactos por la función.
+
+        IMPORTANTE (decisión 2026-09-08): esta función deja de sincronizar
+        stock físico (p_terminado) de productos EXISTENTES -- ver docstring
+        de ProductoRepository.upsert_productos_wo. Solo sigue creando
+        productos nuevos (con el saldo de WO como stock inicial) y
+        manteniendo precio/descripcion al día. El inventario físico real
+        (por_pulir/p_terminado) ahora se maneja 100% desde la app.
         """
         # NOTA: se usa SQL directo (no InventarioWO.query) porque
         # backend/models/sql_models.py tiene una clase InventarioWO duplicada
@@ -527,11 +534,11 @@ class InventarioService:
         PRODUCTOS_V2_CACHE["timestamp"] = 0
         invalidate_cache('productos_listar')
 
-        logger.info(f"📊 [Unificar WO] UPSERT completado. Filas procesadas: {actualizados}")
+        logger.info(f"📊 [Unificar WO] UPSERT completado (catálogo/precio, sin tocar stock existente). Filas procesadas: {actualizados}")
 
         return {
             "success": True,
-            "message": f"Sincronización masiva completada exitosamente. {actualizados} productos procesados.",
+            "message": f"Catálogo sincronizado con World Office: {actualizados} productos procesados (precio/descripción y productos nuevos). El stock de productos existentes no se modificó.",
             "actualizados": actualizados,
             "fecha_sincronizacion": fecha_sincronizacion.isoformat() if fecha_sincronizacion else None,
             "antiguedad_horas": antiguedad_horas

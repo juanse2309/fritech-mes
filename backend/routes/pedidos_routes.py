@@ -173,11 +173,24 @@ def registrar_pedido():
         if not productos:
              return api_error("Debe incluir al menos un producto", status_code=400)
 
+        # Códigos cuyo `comprometido` en db_productos hay que recalcular al
+        # final: se acumulan tanto los del payload (abajo) como los de
+        # cualquier línea que se elimine en la sincronización de abajo --
+        # de lo contrario una línea borrada de un pedido dejaría su reserva
+        # vieja pegada en db_productos.comprometido para siempre.
+        codigos_afectados = set()
+
         # Sincronización de eliminaciones: Si es edición, borrar lo que ya no viene en el payload
         if es_edicion:
             ids_enviados = [p.get('id_sql') for p in productos if p.get('id_sql')]
             if ids_enviados:
                 try:
+                    filas_a_borrar = db.session.execute(
+                        text("SELECT id_codigo FROM db_pedidos WHERE id_pedido = :id_p AND id NOT IN :ids"),
+                        {"id_p": id_pedido_final, "ids": tuple(ids_enviados)}
+                    ).fetchall()
+                    codigos_afectados.update(str(f[0]) for f in filas_a_borrar if f[0])
+
                     db.session.execute(
                         text("DELETE FROM db_pedidos WHERE id_pedido = :id_p AND id NOT IN :ids"),
                         {"id_p": id_pedido_final, "ids": tuple(ids_enviados)}
@@ -212,6 +225,8 @@ def registrar_pedido():
             
             if not codigo or cantidad <= 0:
                 continue
+
+            codigos_afectados.add(codigo)
 
             if precio <= 0:
                 logger.warning(
@@ -286,7 +301,16 @@ def registrar_pedido():
                 db.session.add(nuevo_registro)
             
             items_procesados += 1
-            
+
+        # Recalcula comprometido en db_productos para todo código tocado
+        # (creado, editado o eliminado en este request) ANTES del commit,
+        # para que quede en la misma transacción atómica que el pedido.
+        try:
+            from backend.services.pedidos_service import PedidosService
+            PedidosService.recalcular_comprometido(codigos_afectados, db.session)
+        except Exception as e:
+            logger.warning(f"⚠️ Error recalculando comprometido para {codigos_afectados}: {e}")
+
         # 4. Transacción Final con Commit y Error Handling
         try:
             db.session.commit()
@@ -637,8 +661,14 @@ def eliminar_producto_pedido():
         # operacion='sumar' para este caso (restaurar stock eliminado).
         logger.info(f"Restaurando stock por eliminación de producto {cod} del pedido {id_p}")
         StockService.registrar_entrada(cod, float(item.cantidad or 0), "STOCK_BODEGA")
-        
+
         db.session.delete(item)
+
+        # Libera la reserva de este código: la línea eliminada ya no debe
+        # seguir contando como "pedido pendiente" en comprometido.
+        from backend.services.pedidos_service import PedidosService
+        PedidosService.recalcular_comprometido({cod}, db.session)
+
         db.session.commit()
         return api_success()
     except Exception as e:
@@ -1018,7 +1048,17 @@ def registrar_despacho():
             nuevo_estado = 'DESPACHADO' if todos_despachados else 'DESPACHADO PARCIAL'
             for fila in pedidos_filas:
                 fila.estado = nuevo_estado
-        
+
+        # Lo despachado deja de estar "pendiente por enviar": recalcula
+        # comprometido para cada código despachado en este request, en la
+        # misma transacción que el descuento de stock y el cambio de estado.
+        try:
+            from backend.services.pedidos_service import PedidosService
+            codigos_despachados = {item.get('id_codigo') for item in items if item.get('id_codigo')}
+            PedidosService.recalcular_comprometido(codigos_despachados, db.session)
+        except Exception as e:
+            logger.warning(f"⚠️ Error recalculando comprometido tras despacho de {id_pedido}: {e}")
+
         db.session.commit()
         logger.info(f"🚚 [DESPACHO] Se registraron {despachos_creados} items despachados para el pedido {id_pedido}")
         
