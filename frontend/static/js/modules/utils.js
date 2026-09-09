@@ -676,3 +676,111 @@ function hacerTablaOrdenable(tabla) {
     });
 }
 window.hacerTablaOrdenable = hacerTablaOrdenable;
+
+// ============================================
+// Anuncio por voz del líder de Pulido (cualquier pantalla de la app)
+// ============================================
+/**
+ * Habla el anuncio de cambio de líder reproduciendo un audio generado por
+ * el servidor (ver GET /api/pulido/lider_hoy/audio). Se optó por esto en
+ * vez del Web Speech API nativo del navegador porque los navegadores de
+ * Android TV probados en planta ("Navegador" genérico y TV Bro) no
+ * implementan window.speechSynthesis, aunque sí reproducen audio normal.
+ *
+ * IMPORTANTE: se pone la URL directa en `audio.src` (con el token por
+ * query param, ver auth_middleware._extraer_jwt) en vez de fetch()+blob()
+ * -- confirmado con pruebas reales que `Audio(URL.createObjectURL(blob))`
+ * falla con NotSupportedError en navegadores tipo WebView (TV Bro,
+ * "Navegador" de Android TV), mientras que una URL directa del servidor
+ * sí reproduce sin problema.
+ */
+async function hablarLiderPulido() {
+    return new Promise((resolve) => {
+        try {
+            const token = localStorage.getItem('pwa_token') || '';
+            const audio = new Audio(`/api/pulido/lider_hoy/audio?token=${encodeURIComponent(token)}`);
+            audio.addEventListener('ended', resolve);
+            audio.addEventListener('error', resolve);
+            audio.play().catch(resolve);
+        } catch (e) {
+            resolve();
+        }
+    });
+}
+
+/**
+ * Consulta quién lidera el Mix de Producción de Pulido hoy y anuncia por
+ * voz solo cuando hay un cambio real de líder (no en el primer líder del
+ * día ni si se mantiene el mismo). Dedupe por dispositivo vía localStorage,
+ * independiente del dedupe de push que hace el backend (AppConfig).
+ */
+async function chequearLiderPulido() {
+    try {
+        // apiClient.get adjunta el header Authorization: Bearer <pwa_token>
+        // (ver core/api-client.js) -- un fetch() plano no lo lleva y el
+        // backend responde 401 en silencio (ya nos pasó probando en TV).
+        const { data } = await window.apiClient.get('/pulido/lider_hoy');
+        if (!data || !data.nombre) return;
+
+        const hoy = new Date().toISOString().slice(0, 10);
+        const previo = localStorage.getItem('pulido_lider_hablado') || '';
+        const [fechaPrevia, nombrePrevio] = previo.split('|');
+
+        const esPrimerLiderDelDia = fechaPrevia !== hoy;
+        const huboCambio = !esPrimerLiderDelDia && nombrePrevio !== data.nombre;
+
+        localStorage.setItem('pulido_lider_hablado', `${hoy}|${data.nombre}`);
+
+        if (huboCambio) {
+            hablarLiderPulido();
+        }
+    } catch (e) {
+        // Silencioso: no debe interrumpir la navegación normal de la app
+        // (ej. request antes de login, red caída).
+    }
+}
+
+// WAV silencioso de 10ms (204 bytes) embebido para el truco de desbloqueo:
+// se reproduce SINCRÓNICAMENTE dentro del clic, antes de cualquier await,
+// porque el "user activation" del navegador expira apenas se espera algo
+// async (ej. un fetch de red) -- confirmado en TV y en celular: el audio
+// real llegaba bien (200, tamaño correcto) pero el play() se bloqueaba en
+// silencio por venir después de un `await fetch(...)`.
+const SILENCIO_WAV_DATA_URI = 'data:audio/wav;base64,UklGRsQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+
+/**
+ * Botón flotante para desbloquear el audio en TVs/navegadores que
+ * bloquean `audio.play()` sin un gesto real del usuario (confirmado en
+ * Android TV y hasta en un celular normal: el fetch y la generación del
+ * audio funcionan bien, pero el play() automático se bloquea en
+ * silencio). Un solo toque desbloquea el audio para el resto de la
+ * sesión en esa pestaña y de paso confirma que sí funciona, anunciando
+ * al líder actual en el momento.
+ */
+function mostrarBotonActivarSonidoLiderPulido() {
+    if (document.getElementById('btn-activar-sonido-pulido')) return;
+    const btn = document.createElement('button');
+    btn.id = 'btn-activar-sonido-pulido';
+    btn.textContent = '🔊 Activar sonido';
+    btn.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:99999;'
+        + 'padding:10px 16px;border-radius:8px;border:none;background:#111827;'
+        + 'color:#fff;font-size:14px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.3);';
+    btn.onclick = () => {
+        // Disparo del silencio SIN await antes -- tiene que quedar dentro
+        // del mismo tick síncrono del clic para contar como gesto real.
+        const desbloqueo = new Audio(SILENCIO_WAV_DATA_URI);
+        desbloqueo.play().catch(() => {});
+
+        btn.textContent = '🔊 ...';
+        hablarLiderPulido().then(() => {
+            btn.textContent = '✅ Sonido activado';
+            setTimeout(() => btn.remove(), 3000);
+        });
+    };
+    document.body.appendChild(btn);
+}
+
+document.addEventListener('DOMContentLoaded', mostrarBotonActivarSonidoLiderPulido);
+if (document.readyState !== 'loading') mostrarBotonActivarSonidoLiderPulido();
+
+setInterval(chequearLiderPulido, 20000); // cada 20s, en cualquier página de la app

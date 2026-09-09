@@ -6,6 +6,8 @@ Toda la lógica de negocio (volumen físico, eficiencia, deduplicación, normali
 reside aquí. Las rutas solo invocan métodos y retornan JSON.
 """
 import logging
+import os
+import tempfile
 from datetime import date, datetime, timedelta
 from backend.core.sql_database import db
 from backend.models.sql_models import ProduccionPulido, AppConfig
@@ -495,6 +497,36 @@ class PulidoService:
                 f"{nombre_actual} se puso a la cabeza con {buenas_actual} piezas hoy, superando a {nombre_previo}.",
                 url_destino='/'
             )
+
+    @staticmethod
+    def generar_audio_lider(texto: str) -> str:
+        """
+        Genera (con cache en disco por texto) el audio del anuncio del
+        líder de Pulido usando gTTS -- llama a la API pública de Google
+        Translate TTS, funciona igual en Windows y en Linux/Render (a
+        diferencia de pyttsx3/SAPI5, que se probó primero y es exclusivo
+        de Windows). Requiere que el servidor tenga salida a internet.
+
+        Fallback para pantallas/TVs cuyo navegador no soporta
+        window.speechSynthesis (confirmado en un Android TV con
+        navegadores "Navegador" genérico y TV Bro, ninguno lo implementa,
+        aunque sí reproducen audio normal).
+
+        Cache por hash del texto: evita regenerar el mismo anuncio (ej. si
+        varios dispositivos consultan el mismo cambio de líder casi a la
+        vez).
+        """
+        import hashlib
+        cache_dir = os.path.join(tempfile.gettempdir(), 'pulido_audio_cache')
+        os.makedirs(cache_dir, exist_ok=True)
+        nombre_archivo = hashlib.md5(texto.encode('utf-8')).hexdigest() + '.mp3'
+        ruta = os.path.join(cache_dir, nombre_archivo)
+
+        if not os.path.exists(ruta):
+            from gtts import gTTS
+            gTTS(text=texto, lang='es').save(ruta)
+
+        return ruta
 
     # ---------------------------------------------------------------
     # EVOLUCIÓN: cambio de volumen/eficiencia vs el período anterior

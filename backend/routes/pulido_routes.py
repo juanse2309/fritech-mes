@@ -1,4 +1,4 @@
-from flask import Blueprint, request, session, current_app
+from flask import Blueprint, request, session, current_app, send_file
 from io import BytesIO
 import os
 import tempfile
@@ -457,24 +457,59 @@ def _ejecutar_persistencia_pulido(registro, data, responsable, ahora,
         "overrides_aplicados": [t for t, _ in overrides_aplicados],
     }
 
+def _resolver_lider_hoy():
+    """
+    Resuelve {"nombre", "buenas"} del líder actual del Mix de Producción,
+    o None si nadie ha reportado hoy. Compartido por lider_hoy() y
+    lider_hoy_audio().
+    """
+    hoy = get_colombia_time().date()
+    top = PulidoService.get_ranking_leaderboard(hoy, hoy, limit=1)
+    if not top:
+        return None
+    nombre, datos = next(iter(top.items()))
+    return {"nombre": nombre, "buenas": datos.get('buenas', 0)}
+
+
 @pulido_bp.route('/api/pulido/lider_hoy', methods=['GET'])
 @require_role(ROL_DASHBOARD_OPERATIVO + ROL_OPERARIOS + ['PULIDO'])
 def lider_hoy():
     """
-    Endpoint liviano para el anuncio por voz del líder del Mix de
-    Producción (ver frontend/static/js/modules/utils.js). Rol amplio a
-    propósito: cualquier pantalla logueada de la app (no solo Pulido)
-    debe poder consultar quién va a la cabeza hoy.
+    Endpoint liviano para el anuncio del líder del Mix de Producción (ver
+    frontend/static/js/modules/utils.js). Rol amplio a propósito:
+    cualquier pantalla logueada de la app (no solo Pulido) debe poder
+    consultar quién va a la cabeza hoy.
     """
     try:
-        hoy = get_colombia_time().date()
-        top = PulidoService.get_ranking_leaderboard(hoy, hoy, limit=1)
-        if not top:
-            return api_success(data=None)
-        nombre, datos = next(iter(top.items()))
-        return api_success(data={"nombre": nombre, "buenas": datos.get('buenas', 0)})
+        return api_success(data=_resolver_lider_hoy())
     except Exception as e:
         logger.error(f"Error en lider_hoy: {e}")
+        return api_error(str(e), status_code=500)
+
+
+@pulido_bp.route('/api/pulido/lider_hoy/audio', methods=['GET'])
+@require_role(ROL_DASHBOARD_OPERATIVO + ROL_OPERARIOS + ['PULIDO'])
+def lider_hoy_audio():
+    """
+    Devuelve un MP3 generado server-side (gTTS, multiplataforma) con el
+    anuncio del líder actual. Fallback para navegadores/TVs sin
+    window.speechSynthesis (confirmado: Android TV con "Navegador" y con
+    TV Bro, ninguno lo soporta). Ver PulidoService.generar_audio_lider.
+    """
+    try:
+        lider = _resolver_lider_hoy()
+        if not lider:
+            return api_error("Sin líder registrado hoy", status_code=404)
+        texto = f"{lider['nombre']} se puso a la cabeza en Pulido con {lider['buenas']} piezas."
+        ruta_audio = PulidoService.generar_audio_lider(texto)
+        # conditional=False: sin esto Flask responde 304 ante un If-None-Match
+        # del navegador, y el fetch() del cliente lo trata como !resp.ok y se
+        # rinde en silencio antes de reproducir nada (bug real visto en TV).
+        respuesta = send_file(ruta_audio, mimetype='audio/mpeg', conditional=False)
+        respuesta.headers['Cache-Control'] = 'no-store'
+        return respuesta
+    except Exception as e:
+        logger.error(f"Error en lider_hoy_audio: {e}")
         return api_error(str(e), status_code=500)
 
 
