@@ -8,6 +8,7 @@ from sqlalchemy import text
 from backend.core.tenant import get_tenant_from_request
 from backend.utils.time_utils import get_colombia_time
 from backend.utils.formatters import normalizar_codigo_sin_prefijo, sql_expr_codigo_sin_prefijo_fr, preservar_o_normalizar_prefijo
+from backend.config.settings import Empresa
 from datetime import datetime
 import logging
 import json
@@ -209,7 +210,7 @@ def registrar_pedido():
             # prefijo, procesar_datos_wo() (facturacion_routes.py) escribe la
             # referencia incompleta en el archivo plano y World Office rechaza la
             # carga.
-            codigo = preservar_o_normalizar_prefijo(prod.get('codigo', ''), prefijo_defecto='FR-').upper()
+            codigo = preservar_o_normalizar_prefijo(prod.get('codigo', ''), prefijo_defecto=Empresa.PREFIJO_PRODUCTO_PRINCIPAL).upper()
             cantidad = float(prod.get('cantidad', 0))
             precio = float(prod.get('precio_unitario', 0))
             descripcion = prod.get('descripcion', '')

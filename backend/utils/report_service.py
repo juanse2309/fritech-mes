@@ -6,6 +6,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.units import inch
 import logging
+from backend.config.settings import Empresa
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ class PDFGenerator:
             elements.append(Paragraph(title_text, titulo_style))
             
             subtitulo_style = ParagraphStyle('Sub', parent=styles['Normal'], fontSize=10, alignment=1, textColor=colors.grey, spaceAfter=20)
-            elements.append(Paragraph(f"Trazabilidad de Proceso FRIPARTS", subtitulo_style))
+            elements.append(Paragraph(f"Trazabilidad de Proceso {Empresa.NOMBRE}", subtitulo_style))
             elements.append(Spacer(1, 0.1 * inch))
 
             # Información General (Layout de dos columnas)
@@ -150,7 +151,7 @@ class PDFGenerator:
             elements.append(Spacer(1, 0.6 * inch))
             elements.append(Paragraph("-" * 150, footer_style))
             responsable = str(datos_fila[5]).upper()
-            footer_text = f"Documento de Control Interno FRIPARTS | Generado: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Validado en sistema por: {responsable}"
+            footer_text = f"Documento de Control Interno {Empresa.NOMBRE} | Generado: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Validado en sistema por: {responsable}"
             elements.append(Paragraph(footer_text, footer_style))
 
             doc.build(elements)
@@ -186,7 +187,7 @@ class PDFGenerator:
             elements.append(Paragraph(title_text, titulo_style))
             
             subtitulo_style = ParagraphStyle('Sub', parent=styles['Normal'], fontSize=10, alignment=1, textColor=colors.grey, spaceAfter=20)
-            elements.append(Paragraph(f"Gestión Multi-SKU FRIPARTS", subtitulo_style))
+            elements.append(Paragraph(f"Gestión Multi-SKU {Empresa.NOMBRE}", subtitulo_style))
             elements.append(Spacer(1, 0.1 * inch))
 
             obs_text_turno = str(turno.get('observaciones') or turno.get('observaciones_generales') or "").strip()
@@ -318,7 +319,7 @@ class PDFGenerator:
             elements.append(Spacer(1, 0.6 * inch))
             elements.append(Paragraph("-" * 150, footer_style))
             responsable = str(turno.get('responsable', '')).upper()
-            footer_text = f"Documento de Control Interno FRIPARTS | Generado: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Validado en sistema por: {responsable}"
+            footer_text = f"Documento de Control Interno {Empresa.NOMBRE} | Generado: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Validado en sistema por: {responsable}"
             elements.append(Paragraph(footer_text, footer_style))
 
             doc.build(elements)

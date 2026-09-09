@@ -316,10 +316,16 @@ def index():
     """Pagina principal con la interfaz web."""
     try:
         from backend.services.auth_service import AuthService
+        from backend.config.settings import Empresa
         lista_usuarios = AuthService.obtener_staff_frimetals_admin_activo()
 
         logger.debug(f"[{get_now_colombia()}] >>> PETICIÓN RECIBIDA: index.html")
-        return render_template('index.html', usuarios=lista_usuarios, RELEASE_VERSION=RELEASE_VERSION)
+        return render_template(
+            'index.html', usuarios=lista_usuarios, RELEASE_VERSION=RELEASE_VERSION,
+            empresa_nombre=Empresa.NOMBRE,
+            divisiones_staff=Empresa.DIVISIONES_STAFF,
+            mostrar_portal_clientes=Empresa.MOSTRAR_PORTAL_CLIENTES,
+        )
     except Exception as e:
         logger.error(f"âŒ ERROR RENDERIZANDO index.html: {e}")
         return f"Error en el servidor: {str(e)}", 500

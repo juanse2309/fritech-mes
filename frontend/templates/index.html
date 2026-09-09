@@ -363,6 +363,7 @@
         </div>
 
         <div class="d-flex gap-4 flex-wrap justify-content-center animate-fade-in-up" style="animation-delay: 0.2s;">
+            {% if mostrar_portal_clientes %}
             <!-- Opción Cliente -->
             <div class="card bg-white bg-opacity-10 backdrop-blur border-0 hover-scale cursor-pointer"
                 onclick="AuthModule.openClientAuth()" style="width: 280px; padding: 2rem; border-radius: 20px;">
@@ -375,7 +376,9 @@
                     <button class="btn btn-outline-light rounded-pill px-4 mt-3 w-100">Ingresar</button>
                 </div>
             </div>
+            {% endif %}
 
+            {% if 'FRIPARTS' in divisiones_staff %}
             <!-- Opción Staff FRIPARTS -->
             <div class="card bg-white bg-opacity-10 backdrop-blur border-0 hover-scale cursor-pointer"
                 onclick="AuthModule.openStaffLogin('FRIPARTS')"
@@ -389,7 +392,9 @@
                     <button class="btn btn-outline-light rounded-pill px-4 mt-3 w-100">Ingresar</button>
                 </div>
             </div>
+            {% endif %}
 
+            {% if 'FRIMETALS' in divisiones_staff %}
             <!-- Opción Staff FRIMETALS -->
             <div class="card bg-white bg-opacity-10 backdrop-blur border-0 hover-scale cursor-pointer"
                 onclick="AuthModule.openStaffLogin('FRIMETALS')"
@@ -404,10 +409,11 @@
                     <button class="btn btn-outline-light rounded-pill px-4 mt-3 w-100">Ingresar</button>
                 </div>
             </div>
+            {% endif %}
         </div>
 
         <footer class="text-center p-4 text-white-50 small" style="margin-top: 3rem;">
-            &copy; 2026 FriParts S.A.S. - Todos los derechos reservados
+            &copy; 2026 {{ empresa_nombre }} S.A.S. - Todos los derechos reservados
         </footer>
     </div>
     <!-- Global Loader (Hybrid) para Transiciones -->

@@ -10,6 +10,7 @@ from backend.utils.formatters import (
     normalizar_codigo_sin_prefijo,
     sql_expr_codigo_sin_prefijo_fr,
 )
+from backend.config.settings import Empresa
 
 logger = logging.getLogger(__name__)
 
@@ -191,7 +192,7 @@ def reiniciar_pedido_wo(id_pedido_numero, db_session):
             # explicito (igual que en pedidos_routes.registrar_pedido); de lo
             # contrario procesar_datos_wo() vuelve a exportar la referencia
             # incompleta y World Office rechaza la carga del archivo plano.
-            mapped_prod = preservar_o_normalizar_prefijo(mapped_prod_raw, prefijo_defecto='FR-')
+            mapped_prod = preservar_o_normalizar_prefijo(mapped_prod_raw, prefijo_defecto=Empresa.PREFIJO_PRODUCTO_PRINCIPAL)
 
             cantidad = float(item.get('cantidad', 0))
             precio = float(item.get('precio_unitario', 0))

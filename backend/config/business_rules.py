@@ -2,7 +2,17 @@
 Reglas de negocio y mapas de configuración estáticos, extraídos del antiguo
 God Service `repository_service.py`.
 """
+import os
 import re
+
+
+def _lista_desde_env(nombre_env: str, valor_defecto: list) -> list:
+    """Lee una lista separada por comas de una variable de entorno; si no
+    está definida, usa el valor por defecto (el catálogo actual de FRIPARTS)."""
+    valor = os.getenv(nombre_env)
+    if not valor:
+        return valor_defecto
+    return [v.strip() for v in valor.split(',') if v.strip()]
 
 # Validador de identificador propio de este módulo (deliberadamente separado
 # de `_validar_identificador` de BaseRepository): esa whitelist es para el
@@ -50,9 +60,11 @@ class CatalogExclusionConfig:
     Estructura paramétrica centralizada para la abstracción de filtros de catálogo y prefijos comerciales.
     Elimina el acoplamiento rígido de cadenas fijas en la lógica de negocio.
     """
-    REFERENCIAS_EXCLUIDAS_TOP = ['VEHICULO-03']
-    PREFIJOS_EXCLUIDOS_MENOS_VENDIDOS = ['PS', 'BDF', 'BSL', 'BL', 'VEHICULO-03']
-    PREFIJOS_EXCLUIDOS_SIN_ROTACION = ['IM']
+    REFERENCIAS_EXCLUIDAS_TOP = _lista_desde_env('CATALOGO_REFERENCIAS_EXCLUIDAS_TOP', ['VEHICULO-03'])
+    PREFIJOS_EXCLUIDOS_MENOS_VENDIDOS = _lista_desde_env(
+        'CATALOGO_PREFIJOS_EXCLUIDOS_MENOS_VENDIDOS', ['PS', 'BDF', 'BSL', 'BL', 'VEHICULO-03']
+    )
+    PREFIJOS_EXCLUIDOS_SIN_ROTACION = _lista_desde_env('CATALOGO_PREFIJOS_EXCLUIDOS_SIN_ROTACION', ['IM'])
 
     @classmethod
     def get_sql_exclusion_clause(cls, column_name: str, mode: str = 'menos_vendidos') -> tuple:
