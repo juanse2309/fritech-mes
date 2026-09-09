@@ -1,11 +1,12 @@
 from flask import Blueprint, request, session, current_app
-from sqlalchemy import text
 from io import BytesIO
 import os
 import tempfile
 from backend.core.responses import api_success, api_error
 from backend.core import task_runner
-from backend.utils.auth_middleware import require_role, ROL_ADMINS, _obtener_usuario_activo
+from backend.utils.auth_middleware import (
+    require_role, ROL_ADMINS, ROL_DASHBOARD_OPERATIVO, ROL_OPERARIOS, _obtener_usuario_activo
+)
 from backend.models.sql_models import db, ProduccionPulido, PncInyeccion, PncPulido, PncEnsamble, BujeRevuelto, Producto, TrazabilidadLote, PulidoOverride, PulidoPendienteAutorizacion
 from backend.utils.formatters import normalizar_codigo, preservar_o_normalizar_prefijo, normalizar_codigo_sin_prefijo
 from backend.services.audit_service import AuditService, OwnershipMismatchException, TurnoInvalidoException
@@ -439,6 +440,15 @@ def _ejecutar_persistencia_pulido(registro, data, responsable, ahora,
         )
 
     db.session.commit()
+
+    # ── Notificación de cambio de líder en Mix de Producción (Pulido) ──
+    # Silenciosa a propósito, igual que la sync de Programación arriba: un
+    # fallo acá no debe tumbar el guardado real del reporte.
+    try:
+        PulidoService.detectar_y_notificar_cambio_lider()
+    except Exception as err_lider:
+        logger.warning(f"⚠️ [PULIDO-LIDER] No se pudo evaluar cambio de líder: {err_lider}")
+
     return {
         "success": True,
         "message": "Registro de pulido sincronizado (Flujo directo)",
@@ -446,6 +456,27 @@ def _ejecutar_persistencia_pulido(registro, data, responsable, ahora,
         "upsert": "UPDATE" if id_pulido and registro.id else "INSERT",
         "overrides_aplicados": [t for t, _ in overrides_aplicados],
     }
+
+@pulido_bp.route('/api/pulido/lider_hoy', methods=['GET'])
+@require_role(ROL_DASHBOARD_OPERATIVO + ROL_OPERARIOS + ['PULIDO'])
+def lider_hoy():
+    """
+    Endpoint liviano para el anuncio por voz del líder del Mix de
+    Producción (ver frontend/static/js/modules/utils.js). Rol amplio a
+    propósito: cualquier pantalla logueada de la app (no solo Pulido)
+    debe poder consultar quién va a la cabeza hoy.
+    """
+    try:
+        hoy = get_colombia_time().date()
+        top = PulidoService.get_ranking_leaderboard(hoy, hoy, limit=1)
+        if not top:
+            return api_success(data=None)
+        nombre, datos = next(iter(top.items()))
+        return api_success(data={"nombre": nombre, "buenas": datos.get('buenas', 0)})
+    except Exception as e:
+        logger.error(f"Error en lider_hoy: {e}")
+        return api_error(str(e), status_code=500)
+
 
 @pulido_bp.route('/api/pulido', methods=['POST'])
 @require_role(ROLES_PULIDO)
@@ -942,72 +973,15 @@ def get_pulido_historial():
         operario = request.args.get('operario', '')
         id_codigo = request.args.get('id_codigo', '')
 
-        # 2. Base Query con Casts explícitos para evitar OID 25 (TEXT)
-        sql = """
-            SELECT 
-                id,
-                id_pulido::TEXT as id_pulido,
-                fecha,
-                codigo::TEXT as codigo,
-                responsable::TEXT as responsable,
-                cantidad_real,
-                pnc_inyeccion,
-                pnc_pulido,
-                hora_inicio,
-                hora_fin,
-                orden_produccion::TEXT as orden_produccion,
-                observaciones::TEXT as observaciones,
-                cantidad_recibida
-            FROM db_pulido
-            WHERE 1=1
-        """
-        params = {}
+        # 2. Consulta y revueltos: lógica y SQL en el servicio (v5.2 -
+        # zero queries en el bucle, batch pre-fetch de revueltos).
+        resultados = PulidoService.obtener_historial_raw(f_inicio, f_fin, operario, id_codigo)
 
-        # 3. Filtros Dinámicos
-        if f_inicio and f_fin:
-            sql += " AND CAST(fecha AS DATE) BETWEEN :f_inicio AND :f_fin"
-            params['f_inicio'] = f_inicio
-            params['f_fin'] = f_fin
-        elif f_inicio:
-            sql += " AND CAST(fecha AS DATE) >= :f_inicio"
-            params['f_inicio'] = f_inicio
-        elif f_fin:
-            sql += " AND CAST(fecha AS DATE) <= :f_fin"
-            params['f_fin'] = f_fin
-
-        if operario and operario.upper() != 'TODOS':
-            sql += " AND UPPER(TRIM(responsable)) LIKE :operario"
-            params['operario'] = f"%{operario.strip().upper()}%"
-
-        if id_codigo and id_codigo.upper() != 'TODOS':
-            sql += " AND UPPER(TRIM(codigo)) LIKE :codigo"
-            params['codigo'] = f"%{id_codigo.strip().upper()}%"
-
-        sql += " ORDER BY fecha DESC, id DESC"
-
-        # 4. Ejecución y Conversión Inmediata a Diccionario (Clean Data)
-        result = db.session.execute(text(sql), params)
-        resultados = [dict(row._mapping) for row in result]
-
-        # 5. Batch Pre-fetch de Revueltos (v5.2 - Zero queries in loop)
         all_ids = [str(r.get('id_pulido') or '').strip() for r in resultados]
         all_ids = [pid for pid in all_ids if pid]  # Filtrar vacíos
+        revueltos_map = PulidoService.obtener_revueltos_por_ids(all_ids)
 
-        revueltos_map = {}  # { id_pulido: [ {id_codigo, cantidad}, ... ] }
-        if all_ids:
-            # Una sola consulta para TODOS los revueltos
-            placeholders = ', '.join([f':pid_{i}' for i in range(len(all_ids))])
-            sql_revs = f"SELECT id_pulido::TEXT as id_pulido, id_codigo::TEXT as id_codigo, COALESCE(cantidad, 0) as cantidad FROM db_bujes_revueltos WHERE id_pulido IN ({placeholders})"
-            params_revs = {f'pid_{i}': pid for i, pid in enumerate(all_ids)}
-            revs_raw = db.session.execute(text(sql_revs), params_revs)
-            for rv in revs_raw:
-                rv_dict = dict(rv._mapping)
-                pid = str(rv_dict['id_pulido'])
-                if pid not in revueltos_map:
-                    revueltos_map[pid] = []
-                revueltos_map[pid].append(rv_dict)
-
-        # 6. Mapeo para el Frontend (cero consultas en el bucle)
+        # 3. Mapeo para el Frontend (cero consultas en el bucle)
         data = []
         for r in resultados:
             p_id = str(r.get('id_pulido') or '').strip()
@@ -1066,44 +1040,8 @@ def _generar_excel_pulido_task(task_id, f_inicio, f_fin, operario, id_codigo):
     from openpyxl.utils import get_column_letter
 
     try:
-        # 2. Query con casts
-        sql = """
-            SELECT
-                id, id_pulido::TEXT as id_pulido, fecha,
-                codigo::TEXT as codigo, responsable::TEXT as responsable,
-                cantidad_real, pnc_inyeccion, pnc_pulido,
-                hora_inicio, hora_fin, tiempo_total_minutos,
-                orden_produccion::TEXT as orden_produccion,
-                observaciones::TEXT as observaciones,
-                cantidad_recibida
-            FROM db_pulido
-            WHERE 1=1
-        """
-        params = {}
-
-        if f_inicio and f_fin:
-            sql += " AND CAST(fecha AS DATE) BETWEEN :f_inicio AND :f_fin"
-            params['f_inicio'] = f_inicio
-            params['f_fin'] = f_fin
-        elif f_inicio:
-            sql += " AND CAST(fecha AS DATE) >= :f_inicio"
-            params['f_inicio'] = f_inicio
-        elif f_fin:
-            sql += " AND CAST(fecha AS DATE) <= :f_fin"
-            params['f_fin'] = f_fin
-
-        if operario and operario.upper() != 'TODOS':
-            sql += " AND UPPER(TRIM(responsable)) LIKE :operario"
-            params['operario'] = f"%{operario.strip().upper()}%"
-
-        if id_codigo and id_codigo.upper() != 'TODOS':
-            sql += " AND UPPER(TRIM(codigo)) LIKE :codigo"
-            params['codigo'] = f"%{id_codigo.strip().upper()}%"
-
-        sql += " ORDER BY fecha DESC, id DESC"
-
-        result = db.session.execute(text(sql), params)
-        resultados = [dict(row._mapping) for row in result]
+        # 2. Misma consulta que el historial JSON (PulidoService.obtener_historial_raw)
+        resultados = PulidoService.obtener_historial_raw(f_inicio, f_fin, operario, id_codigo)
 
         # 3. Crear Workbook
         wb = Workbook()
@@ -1546,6 +1484,12 @@ def reporte_masivo():
                             piezas_por_repartir = 0
 
         db.session.commit()
+
+        try:
+            PulidoService.detectar_y_notificar_cambio_lider()
+        except Exception as err_lider:
+            logger.warning(f"⚠️ [PULIDO-LIDER] No se pudo evaluar cambio de líder (masivo): {err_lider}")
+
         return api_success(message=f"Se registraron con éxito {len(items)} reportes del lote.")
 
     except Exception as e:

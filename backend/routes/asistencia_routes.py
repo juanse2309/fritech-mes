@@ -15,6 +15,8 @@ from backend.services.nomina_service import (
     ejecutar_corte_db,
     get_consolidado_pendiente,
     get_detalle_diario_pendiente,
+    obtener_colaboradores_visibles,
+    obtener_registros_asistencia_colaborador,
 )
 from backend.utils.auth_middleware import (
     require_role,
@@ -49,127 +51,17 @@ def obtener_colaboradores():
     user, role = obtener_identidad_segura(request)
 
     try:
-        from sqlalchemy import text
-        from datetime import datetime
-        
         user_name = user
         user_role = str(role).upper() if role else ''
-        hoy = datetime.now().strftime('%Y-%m-%d')
 
-        # Helper AGRESIVO para normalizar horas locas (ej: "5:00:00 p. m.")
-        def formatear_a_24h(hora_str):
-            if not hora_str: return "00:00"
-            s = str(hora_str).lower().strip()
-            
-            import re
-            # 1. Extraer HH y MM mediante regex
-            match = re.search(r'(\d{1,2})[\s:](\d{2})', s)
-            if not match:
-                return "00:00"
-                
-            hh = int(match.group(1))
-            mm = int(match.group(2))
-            
-            # 2. Detección Blindada de PM (busca 'p' sola, 'pm', 'p.m.')
-            es_pm = 'p' in s
-            
-            # 3. Conversión a 24h
-            if es_pm and hh < 12:
-                hh += 12
-            elif not es_pm and hh == 12:
-                hh = 0
-            
-            return f"{hh:02d}:{mm:02d}"
-
-        # 1. Identificación de Poder (Dynamic RBAC)
-        ADMS = ['ADMIN', 'GERENCIA', 'ADMINISTRACION', 'GERENCIA GLOBAL', 'ADMINISTRADOR']
-        es_admin_global = any(r in user_role for r in ADMS)
-        es_jefe = 'JEFE' in user_role
-
-        # 2. Obtener departamento del usuario actual (Pivote de Seguridad)
-        sql_propio = text("SELECT upper(trim(departamento)) FROM db_usuarios WHERE username = :user")
-        propio_res = db.session.execute(sql_propio, {'user': user_name}).fetchone()
-        mi_depto = propio_res[0] if propio_res and propio_res[0] else 'SIN_DEPTO'
-        
-        # 2.1. Derivar departamento base (Ej: 'JEFE ALMACEN' -> 'ALMACEN')
-        depto_base = mi_depto.replace('JEFE ', '').strip()
-        deptos_match = (mi_depto, depto_base)
-
-        # 3. Determinar Áreas Visibles
-        if es_admin_global:
-            deptos_visibles = None # Ver todo
-        elif es_jefe:
-            # Lógica Genérica: El Jefe solo ve su propio departamento (Match Exacto)
-            deptos_visibles = [mi_depto]
-        else:
-            # Operarios solo se ven a sí mismos (handled below in the query logic or result filtering)
-            deptos_visibles = [mi_depto]
-
-        # LÓGICA DE VISIBILIDAD BLINDADA:
-        if es_admin_global:
-            sql = text("""
-                SELECT * FROM db_usuarios 
-                WHERE activo = true 
-                ORDER BY username ASC
-            """)
-            params = {}
-        else:
-            # Filtro por Coincidencia de Departamento (Soporta prefijo JEFE)
-            sql = text("""
-                SELECT * FROM db_usuarios 
-                WHERE activo = true 
-                AND (
-                    upper(trim(departamento)) IN :deptos
-                    OR username = :current_user
-                )
-                ORDER BY username ASC
-            """)
-            params = {
-                'deptos': deptos_match,
-                'current_user': user_name
-            }
-
-        rows = db.session.execute(sql, params).mappings().all()
-
-        # 3. Marcar estado de hoy
-        sql_hoy = text("SELECT colaborador, ingreso_real, salida_real FROM db_asistencia WHERE fecha = :hoy")
-        registros_hoy = db.session.execute(sql_hoy, {'hoy': hoy}).mappings().all()
-        dict_hoy = {r['colaborador']: r for r in registros_hoy}
-
-        colaboradores = []
-        for r in rows:
-            # Lógica de nombre unificada: nombre_completo > username
-            nombre_final = r['nombre_completo'] if r['nombre_completo'] else r['username']
-            
-            # Buscar si ya tiene registro hoy usando el nombre final (Full Name)
-            reg = dict_hoy.get(nombre_final, {})
-            
-            h_inc_oficial = formatear_a_24h(r['hora_entrada'])
-            h_sal_oficial = formatear_a_24h(r['hora_salida'])
-            
-            colaboradores.append({
-                'nombre': nombre_final,
-                'username': r['username'],
-                'departamento': r['departamento'] or r['rol'].upper(),
-                'area': r['departamento'] or r['rol'].upper(),
-                'hora_entrada_oficial': h_inc_oficial,
-                'hora_salida_oficial': h_sal_oficial,
-                'hora_entrada': formatear_a_24h(reg.get('ingreso_real')) if reg.get('ingreso_real') else h_inc_oficial, 
-                'hora_salida': formatear_a_24h(reg.get('salida_real')) if reg.get('salida_real') else h_sal_oficial,
-                'registrado_hoy': bool(reg),
-                'ya_ingreso': bool(reg and reg.get('ingreso_real') and reg.get('ingreso_real') != 'AUSENTE'),
-                'ya_salio': bool(reg and reg.get('salida_real') and reg.get('salida_real') != ''),
-                'estado': reg.get('estado', 'PENDIENTE'),
-                'motivo': reg.get('motivo', ''),
-                'comentarios': reg.get('comentarios', '')
-            })
+        colaboradores = obtener_colaboradores_visibles(user_name, user_role)
 
         return jsonify({
             'status': 'success', 'success': True,
             'count': len(colaboradores),
             'colaboradores': colaboradores
         }), 200
-        
+
     except Exception as e:
         logger.error(f"Error en personal_a_cargo (SQL-RBAC): {e}")
         return jsonify({'status': 'error', 'success': False, 'message': 'No fue posible obtener la lista de colaboradores.'}), 500
@@ -316,10 +208,6 @@ def obtener_mis_horas():
         return jsonify({'status': 'error', 'success': False, 'message': 'No autorizado'}), 401
 
     try:
-        from sqlalchemy import text
-        from datetime import datetime
-        from backend.core.sql_database import db
-
         colaborador = user
         user_role = str(role).upper() if role else 'OPERARIO'
 
@@ -328,27 +216,8 @@ def obtener_mis_horas():
         u = Usuario.query.filter_by(username=colaborador).first()
         nombre_buscar = u.nombre_completo if u and u.nombre_completo else colaborador
 
-        # 1. SQL flexible (Muestra las últimas 50 independientemente del pago)
-        sql = text("""
-            SELECT 
-                id, fecha, colaborador, ingreso_real, salida_real, 
-                horas_ordinarias, horas_extras, estado, motivo, comentarios, estado_pago 
-            FROM db_asistencia 
-            WHERE (colaborador ILIKE :full_name OR colaborador ILIKE :username_pattern)
-            ORDER BY fecha DESC, id DESC 
-            LIMIT 50
-        """)
+        rows = obtener_registros_asistencia_colaborador(colaborador, nombre_buscar)
 
-        # Patrones flexibles
-        username_pattern = f"{colaborador.split(' ')[0]}%" if ' ' in colaborador else f"{colaborador}%"
-        full_name_pattern = f"%{nombre_buscar}%"
-        
-        result = db.session.execute(sql, {
-            "full_name": full_name_pattern,
-            "username_pattern": username_pattern
-        })
-        rows = result.mappings().all()
-        
         mis_registros = []
         for row in rows:
             # Formateo de fecha robusto con Pandas

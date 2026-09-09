@@ -101,3 +101,9 @@ class ClienteRepository:
             rollback_seguro()
             logger.error(f"[ClienteRepository.upsert_clientes_wo] Error en el UPSERT: {e}")
             raise e
+
+    @staticmethod
+    def contar() -> int:
+        """Total de filas en db_clientes -- usado por el circuit breaker de
+        sincronizar_clientes (wo_routes.py) para detectar una caída anómala."""
+        return db.session.execute(text("SELECT COUNT(*) FROM db_clientes")).scalar() or 0

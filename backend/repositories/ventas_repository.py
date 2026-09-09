@@ -491,3 +491,9 @@ class VentasRepository:
             rollback_seguro()
             logger.error(f"[VentasRepository.eliminar_cartera_wo_obsoleta] Error en el DELETE: {e}")
             raise e
+
+    @staticmethod
+    def contar_cartera_wo() -> int:
+        """Total de filas en cartera_wo -- usado por el circuit breaker de
+        sincronizar_cartera (wo_routes.py) para detectar una caída anómala."""
+        return db.session.execute(text("SELECT COUNT(*) FROM cartera_wo")).scalar() or 0

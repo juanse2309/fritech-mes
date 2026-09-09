@@ -10,6 +10,7 @@ import logging
 import time # Juan Sebastian: Para manejo de caché
 import os
 from backend.utils.formatters import normalizar_codigo
+from backend.config.settings import Empresa
 from backend.models.sql_models import Producto
 from backend.core.sql_database import db as sql_db
 from backend.utils.auth_middleware import require_login, require_role, ROL_ADMINS, ROL_JEFES
@@ -117,12 +118,10 @@ def buscar_productos(query):
     Si division=frimetals, busca en metals_productos.
     """
     try:
-        from sqlalchemy import text
         from backend.models.sql_models import MetalsProducto
 
         division = request.args.get('division', '').lower()
         limite = request.args.get('limite', 30, type=int)
-        termino = f"%{query.strip().upper()}%"
 
         # --- Lógica de Switch para FriMetals ---
         if division == 'frimetals':
@@ -145,60 +144,8 @@ def buscar_productos(query):
                 })
             return jsonify({'status': 'success', 'success': True, 'items': resultado}), 200
 
-        PREFIX_PATTERN = "'^(FR-|CAR-|INT-|ENS-|CB-|DE-|HR-|KIT-|AL-)'"
-        sql = f"""
-            WITH precios_norm AS (
-                SELECT 
-                    codigo,
-                    precio,
-                    REGEXP_REPLACE(codigo, {PREFIX_PATTERN}, '', 'i') as cod_norm,
-                    ROW_NUMBER() OVER(PARTITION BY REGEXP_REPLACE(codigo, {PREFIX_PATTERN}, '', 'i') ORDER BY codigo) as rn
-                FROM db_precio_venta
-            ),
-            pedidos_cte AS (
-                SELECT id_codigo, SUM(
-                    GREATEST(0, 
-                        COALESCE(NULLIF(REGEXP_REPLACE(CAST(cantidad AS TEXT), '[^0-9.]', '', 'g'), ''), '0')::NUMERIC - 
-                        COALESCE(NULLIF(REGEXP_REPLACE(CAST(cant_alistada AS TEXT), '[^0-9.]', '', 'g'), ''), '0')::NUMERIC
-                    )
-                ) as total_pendiente
-                FROM db_pedidos
-                WHERE estado IN ('PENDIENTE', 'ABIERTO', 'Alistamiento', 'ALISTADO')
-                GROUP BY id_codigo
-            ),
-            productos_base AS (
-                SELECT 
-                    *,
-                    REGEXP_REPLACE(id_codigo, {PREFIX_PATTERN}, '', 'i') as id_norm
-                FROM db_productos
-                WHERE 
-                    id_codigo ILIKE :t OR 
-                    codigo_sistema ILIKE :t OR 
-                    descripcion ILIKE :t OR
-                    oem ILIKE :t
-            )
-            SELECT 
-                p.id_codigo, 
-                p.descripcion as nombre_producto, 
-                p.p_terminado, 
-                p.comprometido, 
-                p.stock_bodega, 
-                p.por_pulir, 
-                p.codigo_sistema, 
-                p.imagen,
-                p.oem,
-                COALESCE(pv1.precio, pv2.precio, p.precio, 0) as precio_raw,
-                COALESCE(ped.total_pendiente, 0) as pedidos_pendientes
-            FROM productos_base p
-            LEFT JOIN db_precio_venta pv1 ON pv1.codigo = p.id_codigo
-            LEFT JOIN precios_norm pv2 ON pv2.cod_norm = p.id_norm AND pv2.rn = 1
-            LEFT JOIN pedidos_cte ped ON ped.id_codigo = p.id_codigo
-            ORDER BY p.codigo_sistema
-            LIMIT :l
-        """
-        
-        result_query = sql_db.session.execute(text(sql), {"t": termino, "l": limite}).mappings().all()
-        
+        result_query = inventario_service.buscar_catalogo_con_precio(termino=query, limite=limite)
+
         def limpiar_precio(p_str):
             if not p_str or str(p_str).strip() in ['', 'None']: return 0
             l = str(p_str).replace('$', '').replace('.', '').replace(',', '').strip()
@@ -252,7 +199,6 @@ def listar_productos():
     Si division=frimetals, retorna desde metals_productos.
     """
     try:
-        from sqlalchemy import text
         from backend.models.sql_models import MetalsProducto
 
         division = request.args.get('division', '').lower()
@@ -272,56 +218,10 @@ def listar_productos():
                     "precio": "{:.2f}".format(precio_val)
                 })
             return jsonify({"items": resultado}), 200
-            
+
         # --- Lógica Estándar (FriParts) ---
-        # JOIN optimizado con CTE para pre-normalización
-        PREFIX_PATTERN = "'^(FR-|CAR-|INT-|ENS-|CB-|DE-|HR-|KIT-|AL-)'"
-        sql = f"""
-            WITH precios_norm AS (
-                SELECT 
-                    codigo,
-                    precio,
-                    REGEXP_REPLACE(codigo, {PREFIX_PATTERN}, '', 'i') as cod_norm,
-                    ROW_NUMBER() OVER(PARTITION BY REGEXP_REPLACE(codigo, {PREFIX_PATTERN}, '', 'i') ORDER BY codigo) as rn
-                FROM db_precio_venta
-            ),
-            pedidos_cte AS (
-                SELECT id_codigo, SUM(
-                    GREATEST(0, 
-                        COALESCE(NULLIF(REGEXP_REPLACE(CAST(cantidad AS TEXT), '[^0-9.]', '', 'g'), ''), '0')::NUMERIC - 
-                        COALESCE(NULLIF(REGEXP_REPLACE(CAST(cant_alistada AS TEXT), '[^0-9.]', '', 'g'), ''), '0')::NUMERIC
-                    )
-                ) as total_pendiente
-                FROM db_pedidos
-                WHERE estado IN ('PENDIENTE', 'ABIERTO', 'Alistamiento', 'ALISTADO')
-                GROUP BY id_codigo
-            ),
-            productos_base AS (
-                SELECT 
-                    *,
-                    REGEXP_REPLACE(id_codigo, {PREFIX_PATTERN}, '', 'i') as id_norm
-                FROM db_productos
-            )
-            SELECT 
-                p.id_codigo, 
-                p.descripcion as nombre_producto, 
-                p.p_terminado, 
-                p.comprometido, 
-                p.stock_bodega, 
-                p.por_pulir, 
-                p.codigo_sistema, 
-                p.imagen,
-                COALESCE(pv1.precio, pv2.precio, p.precio, 0) as precio_raw,
-                COALESCE(ped.total_pendiente, 0) as pedidos_pendientes
-            FROM productos_base p
-            LEFT JOIN db_precio_venta pv1 ON pv1.codigo = p.id_codigo
-            LEFT JOIN precios_norm pv2 ON pv2.cod_norm = p.id_norm AND pv2.rn = 1
-            LEFT JOIN pedidos_cte ped ON ped.id_codigo = p.id_codigo
-            ORDER BY p.codigo_sistema
-        """
-        
-        result_query = sql_db.session.execute(text(sql)).mappings().all()
-        
+        result_query = inventario_service.buscar_catalogo_con_precio()
+
         def limpiar_precio(val):
             if val is None or str(val).strip() in ['', 'None']: return 0
             if isinstance(val, (int, float)): return float(val)
@@ -409,9 +309,9 @@ def historial_producto(codigo):
     Obtiene la trazabilidad 360 de un producto 100% SQL-Native.
     """
     try:
-        from sqlalchemy import text, or_
+        from sqlalchemy import or_
         from backend.models.sql_models import (
-            ProduccionInyeccion, ProduccionPulido, Ensamble, 
+            ProduccionInyeccion, ProduccionPulido, Ensamble,
             Pedido, Pnc, RawVentas
         )
         from datetime import datetime
@@ -471,12 +371,7 @@ def historial_producto(codigo):
 
         # 3. BARRIDO DE ENSAMBLE
         try:
-            sql_ens = text("""
-                SELECT id, fecha, responsable, cantidad, op_numero, buje_ensamble 
-                FROM db_ensambles 
-                WHERE id_codigo ILIKE :o OR id_codigo ILIKE :l
-            """)
-            res_ens = sql_db.session.execute(sql_ens, {"o": f"%{codigo_norm}%", "l": f"%{codigo_limpio}%"}).mappings().all()
+            res_ens = inventario_service.buscar_ensambles_por_codigo(codigo_norm, codigo_limpio)
             radar['ENSAMBLE'] = len(res_ens)
             for r in res_ens:
                 f_dt = r['fecha'] if hasattr(r['fecha'], 'year') else None
@@ -507,13 +402,8 @@ def historial_producto(codigo):
                     'detalle': f"Orden: {r.id_pedido} | Estado: {r.estado or 'N/A'} | Vendedor: {r.vendedor or ''}"
                 })
 
-            # 4.2 Ventas Reales (db_ventas - SQL Quirúrgico)
-            sql_ven = text("""
-                SELECT id, fecha, productos, nombres, cantidad, documento, clasificacion, total_ingresos
-                FROM db_ventas 
-                WHERE productos ILIKE :o
-            """)
-            res_ven = sql_db.session.execute(sql_ven, {"o": f"%{codigo_norm}%"}).mappings().all()
+            # 4.2 Ventas Reales (db_ventas)
+            res_ven = inventario_service.buscar_ventas_por_producto(codigo_norm)
             radar['COMERCIAL'] += len(res_ven)
             for r in res_ven:
                 f_dt = r['fecha'] if hasattr(r['fecha'], 'year') else None
@@ -649,14 +539,6 @@ def sincronizar_precios_wo():
         from backend.core.sql_database import db as sql_db
         from backend.utils.formatters import normalizar_codigo, preservar_o_normalizar_prefijo
 
-        # Detección defensiva de columnas en db_productos en tiempo de ejecución
-        try:
-            columns_result = sql_db.session.execute(text("SELECT * FROM db_productos LIMIT 1"))
-            table_columns = [col.lower() for col in columns_result.keys()]
-        except Exception as e_schema:
-            logger.error(f"❌ [SincronizarPrecios] Error obteniendo esquema: {e_schema}")
-            table_columns = ['id_codigo', 'codigo_sistema']  # Fallback histórico
-
         actualizados = 0
         omitidos = 0
         errores = 0
@@ -666,11 +548,6 @@ def sincronizar_precios_wo():
             "no_encontrados": [],
             "errores": []
         }
-
-        # Mapeo defensivo de columnas en base de datos
-        col_id_codigo = 'id_codigo' if 'id_codigo' in table_columns else None
-        col_codigo_sistema = 'codigo_sistema' if 'codigo_sistema' in table_columns else None
-        col_código = 'código' if 'código' in table_columns else ('codigo' if 'codigo' in table_columns else None)
 
         for _, row in df.iterrows():
             codigo_raw = ""
@@ -706,7 +583,7 @@ def sincronizar_precios_wo():
                 # donde la referencia FriParts histórica sí vive con prefijo; es
                 # una variante más del WHERE, no una mutación de la referencia.
                 codigo_sin_prefijo = normalizar_codigo(codigo_raw)
-                codigo_con_prefijo = preservar_o_normalizar_prefijo(codigo_raw, 'FR-')
+                codigo_con_prefijo = preservar_o_normalizar_prefijo(codigo_raw, Empresa.PREFIJO_PRODUCTO_PRINCIPAL)
 
                 # Query de alta precisión contra codigo_sistema
                 query = """

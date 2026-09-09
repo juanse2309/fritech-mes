@@ -4,7 +4,6 @@ import os
 import logging
 import re
 import threading
-from sqlalchemy import text
 from backend.utils.auth_middleware import require_role, ROL_ADMINS, ROL_JEFES, ROL_COMERCIALES
 from backend.services.wo_sync_service import (
     WoSyncService,
@@ -552,8 +551,10 @@ def sincronizar_cartera():
         # Circuit breaker de caída anómala: se decide YA (síncrono, query
         # liviana) para no perder la visibilidad del rechazo, aunque el
         # borrado en sí se ejecute después en background.
+        from backend.repositories.ventas_repository import VentasRepository
+
         documentos_vigentes = [d['documento'] for d in datos_limpios]
-        count_actual = db.session.execute(text("SELECT COUNT(*) FROM cartera_wo")).scalar() or 0
+        count_actual = VentasRepository.contar_cartera_wo()
         caida_anomala = count_actual > 0 and len(documentos_vigentes) < count_actual * UMBRAL_CAIDA_ANOMALA_CARTERA
         if caida_anomala:
             logger.critical(
@@ -636,7 +637,8 @@ def sincronizar_clientes():
                 "error": "El catálogo de clientes recibido está vacío."
             }), 422
 
-        count_actual = db.session.execute(text("SELECT COUNT(*) FROM db_clientes")).scalar() or 0
+        from backend.repositories.cliente_repository import ClienteRepository
+        count_actual = ClienteRepository.contar()
         if count_actual > 0 and len(datos) < count_actual * UMBRAL_CAIDA_ANOMALA_CLIENTES:
             logger.critical(
                 f"❌ [CRÍTICO] Caída anómala en la sincronización de clientes: "

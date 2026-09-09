@@ -15,6 +15,7 @@ from backend.core.exceptions import ProductoNoEncontrado, DatosInvalidos, MoldeN
 from backend.utils.validators import Validator
 from backend.utils.formatters import to_int, normalizar_codigo, preservar_o_normalizar_prefijo
 from backend.utils.cache_manager import invalidate_cache
+from backend.config.settings import Empresa
 import logging
 
 logger = logging.getLogger(__name__)
@@ -417,6 +418,124 @@ class InventarioService:
         return lista_final
 
     @staticmethod
+    def buscar_catalogo_con_precio(termino: str = None, limite: int = None) -> List[Dict]:
+        """
+        Catálogo de db_productos (FriParts) unido con el precio de venta
+        normalizado por prefijo (db_precio_venta) y el total de pedidos
+        pendientes por id_codigo -- consulta SQL-Native antes duplicada
+        casi al carácter entre /productos/buscar y /productos/listar en
+        productos_routes.py (solo diferían en el WHERE y en si incluían
+        'oem'). Sin termino filtra todo el catálogo (uso de /listar); con
+        termino, filtra por id_codigo/codigo_sistema/descripcion/oem
+        (uso de /buscar).
+        """
+        try:
+            prefix_pattern = "'^(FR-|CAR-|INT-|ENS-|CB-|DE-|HR-|KIT-|AL-)'"
+            params = {}
+
+            filtro_where = ""
+            if termino:
+                filtro_where = """
+                    WHERE
+                        id_codigo ILIKE :t OR
+                        codigo_sistema ILIKE :t OR
+                        descripcion ILIKE :t OR
+                        oem ILIKE :t
+                """
+                params['t'] = f"%{termino.strip().upper()}%"
+
+            limit_clause = ""
+            if limite:
+                limit_clause = "LIMIT :l"
+                params['l'] = limite
+
+            sql = f"""
+                WITH precios_norm AS (
+                    SELECT
+                        codigo,
+                        precio,
+                        REGEXP_REPLACE(codigo, {prefix_pattern}, '', 'i') as cod_norm,
+                        ROW_NUMBER() OVER(PARTITION BY REGEXP_REPLACE(codigo, {prefix_pattern}, '', 'i') ORDER BY codigo) as rn
+                    FROM db_precio_venta
+                ),
+                pedidos_cte AS (
+                    SELECT id_codigo, SUM(
+                        GREATEST(0,
+                            COALESCE(NULLIF(REGEXP_REPLACE(CAST(cantidad AS TEXT), '[^0-9.]', '', 'g'), ''), '0')::NUMERIC -
+                            COALESCE(NULLIF(REGEXP_REPLACE(CAST(cant_alistada AS TEXT), '[^0-9.]', '', 'g'), ''), '0')::NUMERIC
+                        )
+                    ) as total_pendiente
+                    FROM db_pedidos
+                    WHERE estado IN ('PENDIENTE', 'ABIERTO', 'Alistamiento', 'ALISTADO')
+                    GROUP BY id_codigo
+                ),
+                productos_base AS (
+                    SELECT
+                        *,
+                        REGEXP_REPLACE(id_codigo, {prefix_pattern}, '', 'i') as id_norm
+                    FROM db_productos
+                    {filtro_where}
+                )
+                SELECT
+                    p.id_codigo,
+                    p.descripcion as nombre_producto,
+                    p.p_terminado,
+                    p.comprometido,
+                    p.stock_bodega,
+                    p.por_pulir,
+                    p.codigo_sistema,
+                    p.imagen,
+                    p.oem,
+                    COALESCE(pv1.precio, pv2.precio, p.precio, 0) as precio_raw,
+                    COALESCE(ped.total_pendiente, 0) as pedidos_pendientes
+                FROM productos_base p
+                LEFT JOIN db_precio_venta pv1 ON pv1.codigo = p.id_codigo
+                LEFT JOIN precios_norm pv2 ON pv2.cod_norm = p.id_norm AND pv2.rn = 1
+                LEFT JOIN pedidos_cte ped ON ped.id_codigo = p.id_codigo
+                ORDER BY p.codigo_sistema
+                {limit_clause}
+            """
+
+            rows = db.session.execute(text(sql), params).mappings().all()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"[InventarioService.buscar_catalogo_con_precio] {e}")
+            return []
+
+    @staticmethod
+    def buscar_ensambles_por_codigo(codigo_norm: str, codigo_limpio: str) -> List[Dict]:
+        """
+        Filas de db_ensambles para el Timeline 360 de un producto (Ensamble
+        no tiene un modelo ORM equivalente al de Inyección/Pulido en este
+        contexto). Sin try/except propio a propósito: el caller
+        (historial_producto en productos_routes.py) ya envuelve cada barrido
+        en su propio try/except con rollback y log específico del bloque.
+        """
+        sql = text("""
+            SELECT id, fecha, responsable, cantidad, op_numero, buje_ensamble
+            FROM db_ensambles
+            WHERE id_codigo ILIKE :o OR id_codigo ILIKE :l
+        """)
+        rows = db.session.execute(sql, {"o": f"%{codigo_norm}%", "l": f"%{codigo_limpio}%"}).mappings().all()
+        return [dict(r) for r in rows]
+
+    @staticmethod
+    def buscar_ventas_por_producto(codigo_norm: str) -> List[Dict]:
+        """
+        Filas de db_ventas cuyo texto de 'productos' contiene el código, para
+        el Timeline 360. Sin try/except propio, misma razón que
+        buscar_ensambles_por_codigo.
+        """
+        sql = text("""
+            SELECT id, fecha, productos, nombres, cantidad, documento, clasificacion, total_ingresos
+            FROM db_ventas
+            WHERE productos ILIKE :o
+        """)
+        rows = db.session.execute(sql, {"o": f"%{codigo_norm}%"}).mappings().all()
+        return [dict(r) for r in rows]
+
+    @staticmethod
     def estado_sincronizacion_wo() -> Dict:
         """
         Antigüedad de los datos en inventario_wo SIN aplicarlos a db_productos.
@@ -514,7 +633,7 @@ class InventarioService:
             if stock_wo is None or float(stock_wo) < 0:
                 continue
 
-            codigo_sistema = preservar_o_normalizar_prefijo(fila['codigo_producto'], prefijo_defecto='FR-')
+            codigo_sistema = preservar_o_normalizar_prefijo(fila['codigo_producto'], prefijo_defecto=Empresa.PREFIJO_PRODUCTO_PRINCIPAL)
             if not codigo_sistema:
                 continue
 

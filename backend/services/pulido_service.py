@@ -448,6 +448,55 @@ class PulidoService:
             return {}
 
     # ---------------------------------------------------------------
+    # NOTIFICACIÓN: Cambio de líder del día (Mix de Producción)
+    # ---------------------------------------------------------------
+    _LIDER_CONFIG_KEY = 'pulido.lider_notificado_hoy'
+
+    @staticmethod
+    def detectar_y_notificar_cambio_lider():
+        """
+        Compara el líder actual del Mix de Producción (hoy) contra el
+        último líder notificado (AppConfig, clave 'pulido.lider_notificado_hoy',
+        valor "YYYY-MM-DD|NOMBRE") y, si cambió, avisa por push al
+        departamento PULIDO. No notifica en el primer líder del día (solo
+        siembra el estado) ni si el líder se mantiene igual.
+
+        Se llama después de cada guardado de un reporte (ver
+        pulido_routes._ejecutar_persistencia_pulido y reporte_masivo);
+        el llamador debe envolverla en try/except -- un fallo acá nunca
+        debe tumbar el guardado real del reporte.
+        """
+        hoy = get_colombia_time().date()
+        top = PulidoService.get_ranking_leaderboard(hoy, hoy, limit=1)
+        if not top:
+            return
+        nombre_actual, datos = next(iter(top.items()))
+        buenas_actual = datos.get('buenas', 0)
+
+        fila = db.session.get(AppConfig, PulidoService._LIDER_CONFIG_KEY)
+        valor_previo = fila.valor if fila else ''
+        fecha_previa, _, nombre_previo = valor_previo.partition('|')
+
+        nuevo_valor = f"{hoy.isoformat()}|{nombre_actual}"
+        es_primer_lider_del_dia = (fecha_previa != hoy.isoformat())
+        hubo_cambio_real = (not es_primer_lider_del_dia) and (nombre_previo != nombre_actual)
+
+        if fila:
+            fila.valor = nuevo_valor
+        else:
+            db.session.add(AppConfig(clave=PulidoService._LIDER_CONFIG_KEY, valor=nuevo_valor))
+        db.session.commit()
+
+        if hubo_cambio_real:
+            from backend.services.notification_service import NotificationService
+            NotificationService.enviar_notificacion_por_departamento(
+                ['PULIDO'],
+                "🏆 Cambio de líder en Pulido",
+                f"{nombre_actual} se puso a la cabeza con {buenas_actual} piezas hoy, superando a {nombre_previo}.",
+                url_destino='/'
+            )
+
+    # ---------------------------------------------------------------
     # EVOLUCIÓN: cambio de volumen/eficiencia vs el período anterior
     # ---------------------------------------------------------------
     @staticmethod
@@ -723,6 +772,85 @@ class PulidoService:
             db.session.rollback()
             logger.error(f"[PulidoService.get_saldo_por_op] {e}")
             return []
+
+    @staticmethod
+    def obtener_historial_raw(f_inicio: str = '', f_fin: str = '', operario: str = '', id_codigo: str = '') -> list:
+        """
+        Filas crudas de db_pulido para el historial (endpoint JSON) y la
+        exportación a Excel -- antes era el mismo SELECT duplicado en las
+        dos rutas de pulido_routes.py. Incluye tiempo_total_minutos aunque
+        el endpoint JSON no lo use, para que ambos llamadores compartan
+        exactamente la misma consulta sin variantes.
+        """
+        try:
+            sql = """
+                SELECT
+                    id, id_pulido::TEXT as id_pulido, fecha,
+                    codigo::TEXT as codigo, responsable::TEXT as responsable,
+                    cantidad_real, pnc_inyeccion, pnc_pulido,
+                    hora_inicio, hora_fin, tiempo_total_minutos,
+                    orden_produccion::TEXT as orden_produccion,
+                    observaciones::TEXT as observaciones,
+                    cantidad_recibida
+                FROM db_pulido
+                WHERE 1=1
+            """
+            params = {}
+
+            if f_inicio and f_fin:
+                sql += " AND CAST(fecha AS DATE) BETWEEN :f_inicio AND :f_fin"
+                params['f_inicio'] = f_inicio
+                params['f_fin'] = f_fin
+            elif f_inicio:
+                sql += " AND CAST(fecha AS DATE) >= :f_inicio"
+                params['f_inicio'] = f_inicio
+            elif f_fin:
+                sql += " AND CAST(fecha AS DATE) <= :f_fin"
+                params['f_fin'] = f_fin
+
+            if operario and operario.upper() != 'TODOS':
+                sql += " AND UPPER(TRIM(responsable)) LIKE :operario"
+                params['operario'] = f"%{operario.strip().upper()}%"
+
+            if id_codigo and id_codigo.upper() != 'TODOS':
+                sql += " AND UPPER(TRIM(codigo)) LIKE :codigo"
+                params['codigo'] = f"%{id_codigo.strip().upper()}%"
+
+            sql += " ORDER BY fecha DESC, id DESC"
+
+            result = db.session.execute(text(sql), params)
+            return [dict(row._mapping) for row in result]
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"[PulidoService.obtener_historial_raw] {e}")
+            return []
+
+    @staticmethod
+    def obtener_revueltos_por_ids(ids_pulido: list) -> dict:
+        """
+        { id_pulido: [ {id_codigo, cantidad}, ... ] } para los ids dados,
+        en una sola consulta batch (evita N+1 al armar el historial).
+        """
+        if not ids_pulido:
+            return {}
+        try:
+            placeholders = ', '.join([f':pid_{i}' for i in range(len(ids_pulido))])
+            sql = (
+                "SELECT id_pulido::TEXT as id_pulido, id_codigo::TEXT as id_codigo, "
+                f"COALESCE(cantidad, 0) as cantidad FROM db_bujes_revueltos WHERE id_pulido IN ({placeholders})"
+            )
+            params = {f'pid_{i}': pid for i, pid in enumerate(ids_pulido)}
+            rows = db.session.execute(text(sql), params)
+            revueltos_map = {}
+            for rv in rows:
+                rv_dict = dict(rv._mapping)
+                pid = str(rv_dict['id_pulido'])
+                revueltos_map.setdefault(pid, []).append(rv_dict)
+            return revueltos_map
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"[PulidoService.obtener_revueltos_por_ids] {e}")
+            return {}
 
     # ---------------------------------------------------------------
     # BLOQUEOS DUROS (plan 2026-08-28): fecha same-day + cantidad <= inyectado
