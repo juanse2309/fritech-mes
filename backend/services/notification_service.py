@@ -120,6 +120,34 @@ class NotificationService:
         return enviados > 0
 
     @staticmethod
+    def enviar_notificacion_por_departamento(departamentos, titulo, cuerpo, url_destino='/'):
+        """
+        Envía un push a todos los usuarios activos de uno o más departamentos
+        de planta (ej. ['INYECCION', 'ENSAMBLE']) -- pensado para
+        recordatorios automáticos por horario (ver
+        InyeccionService.recordar_reporte_parcial), no para flujos
+        disparados por un usuario. Reutiliza enviar_notificacion_push por
+        usuario, que ya trae la limpieza self-healing de endpoints caducados.
+        """
+        from backend.models.sql_models import Usuario
+
+        if isinstance(departamentos, str):
+            departamentos = [departamentos]
+
+        filtros = [Usuario.departamento.ilike(d) for d in departamentos]
+        usuarios = Usuario.query.filter(Usuario.activo == True).filter(db.or_(*filtros)).all()
+
+        enviados = 0
+        for u in usuarios:
+            try:
+                if NotificationService.enviar_notificacion_push(u.username, titulo, cuerpo, url_destino):
+                    enviados += 1
+            except Exception as e:
+                logger.error(f"Error enviando recordatorio a {u.username}: {e}")
+
+        return enviados > 0
+
+    @staticmethod
     def enviar_notificacion_masiva(payload_dict):
         """
         Delega el envío iterativo de notificaciones al executor en background.

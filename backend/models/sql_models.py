@@ -102,6 +102,30 @@ class ProduccionInyeccion(db.Model):
         return preservar_o_normalizar_prefijo(value) if value else value
 
 
+class LecturaParcialInyeccion(db.Model):
+    """
+    Reporte parcial de avance de un lote EN_PROCESO (pedido del usuario
+    2026-09-04, normalmente a las 11am y 3pm): a diferencia del cierre real
+    (ProduccionInyeccion.cant_contador, que solo se escribe en
+    InyeccionService.reportar_trabajo), esta tabla es puramente una bitácora
+    de lecturas intermedias del contador -- nunca toca cant_contador,
+    cantidad_real ni estado del lote vivo, para no interferir con Validación
+    ni con el export a WO (que dependen solo del cierre real).
+    """
+    __tablename__ = 'db_inyeccion_lecturas_parciales'
+    __table_args__ = {'extend_existing': True}
+
+    id_lectura       = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    id_inyeccion     = db.Column(db.String(80),  index=True, nullable=False)
+    maquina          = db.Column(db.String(80),  nullable=True)
+    molde            = db.Column(db.String(50),  nullable=True)
+    orden_produccion = db.Column(db.String(100), nullable=True)
+    cierres_lectura  = db.Column(db.BigInteger,  nullable=False)
+    responsable      = db.Column(db.String(150), nullable=True)
+    creado_por       = db.Column(db.String(150), nullable=True)
+    fecha_hora       = db.Column(db.DateTime,    nullable=False)
+
+
 class PncInyeccion(db.Model):
     __tablename__ = 'db_pnc_inyeccion'
     __table_args__ = {'extend_existing': True}

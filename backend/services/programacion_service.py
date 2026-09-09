@@ -2,7 +2,7 @@ import logging
 import uuid
 from datetime import datetime, date
 from sqlalchemy import text
-from backend.models.sql_models import db, Maquina, ProgramacionInyeccion, ProduccionInyeccion
+from backend.models.sql_models import db, Maquina, ProgramacionInyeccion, ProduccionInyeccion, LecturaParcialInyeccion
 from backend.services.op_numerador_service import OpNumeradorService
 from backend.utils.formatters import resolver_operario, normalizar_codigo
 from backend.utils.time_utils import get_colombia_time
@@ -445,6 +445,26 @@ class ProgramacionService:
             ProgramacionInyeccion.fecha == fecha_obj
         ).all()
 
+        # Reporte parcial de avance (pedido del usuario 2026-09-04, 11am/3pm):
+        # lecturas de HOY para los lotes activos, más recientes primero, para
+        # que la tarjeta muestre la última y el frontend pueda avisar si falta
+        # la de alguna de las dos franjas. Solo lee de la bitácora nueva --
+        # nunca toca ProduccionInyeccion.
+        lecturas_hoy_por_lote = {}
+        ids_activos = list({r.id_inyeccion for r in en_proceso if r.id_inyeccion})
+        if ids_activos:
+            hoy_colombia = get_colombia_time().date()
+            lecturas_hoy = db.session.query(LecturaParcialInyeccion).filter(
+                LecturaParcialInyeccion.id_inyeccion.in_(ids_activos),
+                db.func.date(LecturaParcialInyeccion.fecha_hora) == hoy_colombia
+            ).order_by(LecturaParcialInyeccion.fecha_hora.asc()).all()
+            for lec in lecturas_hoy:
+                lecturas_hoy_por_lote.setdefault(lec.id_inyeccion, []).append({
+                    'hora': lec.fecha_hora.strftime('%H:%M') if lec.fecha_hora else '',
+                    'cierres': lec.cierres_lectura,
+                    'responsable': lec.responsable
+                })
+
         resultado = []
         for maquina_nom in maquinas_set:
             maquina_upper = maquina_nom.upper()
@@ -462,6 +482,7 @@ class ProgramacionService:
                     'producto': ", ".join([str(r.id_codigo or '') for r in activos_maq]),
                     'cavidades': sum([int(r.cavidades or 0) for r in activos_maq]),
                     'orden_produccion': primer.orden_produccion,
+                    'lecturas_parciales_hoy': lecturas_hoy_por_lote.get(primer.id_inyeccion, []),
                     'productos_activos': [
                         {
                             'id_inyeccion': r.id_inyeccion,

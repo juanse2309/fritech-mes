@@ -1,3 +1,4 @@
+import os
 import uuid
 import logging
 from flask import Blueprint, request
@@ -251,6 +252,79 @@ def mes_reportar():
         db.session.rollback()
         logger.error(f"❌ Error al reportar turno en el MES: {e}")
         return api_error("Error interno al finalizar el turno", status_code=500)
+
+
+@inyeccion_bp.route('/api/mes/reportar_parcial', methods=['POST'])
+@require_role(ROL_ADMINS + ROL_JEFES + ['INYECCION', 'ENSAMBLE'])
+def mes_reportar_parcial():
+    """
+    Reporte parcial de avance (pedido del usuario 2026-09-04, normalmente a
+    las 11am y 3pm). Controller delgado: parsea el request, delega a
+    InyeccionService.registrar_lectura_parcial y traduce el resultado (o las
+    excepciones de negocio) a JSON.
+
+    A diferencia de /api/mes/reportar, esto NO cierra ni finaliza el lote --
+    solo deja una lectura de auditoría del contador a media jornada.
+    """
+    data = request.get_json() or {}
+    usuario_activo = _obtener_usuario_activo()
+
+    try:
+        resultado = InyeccionService.registrar_lectura_parcial(data, usuario_activo)
+        return api_success(data=resultado)
+
+    except LoteInyeccionNoEncontradoException as e:
+        return api_error(e.message, status_code=404)
+
+    except ValueError as e:
+        return api_error(str(e), status_code=400)
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"❌ Error al registrar reporte parcial en el MES: {e}")
+        return api_error("Error interno al registrar el reporte parcial", status_code=500)
+
+
+def _mask_token(token):
+    """Enmascara un token para logging seguro -- ver ensamble_routes._mask_token
+    (misma lógica, duplicada aquí para no acoplar este blueprint a otro)."""
+    if not token:
+        return "(vacío)"
+    token = str(token)
+    return f"{token[:4]}***" if len(token) > 4 else "***"
+
+
+@inyeccion_bp.route('/api/mes/recordar_reporte_parcial', methods=['GET', 'POST'])
+def mes_recordar_reporte_parcial():
+    """
+    Red de seguridad del reporte de avance (pedido del usuario 2026-09-04):
+    pensada para dos Tareas Programadas de Windows, a las 11:00 y a las
+    15:00 -- mismo patrón exacto que ensamble_routes.cerrar_jornada_auto,
+    token compartido, NO sesión/JWT de usuario humano.
+
+    A diferencia de ese endpoint, este NUNCA escribe en la base de datos:
+    solo avisa por Web Push a Inyección/Ensamble si hay máquinas
+    EN_PROCESO. Parámetro opcional ?momento=11|15 solo cambia el texto del
+    aviso, ver InyeccionService.recordar_reporte_parcial.
+    """
+    token_recibido = request.args.get('token') or request.headers.get('X-Sync-Token')
+    token_esperado = os.getenv('SYNC_TOKEN')
+
+    if token_esperado is None:
+        logger.error("❌ Variable de entorno SYNC_TOKEN no configurada en el servidor (es None).")
+        return api_error("Error de configuración de seguridad: SYNC_TOKEN es None", status_code=500)
+
+    if token_recibido != token_esperado:
+        logger.warning(f"⚠️ Intento de recordatorio de reporte parcial no autorizado. Token recibido: {_mask_token(token_recibido)}")
+        return api_error("No autorizado. Token inválido.", status_code=403)
+
+    try:
+        resultado = InyeccionService.recordar_reporte_parcial(momento=request.args.get('momento'))
+        return api_success(data=resultado)
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"❌ Error en recordatorio de reporte parcial: {e}")
+        return api_error(str(e), status_code=500)
 
 
 @inyeccion_bp.route('/api/pnc/registrar_inyeccion', methods=['POST'])

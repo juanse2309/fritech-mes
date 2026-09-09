@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, date, timedelta
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from backend.models.sql_models import db, ProduccionInyeccion, PncInyeccion, PncPulido, ProgramacionInyeccion, DistribucionOpPedidos, Producto, TrazabilidadLote, Pedido, ProduccionEmpaque
+from backend.models.sql_models import db, ProduccionInyeccion, PncInyeccion, PncPulido, ProgramacionInyeccion, DistribucionOpPedidos, Producto, TrazabilidadLote, Pedido, ProduccionEmpaque, LecturaParcialInyeccion
 from backend.services.audit_service import AuditService, OwnershipMismatchException, ValidadorRequeridoException, TurnoInvalidoException
 from backend.services.op_numerador_service import OpNumeradorService
 from backend.utils.time_utils import get_colombia_time
@@ -1396,6 +1396,113 @@ class InyeccionService:
             "teorica": total_teorica,
             "message": "Turno finalizado con éxito. Cubetas de prioridad actualizadas por FIFO."
         }
+
+    @staticmethod
+    def registrar_lectura_parcial(data, usuario_activo=None):
+        """
+        Reporte parcial de avance (pedido del usuario 2026-09-04, normalmente
+        a las 11am y 3pm): guarda una lectura intermedia del contador de un
+        lote EN_PROCESO como fila de auditoría en LecturaParcialInyeccion.
+
+        A propósito NO toca ProduccionInyeccion (cant_contador, cantidad_real,
+        estado) ni TrazabilidadLote/cubetas -- esos solo cambian en el cierre
+        real (reportar_trabajo). Así Validación y el export a WO, que dependen
+        exclusivamente de esas columnas al cierre, quedan intactos.
+
+        Puede lanzar ValueError o LoteInyeccionNoEncontradoException -- el
+        controlador las traduce a HTTP.
+        """
+        id_iny = data.get('id_inyeccion')
+        cierres = data.get('cierres')
+
+        if not id_iny:
+            raise ValueError("El campo id_inyeccion es obligatorio")
+        try:
+            cierres = int(cierres)
+        except (TypeError, ValueError):
+            raise ValueError("El campo cierres debe ser un número entero")
+        if cierres <= 0:
+            raise ValueError("Los cierres del contador deben ser mayores a 0")
+
+        # Solo se puede reportar avance de un lote que sigue EN_PROCESO -- si
+        # ya fue finalizado/validado, la lectura ya no tiene sentido (el
+        # cierre real ya trae el número definitivo).
+        prod_ref = db.session.query(ProduccionInyeccion).filter(
+            ProduccionInyeccion.id_inyeccion == id_iny,
+            ProduccionInyeccion.estado == 'EN_PROCESO'
+        ).first()
+        if not prod_ref:
+            raise LoteInyeccionNoEncontradoException(
+                id_iny, "No hay ningún lote EN_PROCESO con ese id_inyeccion"
+            )
+
+        responsable = (data.get('responsable') or usuario_activo or '').strip() or None
+        ahora = get_colombia_time()
+
+        try:
+            lectura = LecturaParcialInyeccion(
+                id_inyeccion=id_iny,
+                maquina=prod_ref.maquina,
+                molde=prod_ref.molde,
+                orden_produccion=prod_ref.orden_produccion,
+                cierres_lectura=cierres,
+                responsable=responsable,
+                creado_por=usuario_activo,
+                fecha_hora=ahora
+            )
+            db.session.add(lectura)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"❌ Error al registrar lectura parcial de inyección: {e}")
+            raise
+
+        try:
+            from backend.services.programacion_service import ProgramacionService
+            ProgramacionService.clear_mes_cache()
+        except Exception:
+            pass
+
+        logger.info(f"📊 [Inyección] Lectura parcial registrada para {id_iny}: {cierres} cierres a las {ahora.strftime('%H:%M')}")
+
+        return {
+            "success": True,
+            "id_lectura": lectura.id_lectura,
+            "hora": ahora.strftime('%H:%M'),
+            "cierres": cierres
+        }
+
+    @staticmethod
+    def recordar_reporte_parcial(momento=None):
+        """
+        Recordatorio automático del reporte de avance (pedido del usuario
+        2026-09-04): pensado para correr a las 11:00 y a las 15:00 desde una
+        Tarea Programada de Windows (ver
+        backend/integration/agente_recordatorio_reporte_parcial.py), mismo
+        patrón que agente_cierre_jornada_ensamble.py.
+
+        A propósito NO escribe nada en la base de datos ni fuerza ningún
+        reporte: la lectura del contador es un dato físico que solo puede
+        tomar un operario en planta -- esto solo le avisa por Web Push.
+        """
+        from backend.services.notification_service import NotificationService
+
+        hay_activas = db.session.query(ProduccionInyeccion.id).filter(
+            ProduccionInyeccion.estado == 'EN_PROCESO'
+        ).first() is not None
+
+        if not hay_activas:
+            return {"enviado": False, "motivo": "No hay máquinas EN_PROCESO en este momento."}
+
+        etiqueta_momento = {'11': 'las 11:00 am', '15': 'las 3:00 pm'}.get(str(momento or '').strip(), 'ahora')
+        titulo = "Reporte de avance de máquina"
+        cuerpo = f"Recuerda reportar los cierres del contador de {etiqueta_momento}."
+
+        enviado = NotificationService.enviar_notificacion_por_departamento(
+            ['INYECCION', 'ENSAMBLE'], titulo, cuerpo, url_destino='/'
+        )
+
+        return {"enviado": bool(enviado), "momento": momento or None}
 
     @staticmethod
     def guardar_programacion(data):
