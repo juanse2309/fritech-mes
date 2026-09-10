@@ -1,0 +1,412 @@
+/* modo_tv.css - Pantalla rotativa de planta (Modo TV)
+   Ranking Mix -> Pulido en vivo -> Máquinas hoy -> Máquinas semana.
+   Ver frontend/static/js/modules/modo_tv.js (window.ModuloTV). */
+
+body.tv-produccion-mode {
+    overflow: hidden !important;
+    background: #0b1220 !important;
+}
+
+body.tv-produccion-mode .sidebar,
+body.tv-produccion-mode .top-bar,
+body.tv-produccion-mode .navbar,
+body.tv-produccion-mode .sidebar-overlay,
+body.tv-produccion-mode #loading-overlay,
+body.tv-produccion-mode .mobile-back-container {
+    display: none !important;
+    visibility: hidden !important;
+}
+
+body.tv-produccion-mode .main-content,
+body.tv-produccion-mode #page-content {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+}
+
+#modo-tv-page {
+    background: #0b1220;
+}
+
+body.tv-produccion-mode #modo-tv-page {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 6000 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+}
+
+/* Tamaños pensados para verse desde varios metros de distancia (TV de
+   planta), no desde un monitor de escritorio -- pedido del usuario
+   2026-09-10 tras confirmar que se monta en una TV de 55". Todo el texto
+   de esta página quedó ~40-45% más grande que un cálculo "de monitor". */
+#tv-root {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100vh;
+    padding: 1.4vh 2.2vw;
+    box-sizing: border-box;
+    color: #f1f5f9;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+/* ── Header ─────────────────────────────────────────────────────── */
+#tv-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 1.2vh;
+    border-bottom: 2px solid rgba(255, 255, 255, 0.08);
+    flex-shrink: 0;
+}
+
+#tv-header-left {
+    display: flex;
+    align-items: center;
+    gap: 22px;
+}
+
+#tv-logo-icono {
+    font-size: 3.6rem;
+    color: #38bdf8;
+}
+
+#tv-slide-titulo {
+    font-size: 3rem;
+    font-weight: 800;
+    margin: 0;
+    line-height: 1.1;
+    letter-spacing: .01em;
+}
+
+#tv-slide-subtitulo {
+    margin: 4px 0 0;
+    font-size: 1.5rem;
+    color: #94a3b8;
+    font-weight: 500;
+}
+
+#tv-header-right {
+    text-align: right;
+    flex-shrink: 0;
+}
+
+#tv-reloj {
+    font-size: 3.4rem;
+    font-weight: 900;
+    font-variant-numeric: tabular-nums;
+    color: #ffffff;
+    line-height: 1;
+}
+
+#tv-fecha {
+    margin-top: 4px;
+    font-size: 1.3rem;
+    color: #94a3b8;
+    text-transform: capitalize;
+}
+
+/* ── Slides ─────────────────────────────────────────────────────── */
+#tv-slides {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    margin-top: 1.4vh;
+}
+
+.tv-slide {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .5s ease;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.tv-slide.active {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.tv-chart-wrap {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 18px;
+    padding: 1.6vh 1.4vw;
+    box-sizing: border-box;
+}
+
+.tv-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #64748b;
+    font-size: 1.8rem;
+    font-weight: 600;
+}
+
+/* Overlay de "caballitos" de carrera (mismo efecto que el Dashboard, ver
+   posicionarCaballosCarrera en modo_tv.js). El contenido interno reutiliza
+   las clases .pulido-mix-race-icon / .mix-race-meta ya definidas en
+   dashboard.css (cargado globalmente), así que acá solo se posiciona el
+   contenedor sobre el canvas. Se agranda un poco respecto al tamaño que
+   usa el Dashboard (pensado para monitor) sin tocar esas clases globales,
+   para no afectar la vista de escritorio. */
+.tv-race-icons {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+#tv-root .pulido-mix-race-icon {
+    font-size: 1.7rem;
+}
+
+#tv-root .mix-race-meta {
+    font-size: 1.6rem;
+}
+
+#tv-root .mix-race-meta span {
+    font-size: .85rem;
+}
+
+.tv-subtitulo-semana {
+    flex-shrink: 0;
+    font-size: 1.5rem;
+    color: #94a3b8;
+    margin-bottom: 1vh;
+    font-weight: 600;
+}
+
+/* ── Grids genéricos (Pulido / Máquinas) ───────────────────────────── */
+.tv-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    grid-auto-rows: min-content;
+    gap: 20px;
+    overflow-y: auto;
+    align-content: start;
+    padding-right: 4px;
+}
+
+.tv-grid::-webkit-scrollbar { width: 8px; }
+.tv-grid::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 8px; }
+
+.tv-card {
+    background: #141c2e;
+    border-radius: 16px;
+    padding: 22px 24px;
+    box-shadow: 0 6px 18px rgba(0,0,0,.25);
+    border-top: 6px solid #475569;
+}
+
+.tv-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.tv-card-nombre {
+    font-size: 1.6rem;
+    font-weight: 800;
+    color: #ffffff;
+}
+
+.tv-card-badge {
+    font-size: 1rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 5px 12px;
+    border-radius: 20px;
+    letter-spacing: .04em;
+}
+
+/* Fila con la foto del buje + cronómetro (Pulido en vivo) -- mismo layout
+   que el Panel de Supervisión de admin (pulido.js: imagen 64x64 a la
+   izquierda, timer+meta centrados en el resto del ancho). */
+.tv-card-row-imagen {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px;
+    border-radius: 12px;
+    margin: 4px 0;
+}
+
+.tv-card-imagen {
+    width: 84px;
+    height: 84px;
+    border-radius: 10px;
+    background: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    overflow: hidden;
+    box-shadow: 0 2px 6px rgba(0,0,0,.3);
+}
+
+.tv-card-imagen img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.tv-card-imagen i {
+    color: #94a3b8;
+    font-size: 2.2rem;
+}
+
+.tv-card-info {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.tv-card-timer {
+    font-size: 2.9rem;
+    font-weight: 900;
+    font-variant-numeric: tabular-nums;
+    color: #ffffff;
+    text-align: center;
+    margin: 6px 0;
+}
+
+.tv-card-meta {
+    font-size: 1.15rem;
+    color: #94a3b8;
+    text-align: center;
+}
+
+.tv-card-alerta {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: rgba(239, 68, 68, .15);
+    color: #fca5a5;
+    font-size: 1.1rem;
+    font-weight: 700;
+    text-align: center;
+    animation: tv-pulse-alerta 1.4s ease-in-out infinite;
+}
+
+@keyframes tv-pulse-alerta {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .55; }
+}
+
+.tv-vacio-slide {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #64748b;
+    font-size: 1.8rem;
+    font-weight: 600;
+}
+
+/* Tarjetas de máquina (hoy / semana) */
+.tv-maq-molde {
+    font-size: 2.1rem;
+    font-weight: 900;
+    color: #ffffff;
+}
+
+.tv-maq-producto {
+    display: flex;
+    justify-content: space-between;
+    font-size: 1.15rem;
+    color: #cbd5e1;
+    padding: 4px 0;
+    border-bottom: 1px dashed rgba(255,255,255,.08);
+}
+
+.tv-maq-total {
+    font-size: 3.3rem;
+    font-weight: 900;
+    color: #38bdf8;
+    text-align: center;
+    line-height: 1;
+    margin: 8px 0 2px;
+}
+
+.tv-maq-total-label {
+    text-align: center;
+    color: #94a3b8;
+    font-size: 1.05rem;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    margin-bottom: 4px;
+}
+
+/* ── Footer: dots + barra de progreso ──────────────────────────────── */
+#tv-footer {
+    flex-shrink: 0;
+    padding-top: 1.2vh;
+}
+
+#tv-dots {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.tv-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: rgba(255,255,255,.2);
+    transition: all .3s ease;
+}
+
+.tv-dot.active {
+    background: #38bdf8;
+    width: 38px;
+    border-radius: 7px;
+}
+
+#tv-progreso-barra {
+    height: 4px;
+    width: 100%;
+    background: rgba(255,255,255,.08);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+#tv-progreso-fill {
+    height: 100%;
+    width: 0%;
+    background: #38bdf8;
+    border-radius: 4px;
+}
+
+/* ── Botón salir ────────────────────────────────────────────────────── */
+#btn-exit-modo-tv {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 10000;
+    background: #ef4444;
+    color: #fff;
+    border: none;
+    padding: 12px 22px;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: 600;
+    opacity: .55;
+    display: none;
+}
+
+#btn-exit-modo-tv:hover { opacity: 1; }
+
+body.tv-produccion-mode #btn-exit-modo-tv { display: block; }

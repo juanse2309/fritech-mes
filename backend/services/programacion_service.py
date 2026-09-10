@@ -1,6 +1,6 @@
 import logging
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from sqlalchemy import text
 from backend.models.sql_models import db, Maquina, ProgramacionInyeccion, ProduccionInyeccion, LecturaParcialInyeccion
 from backend.services.op_numerador_service import OpNumeradorService
@@ -465,6 +465,31 @@ class ProgramacionService:
                     'responsable': lec.responsable
                 })
 
+        # Acumulado semanal por máquina (pedido Modo TV 2026-09-09): total de
+        # piezas de lotes CERRADOS desde el lunes de la semana en curso (hora
+        # Colombia) hasta ahora. Se agrega aparte de 'en_proceso'/'programaciones'
+        # (que son solo del día `fecha_str`) porque este acumulado cruza varios
+        # días y no debe cambiar solo porque se filtre otra fecha en Programación.
+        ahora_co = get_colombia_time()
+        lunes_semana = (ahora_co - timedelta(days=ahora_co.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        filas_semana = db.session.query(
+            ProduccionInyeccion.maquina,
+            db.func.sum(ProduccionInyeccion.cantidad_real).label('total'),
+            db.func.count(ProduccionInyeccion.id).label('lotes')
+        ).filter(
+            ProduccionInyeccion.estado == 'CERRADO',
+            db.func.coalesce(ProduccionInyeccion.fecha_fin, ProduccionInyeccion.fecha_inicia) >= lunes_semana
+        ).group_by(ProduccionInyeccion.maquina).all()
+        semana_por_maquina = {
+            (fila.maquina or '').upper(): {
+                'produccion_semana': float(fila.total or 0),
+                'lotes_semana': int(fila.lotes or 0)
+            }
+            for fila in filas_semana
+        }
+
         resultado = []
         for maquina_nom in maquinas_set:
             maquina_upper = maquina_nom.upper()
@@ -510,11 +535,16 @@ class ProgramacionService:
             if cola and estado_maquina == 'LIBRE':
                 estado_maquina = 'PROGRAMADO'
 
+            datos_semana = semana_por_maquina.get(maquina_upper, {'produccion_semana': 0, 'lotes_semana': 0})
+
             resultado.append({
                 'nombre': maquina_nom,
                 'estado': estado_maquina,
                 'trabajo_activo': trabajo_activo,
-                'cola': cola
+                'cola': cola,
+                'produccion_semana': datos_semana['produccion_semana'],
+                'lotes_semana': datos_semana['lotes_semana'],
+                'semana_desde': lunes_semana.strftime('%Y-%m-%d')
             })
 
         return resultado

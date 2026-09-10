@@ -19,6 +19,7 @@
     <link rel="stylesheet" href="/static/css/mobile-ux.css?v={{ RELEASE_VERSION }}">
     <link rel="stylesheet" href="/static/css/mobile.css?v={{ RELEASE_VERSION }}">
     <link rel="stylesheet" href="/static/css/tv_vista.css?v={{ RELEASE_VERSION }}">
+    <link rel="stylesheet" href="/static/css/modo_tv.css?v={{ RELEASE_VERSION }}">
     <link rel="stylesheet" href="/static/css/almacen_scroll.css?v={{ RELEASE_VERSION }}">
     <link rel="stylesheet" href="/static/css/pedidos_styles.css?v={{ RELEASE_VERSION }}">
     <link rel="stylesheet" href="/static/css/pulido.css?v={{ RELEASE_VERSION }}">
@@ -489,6 +490,7 @@
                         Asistencia</span></a> </li>
             <li class="menu-item" id="nav-notificaciones" data-page="notificaciones"> <a href="#"><i class="fas fa-bullhorn"></i><span>Notificaciones Push</span></a> </li>
             <li class="menu-item" data-page="auditoria-op"> <a href="#" onclick="cargarPagina('auditoria-op')"><i class="fas fa-clipboard-check text-warning"></i><span>Auditoría de OP</span></a> </li>
+            <li class="menu-item" data-page="modo-tv"> <a href="#" onclick="cargarPagina('modo-tv')"><i class="fas fa-tv text-primary"></i><span>Modo TV</span></a> </li>
 
             <!-- SECCION FRIMETALS -->
             <li class="menu-item" data-page="metals-dashboard"> <a href="#"><i
@@ -644,6 +646,79 @@
                             </div>
                         </div>
                     </div>
+                </div>
+            </div>
+
+            <!-- ============================================================ -->
+            <!-- MODO TV: pantalla rotativa de planta. Ronda del día (Ranking  -->
+            <!-- Mix -> Pulido en vivo -> Máquinas) + ronda de acumulado       -->
+            <!-- semanal (Ranking Mix -> Máquinas). Ver frontend/static/js/   -->
+            <!-- modules/modo_tv.js (window.ModuloTV). Solo lectura.          -->
+            <!-- ============================================================ -->
+            <div id="modo-tv-page" class="page" style="display: none;">
+                <div id="tv-root">
+                    <div id="tv-header">
+                        <div id="tv-header-left">
+                            <i class="fas fa-industry" id="tv-logo-icono"></i>
+                            <div id="tv-header-titulos">
+                                <h1 id="tv-slide-titulo">Ranking por Referencia</h1>
+                                <p id="tv-slide-subtitulo">Mix de Producción — Pulido</p>
+                            </div>
+                        </div>
+                        <div id="tv-header-right">
+                            <div id="tv-reloj">--:--:--</div>
+                            <div id="tv-fecha">-</div>
+                        </div>
+                    </div>
+
+                    <div id="tv-slides">
+                        <!-- Slide 1: Ranking por Referencia (Mix de Producción) — HOY -->
+                        <section class="tv-slide active" data-tv-slide="ranking">
+                            <div class="tv-chart-wrap">
+                                <canvas id="tv-chart-mix"></canvas>
+                                <div id="tv-mix-race-icons" class="tv-race-icons"></div>
+                                <div id="tv-mix-vacio" class="tv-empty" style="display:none;">Sin datos de Pulido en este rango todavía.</div>
+                            </div>
+                        </section>
+
+                        <!-- Slide 2: Pulido en vivo (supervisión, solo lectura) -->
+                        <section class="tv-slide" data-tv-slide="pulido">
+                            <div id="tv-pulido-grid" class="tv-grid"></div>
+                        </section>
+
+                        <!-- Slide 3: Reporte de máquinas — ronda del día -->
+                        <section class="tv-slide" data-tv-slide="maquinas-hoy">
+                            <div id="tv-maquinas-hoy-grid" class="tv-grid"></div>
+                        </section>
+
+                        <!-- Slide 4: Ranking por Referencia (Mix de Producción) — SEMANA -->
+                        <section class="tv-slide" data-tv-slide="ranking-semana">
+                            <div class="tv-chart-wrap">
+                                <canvas id="tv-chart-mix-semana"></canvas>
+                                <div id="tv-mix-race-icons-semana" class="tv-race-icons"></div>
+                                <div id="tv-mix-vacio-semana" class="tv-empty" style="display:none;">Sin datos de Pulido esta semana todavía.</div>
+                            </div>
+                        </section>
+
+                        <!-- Slide 5: Reporte de máquinas — ronda acumulado semana -->
+                        <section class="tv-slide" data-tv-slide="maquinas-semana">
+                            <div id="tv-maquinas-semana-sub" class="tv-subtitulo-semana"></div>
+                            <div id="tv-maquinas-semana-grid" class="tv-grid"></div>
+                        </section>
+                    </div>
+
+                    <div id="tv-footer">
+                        <div id="tv-dots">
+                            <span class="tv-dot active" data-tv-dot="ranking"></span>
+                            <span class="tv-dot" data-tv-dot="pulido"></span>
+                            <span class="tv-dot" data-tv-dot="maquinas-hoy"></span>
+                            <span class="tv-dot" data-tv-dot="ranking-semana"></span>
+                            <span class="tv-dot" data-tv-dot="maquinas-semana"></span>
+                        </div>
+                        <div id="tv-progreso-barra"><div id="tv-progreso-fill"></div></div>
+                    </div>
+
+                    <button id="btn-exit-modo-tv" onclick="ModuloTV.salir()"><i class="fas fa-times"></i> Salir de Modo TV</button>
                 </div>
             </div>
 
@@ -5663,6 +5738,7 @@
     <script src="/static/js/modules/reportes.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/mezcla.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/historial.js?v={{ RELEASE_VERSION }}"></script>
+    <script src="/static/js/modules/modo_tv.js?v={{ RELEASE_VERSION }}"></script>
 
     <!-- Librerías para PDF -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>

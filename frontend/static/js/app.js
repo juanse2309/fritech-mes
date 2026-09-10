@@ -651,7 +651,8 @@ function cargarPagina(nombrePagina, pushToHistory = true) {
         'metals-dashboard': window.ModuloMetals,
         'asistencia': window.ModuloAsistencia,
         'notificaciones': window.ModuloNotificaciones,
-        'auditoria-op': window.ModuloAuditoriaOP
+        'auditoria-op': window.ModuloAuditoriaOP,
+        'modo-tv': window.ModuloTV
     };
 
     if (window.AppState.paginaActual) {
@@ -831,7 +832,8 @@ function inicializarModulo(nombrePagina) {
         'metals-horno': window.ModuloMetals,
         'metals-pulido-m': window.ModuloMetals,
         'asistencia': window.ModuloAsistencia,
-        'auditoria-op': window.ModuloAuditoriaOP
+        'auditoria-op': window.ModuloAuditoriaOP,
+        'modo-tv': window.ModuloTV
     };
 
     const modulo = modulos[nombrePagina];
@@ -954,7 +956,8 @@ function inicializarModulo(nombrePagina) {
                 'metals-dashboard': window.ModuloMetals,
                 'asistencia': window.ModuloAsistencia,
                 'inyeccion': window.ModuloInyeccion, // MAPEADO CORRECTO
-                'auditoria-op': window.ModuloAuditoriaOP
+                'auditoria-op': window.ModuloAuditoriaOP,
+                'modo-tv': window.ModuloTV
             };
             const moduloRetry = modulosRetry[nombrePagina];
             if (moduloRetry?.inicializar) {
