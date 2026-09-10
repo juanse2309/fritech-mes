@@ -225,67 +225,59 @@ window.ModuloTV = (function () {
         fill.style.width = '100%';
     }
 
-    // 'autoScrollGen' invalida cualquier paso/animación programado de una
-    // ronda anterior de auto-scroll sin tener que llevar la cuenta de cada
-    // id de rAF/setTimeout por separado -- cada callback se fija si sigue
-    // siendo la ronda vigente antes de tocar el DOM.
-    let autoScrollGen = 0;
+    const IDS_GRIDS_TV = ['tv-pulido-grid', 'tv-maquinas-hoy-grid', 'tv-maquinas-semana-grid'];
 
     /**
-     * Auto-scroll paginado para los grids de tarjetas (Pulido en vivo,
-     * Máquinas) -- pedido del usuario 2026-09-10 tras probar en la TV real:
-     * con las tarjetas agrandadas para leerse a distancia, en la pantalla
-     * física de la TV solo entran 1-2 filas, y el resto queda cortado sin
-     * que nadie pueda hacer scroll manual (a diferencia del navegador de
-     * escritorio, donde sí cabían más filas). Mismo espíritu que el
-     * auto-scroll de Almacén (almacen.js: iniciarAutoScroll), pero acá el
-     * tiempo total está fijo (la duración del slide), así que se reparte
-     * en partes iguales entre cuantas "páginas" hagan falta -- si todo cabe
-     * en una sola pantalla no se mueve nada.
+     * Auto-scroll de los grids de tarjetas (Pulido en vivo, Máquinas) --
+     * pedido del usuario 2026-09-10 tras probar en la TV real: con las
+     * tarjetas agrandadas para leerse a distancia, en la pantalla física de
+     * la TV solo entran 1-2 filas, y el resto queda cortado sin que nadie
+     * pueda hacer scroll manual.
      *
-     * IMPORTANTE: todo esto corre con setTimeout + asignación directa de
-     * scrollTop, nunca con requestAnimationFrame ni con
-     * grid.scrollTo({behavior:'smooth'}) -- probado en este mismo navegador
-     * y ninguna de las dos formas mueve el scroll de manera confiable (el
-     * navegador deja de pintar frames de animación si nadie está mirando
-     * activamente la pestaña). setTimeout + scrollTop directo sí se
-     * confirmó que funciona siempre. El deslizado suave queda a cargo de
-     * 'scroll-behavior: smooth' en CSS (.tv-grid) -- si el navegador de la
-     * TV no lo soporta, simplemente salta de golpe en vez de deslizar, pero
-     * el cambio de página en sí nunca depende de eso.
+     * SEGUNDO INTENTO -- el primero movía scrollTop con setTimeout y
+     * funcionaba perfecto en el navegador de escritorio, pero probado en
+     * la TV real (Tizen/WebOS) no se movía nada: ni scrollTop por JS ni
+     * scrollTo({behavior:'smooth'}) mueven el scroll ahí. Lo único que sí
+     * se confirmó corriendo en esa TV es la barra de progreso de abajo,
+     * que es una transición CSS pura -- así que el auto-scroll ahora
+     * también es 100% CSS (@keyframes sobre transform, ver
+     * .tv-grid-animando en modo_tv.css): JS solo mide una vez cuánto sobra
+     * y prende la animación con la duración exacta del slide; el
+     * navegador se encarga del resto, sin depender de que sus timers de JS
+     * sigan disparando puntualmente por 20+ segundos.
      */
     function iniciarAutoScrollGrid(gridId, duracionMs) {
         const grid = document.getElementById(gridId);
-        if (!grid) return;
-        grid.scrollTop = 0;
-        const miGen = ++autoScrollGen;
+        const viewport = grid?.parentElement;
+        if (!grid || !viewport) return;
+
+        // Por si quedó de una ronda anterior (no debería, limpiarAutoScrollGrid
+        // ya la quita, pero por si este grid en particular no pasó por ahí).
+        grid.classList.remove('tv-grid-animando');
 
         // Pequeña espera a que el layout esté asentado (tarjetas ya
-        // pintadas con su alto real) antes de medir scrollHeight/clientHeight.
-        const tInicial = setTimeout(() => {
-            if (miGen !== autoScrollGen) return;
-            const maxScroll = grid.scrollHeight - grid.clientHeight;
-            if (maxScroll <= 4) return; // todo cabe en una pantalla, no hace falta mover nada
+        // pintadas con su alto real) antes de medir.
+        const t = setTimeout(() => {
+            const distancia = grid.scrollHeight - viewport.clientHeight;
+            if (distancia <= 4) return; // todo cabe en una pantalla, no hace falta animar
 
-            const numPaginas = Math.ceil(grid.scrollHeight / grid.clientHeight);
-            const tiempoPorPagina = duracionMs / numPaginas;
-
-            for (let i = 1; i < numPaginas; i++) {
-                const destino = Math.min(Math.round(i * grid.clientHeight), maxScroll);
-                const t = setTimeout(() => {
-                    if (miGen !== autoScrollGen) return;
-                    grid.scrollTop = destino;
-                }, Math.max(0, Math.round(i * tiempoPorPagina) - 50));
-                timeoutsAutoScroll.push(t);
-            }
+            grid.style.setProperty('--tv-scroll-distancia', `-${Math.round(distancia)}px`);
+            grid.style.animationDuration = `${duracionMs}ms`;
+            grid.classList.add('tv-grid-animando');
         }, 50);
-        timeoutsAutoScroll.push(tInicial);
+        timeoutsAutoScroll.push(t);
     }
 
     function limpiarAutoScrollGrid() {
-        autoScrollGen++; // invalida cualquier callback de la ronda anterior
         timeoutsAutoScroll.forEach(t => clearTimeout(t));
         timeoutsAutoScroll = [];
+        IDS_GRIDS_TV.forEach(id => {
+            const grid = document.getElementById(id);
+            if (!grid) return;
+            grid.classList.remove('tv-grid-animando');
+            grid.style.removeProperty('--tv-scroll-distancia');
+            grid.style.removeProperty('animation-duration');
+        });
     }
 
     // ── Slides 1 y 4: Ranking por Referencia (Mix de Producción) ────────
