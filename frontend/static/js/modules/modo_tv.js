@@ -234,16 +234,17 @@ window.ModuloTV = (function () {
      * la TV solo entran 1-2 filas, y el resto queda cortado sin que nadie
      * pueda hacer scroll manual.
      *
-     * TERCER INTENTO -- el primero movía scrollTop con setTimeout: perfecto
-     * en escritorio, nada en la TV real. El segundo cambió a una animación
-     * CSS con @keyframes sobre 'transform' (traducción por compositor):
-     * tampoco se movió en la TV. Lo único confirmado corriendo ahí es la
-     * barra de progreso de abajo (animarBarraProgreso), que anima 'width'
-     * -- una propiedad de layout, no de compositor. Así que acá se copia
-     * ese mismo patrón EXACTO (transition + cambiar la propiedad, forzando
-     * reflow antes de armar la transición) pero sobre 'margin-top' en vez
-     * de 'width': layout puro, sin transform ni compositor de por medio,
-     * para no depender de una capacidad que esa TV podría no tener.
+     * CUARTO INTENTO. 1) scrollTop por JS: nada en la TV real. 2) animación
+     * CSS con @keyframes sobre 'transform': tampoco se movió. 3) transition
+     * sobre 'margin-top' (mismo patrón que la barra de progreso, que sí
+     * corre ahí): esta vez SÍ se movió, pero a muy pocos FPS -- 'margin-top'
+     * es una propiedad de layout, y animarla obliga al navegador a
+     * recalcular el layout de toda la tarjeta en cada cuadro, carísimo
+     * para el hardware limitado de una TV. Acá se prueba el combo de las
+     * dos lecciones: 'transition' (que sí corre) pero sobre 'transform'
+     * (que no toca layout, solo composición de capas -- mucho más barato).
+     * Si en la TV real se sigue viendo entrecortado, hay que volver a
+     * margin-top (funciona, aunque feo) en vez de esto.
      */
     function iniciarAutoScrollGrid(gridId, duracionMs) {
         const grid = document.getElementById(gridId);
@@ -251,7 +252,7 @@ window.ModuloTV = (function () {
         if (!grid || !viewport) return;
 
         grid.style.transition = 'none';
-        grid.style.marginTop = '0px';
+        grid.style.transform = 'translateY(0)';
         void grid.offsetHeight; // forzar reflow, mismo truco que animarBarraProgreso
 
         // Pequeña espera a que el layout esté asentado (tarjetas ya
@@ -260,8 +261,8 @@ window.ModuloTV = (function () {
             const distancia = grid.scrollHeight - viewport.clientHeight;
             if (distancia <= 4) return; // todo cabe en una pantalla, no hace falta animar
 
-            grid.style.transition = `margin-top ${duracionMs}ms linear`;
-            grid.style.marginTop = `-${Math.round(distancia)}px`;
+            grid.style.transition = `transform ${duracionMs}ms linear`;
+            grid.style.transform = `translateY(-${Math.round(distancia)}px)`;
         }, 50);
         timeoutsAutoScroll.push(t);
     }
@@ -273,7 +274,7 @@ window.ModuloTV = (function () {
             const grid = document.getElementById(id);
             if (!grid) return;
             grid.style.transition = 'none';
-            grid.style.marginTop = '0px';
+            grid.style.transform = 'translateY(0)';
         });
     }
 
@@ -287,7 +288,14 @@ window.ModuloTV = (function () {
         const elVacio = document.getElementById(vacioId);
         const overlay = document.getElementById(overlayId);
         try {
-            const res = await window.apiClient.get(`/dashboard/stats?desde=${desde}&hasta=${hasta}`);
+            // nocache=1: /dashboard/stats cachea 10 minutos en el servidor
+            // (@cached_route). Sin esto, cuando alguien se pone de líder a
+            // mitad de esos 10 min, utils.js SÍ anuncia el cambio por voz
+            // de inmediato (esa consulta no tiene caché), pero el gráfico
+            // de esta pantalla seguía mostrando datos viejos hasta que el
+            // caché expirara por su cuenta -- pedido del usuario 2026-09-11
+            // tras confirmar justo ese desfase en planta.
+            const res = await window.apiClient.get(`/dashboard/stats?desde=${desde}&hasta=${hasta}&nocache=1`);
             const data = res?.data || {};
             const profundo = data.rankings?.pulido_profundo || {};
             const operarioRef = data.analytics_pulido?.operario_referencia || {};
