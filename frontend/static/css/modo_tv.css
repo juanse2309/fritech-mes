@@ -196,6 +196,10 @@ body.tv-produccion-mode #modo-tv-page {
     overflow-y: auto;
     align-content: start;
     padding-right: 4px;
+    /* Desliza suave cuando modo_tv.js mueve scrollTop para el auto-scroll
+       paginado; si el navegador no lo soporta, simplemente salta de golpe
+       -- el cambio de página en sí no depende de esto. */
+    scroll-behavior: smooth;
 }
 
 .tv-grid::-webkit-scrollbar { width: 8px; }

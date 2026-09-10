@@ -65,12 +65,17 @@ window.ModuloTV = (function () {
         }
     ];
 
+    function duracionDeSlide(id) {
+        return SLIDES.find(s => s.id === id)?.duracion || 20000;
+    }
+
     let indiceActual = 0;
     let timeoutRotacion = null;
     let intervalReloj = null;
     let intervalTimersPulido = null;
     let activo = false;
     let escHandler = null;
+    let timeoutsAutoScroll = [];
 
     // Un chart de Chart.js por canvas (día y semana son canvases distintos,
     // ver HTML) -- se destruyen y recrean cada vez que su slide vuelve a
@@ -116,6 +121,7 @@ window.ModuloTV = (function () {
         if (timeoutRotacion) clearTimeout(timeoutRotacion);
         if (intervalReloj) clearInterval(intervalReloj);
         if (intervalTimersPulido) clearInterval(intervalTimersPulido);
+        limpiarAutoScrollGrid();
         timeoutRotacion = null;
         intervalReloj = null;
         intervalTimersPulido = null;
@@ -194,6 +200,7 @@ window.ModuloTV = (function () {
         // por segundo -- no tiene sentido seguir calculándolo mientras la
         // tarjeta no es visible.
         if (intervalTimersPulido) { clearInterval(intervalTimersPulido); intervalTimersPulido = null; }
+        limpiarAutoScrollGrid();
 
         animarBarraProgreso(slide.duracion);
 
@@ -216,6 +223,69 @@ window.ModuloTV = (function () {
         void fill.offsetWidth;
         fill.style.transition = `width ${duracionMs}ms linear`;
         fill.style.width = '100%';
+    }
+
+    // 'autoScrollGen' invalida cualquier paso/animación programado de una
+    // ronda anterior de auto-scroll sin tener que llevar la cuenta de cada
+    // id de rAF/setTimeout por separado -- cada callback se fija si sigue
+    // siendo la ronda vigente antes de tocar el DOM.
+    let autoScrollGen = 0;
+
+    /**
+     * Auto-scroll paginado para los grids de tarjetas (Pulido en vivo,
+     * Máquinas) -- pedido del usuario 2026-09-10 tras probar en la TV real:
+     * con las tarjetas agrandadas para leerse a distancia, en la pantalla
+     * física de la TV solo entran 1-2 filas, y el resto queda cortado sin
+     * que nadie pueda hacer scroll manual (a diferencia del navegador de
+     * escritorio, donde sí cabían más filas). Mismo espíritu que el
+     * auto-scroll de Almacén (almacen.js: iniciarAutoScroll), pero acá el
+     * tiempo total está fijo (la duración del slide), así que se reparte
+     * en partes iguales entre cuantas "páginas" hagan falta -- si todo cabe
+     * en una sola pantalla no se mueve nada.
+     *
+     * IMPORTANTE: todo esto corre con setTimeout + asignación directa de
+     * scrollTop, nunca con requestAnimationFrame ni con
+     * grid.scrollTo({behavior:'smooth'}) -- probado en este mismo navegador
+     * y ninguna de las dos formas mueve el scroll de manera confiable (el
+     * navegador deja de pintar frames de animación si nadie está mirando
+     * activamente la pestaña). setTimeout + scrollTop directo sí se
+     * confirmó que funciona siempre. El deslizado suave queda a cargo de
+     * 'scroll-behavior: smooth' en CSS (.tv-grid) -- si el navegador de la
+     * TV no lo soporta, simplemente salta de golpe en vez de deslizar, pero
+     * el cambio de página en sí nunca depende de eso.
+     */
+    function iniciarAutoScrollGrid(gridId, duracionMs) {
+        const grid = document.getElementById(gridId);
+        if (!grid) return;
+        grid.scrollTop = 0;
+        const miGen = ++autoScrollGen;
+
+        // Pequeña espera a que el layout esté asentado (tarjetas ya
+        // pintadas con su alto real) antes de medir scrollHeight/clientHeight.
+        const tInicial = setTimeout(() => {
+            if (miGen !== autoScrollGen) return;
+            const maxScroll = grid.scrollHeight - grid.clientHeight;
+            if (maxScroll <= 4) return; // todo cabe en una pantalla, no hace falta mover nada
+
+            const numPaginas = Math.ceil(grid.scrollHeight / grid.clientHeight);
+            const tiempoPorPagina = duracionMs / numPaginas;
+
+            for (let i = 1; i < numPaginas; i++) {
+                const destino = Math.min(Math.round(i * grid.clientHeight), maxScroll);
+                const t = setTimeout(() => {
+                    if (miGen !== autoScrollGen) return;
+                    grid.scrollTop = destino;
+                }, Math.max(0, Math.round(i * tiempoPorPagina) - 50));
+                timeoutsAutoScroll.push(t);
+            }
+        }, 50);
+        timeoutsAutoScroll.push(tInicial);
+    }
+
+    function limpiarAutoScrollGrid() {
+        autoScrollGen++; // invalida cualquier callback de la ronda anterior
+        timeoutsAutoScroll.forEach(t => clearTimeout(t));
+        timeoutsAutoScroll = [];
     }
 
     // ── Slides 1 y 4: Ranking por Referencia (Mix de Producción) ────────
@@ -519,6 +589,7 @@ window.ModuloTV = (function () {
             tickTimersPulido();
             if (intervalTimersPulido) clearInterval(intervalTimersPulido);
             intervalTimersPulido = setInterval(tickTimersPulido, 1000);
+            iniciarAutoScrollGrid('tv-pulido-grid', duracionDeSlide('pulido'));
         } catch (e) {
             console.error('[ModuloTV] Error cargando Pulido en vivo:', e);
             grid.innerHTML = '<div class="tv-vacio-slide">No se pudo cargar Pulido en vivo.</div>';
@@ -632,6 +703,7 @@ window.ModuloTV = (function () {
                     <div style="margin-top:8px;">${lecturasHTML}</div>
                 </div>`;
             }).join('');
+            iniciarAutoScrollGrid('tv-maquinas-hoy-grid', duracionDeSlide('maquinas-hoy'));
         } catch (e) {
             console.error('[ModuloTV] Error cargando Reporte de Máquinas (hoy):', e);
             grid.innerHTML = '<div class="tv-vacio-slide">No se pudo cargar el reporte de máquinas.</div>';
@@ -668,6 +740,7 @@ window.ModuloTV = (function () {
                     <div class="tv-maq-total-label">Piezas esta semana</div>
                     <div class="tv-maq-total">${Math.round(m.produccion_semana || 0).toLocaleString('es-CO')}</div>
                 </div>`).join('');
+            iniciarAutoScrollGrid('tv-maquinas-semana-grid', duracionDeSlide('maquinas-semana'));
         } catch (e) {
             console.error('[ModuloTV] Error cargando Reporte de Máquinas (semana):', e);
             grid.innerHTML = '<div class="tv-vacio-slide">No se pudo cargar el acumulado semanal.</div>';
