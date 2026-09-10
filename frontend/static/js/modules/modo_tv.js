@@ -234,26 +234,25 @@ window.ModuloTV = (function () {
      * la TV solo entran 1-2 filas, y el resto queda cortado sin que nadie
      * pueda hacer scroll manual.
      *
-     * SEGUNDO INTENTO -- el primero movía scrollTop con setTimeout y
-     * funcionaba perfecto en el navegador de escritorio, pero probado en
-     * la TV real (Tizen/WebOS) no se movía nada: ni scrollTop por JS ni
-     * scrollTo({behavior:'smooth'}) mueven el scroll ahí. Lo único que sí
-     * se confirmó corriendo en esa TV es la barra de progreso de abajo,
-     * que es una transición CSS pura -- así que el auto-scroll ahora
-     * también es 100% CSS (@keyframes sobre transform, ver
-     * .tv-grid-animando en modo_tv.css): JS solo mide una vez cuánto sobra
-     * y prende la animación con la duración exacta del slide; el
-     * navegador se encarga del resto, sin depender de que sus timers de JS
-     * sigan disparando puntualmente por 20+ segundos.
+     * TERCER INTENTO -- el primero movía scrollTop con setTimeout: perfecto
+     * en escritorio, nada en la TV real. El segundo cambió a una animación
+     * CSS con @keyframes sobre 'transform' (traducción por compositor):
+     * tampoco se movió en la TV. Lo único confirmado corriendo ahí es la
+     * barra de progreso de abajo (animarBarraProgreso), que anima 'width'
+     * -- una propiedad de layout, no de compositor. Así que acá se copia
+     * ese mismo patrón EXACTO (transition + cambiar la propiedad, forzando
+     * reflow antes de armar la transición) pero sobre 'margin-top' en vez
+     * de 'width': layout puro, sin transform ni compositor de por medio,
+     * para no depender de una capacidad que esa TV podría no tener.
      */
     function iniciarAutoScrollGrid(gridId, duracionMs) {
         const grid = document.getElementById(gridId);
         const viewport = grid?.parentElement;
         if (!grid || !viewport) return;
 
-        // Por si quedó de una ronda anterior (no debería, limpiarAutoScrollGrid
-        // ya la quita, pero por si este grid en particular no pasó por ahí).
-        grid.classList.remove('tv-grid-animando');
+        grid.style.transition = 'none';
+        grid.style.marginTop = '0px';
+        void grid.offsetHeight; // forzar reflow, mismo truco que animarBarraProgreso
 
         // Pequeña espera a que el layout esté asentado (tarjetas ya
         // pintadas con su alto real) antes de medir.
@@ -261,9 +260,8 @@ window.ModuloTV = (function () {
             const distancia = grid.scrollHeight - viewport.clientHeight;
             if (distancia <= 4) return; // todo cabe en una pantalla, no hace falta animar
 
-            grid.style.setProperty('--tv-scroll-distancia', `-${Math.round(distancia)}px`);
-            grid.style.animationDuration = `${duracionMs}ms`;
-            grid.classList.add('tv-grid-animando');
+            grid.style.transition = `margin-top ${duracionMs}ms linear`;
+            grid.style.marginTop = `-${Math.round(distancia)}px`;
         }, 50);
         timeoutsAutoScroll.push(t);
     }
@@ -274,9 +272,8 @@ window.ModuloTV = (function () {
         IDS_GRIDS_TV.forEach(id => {
             const grid = document.getElementById(id);
             if (!grid) return;
-            grid.classList.remove('tv-grid-animando');
-            grid.style.removeProperty('--tv-scroll-distancia');
-            grid.style.removeProperty('animation-duration');
+            grid.style.transition = 'none';
+            grid.style.marginTop = '0px';
         });
     }
 

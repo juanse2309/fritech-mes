@@ -186,13 +186,13 @@ body.tv-produccion-mode #modo-tv-page {
 }
 
 /* ── Grids genéricos (Pulido / Máquinas) ───────────────────────────── */
-/* "Ventana" que recorta: .tv-grid puede ser más alto que esto y modo_tv.js
-   lo desliza hacia arriba con una animación CSS (ver .tv-grid-animando)
-   en vez de mover scrollTop -- probado en la TV real de planta (Tizen/
-   WebOS) y ni scrollTop ni scrollTo({behavior:'smooth'}) mueven nada ahí,
-   mientras que las transiciones CSS (la barra de progreso de abajo) sí
-   se ven corriendo, así que el auto-scroll se resolvió con el mismo
-   mecanismo que sí funciona. */
+/* "Ventana" que recorta: .tv-grid puede ser más alto que esto y
+   modo_tv.js lo desliza hacia arriba animando 'margin-top' (transición
+   CSS de layout, no de transform/compositor) en vez de mover scrollTop
+   -- probado en la TV real de planta (Tizen/WebOS): ni scrollTop ni
+   scrollTo({behavior:'smooth'}) ni un @keyframes sobre transform mueven
+   nada ahí, mientras que la transición 'width' de la barra de progreso
+   de abajo sí corre -- el auto-scroll copia ese mismo mecanismo. */
 .tv-grid-viewport {
     flex: 1 1 auto;
     min-height: 0;
@@ -207,21 +207,6 @@ body.tv-produccion-mode #modo-tv-page {
     gap: 20px;
     align-content: start;
     padding-right: 4px;
-}
-
-.tv-grid.tv-grid-animando {
-    animation-name: tv-grid-deslizar;
-    animation-timing-function: linear;
-    animation-fill-mode: forwards;
-}
-
-/* Se detiene un momento arriba y abajo (para que dé tiempo a leer antes
-   de moverse y después de llegar) y desliza en el tramo del medio.
-   --tv-scroll-distancia (negativo, en px) lo calcula modo_tv.js según
-   cuánto contenido sobra verticalmente. */
-@keyframes tv-grid-deslizar {
-    0%, 12% { transform: translateY(0); }
-    88%, 100% { transform: translateY(var(--tv-scroll-distancia, 0px)); }
 }
 
 .tv-card {
