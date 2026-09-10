@@ -4,6 +4,7 @@ from backend.repositories.producto_repository import ProductoRepository
 from backend.services.audit_service import AuditService, OwnershipMismatchException
 from backend.config.constants import FALLBACK_OPERARIO
 from backend.utils.auth_middleware import require_role, ROL_ADMINS, ROL_COMERCIALES
+from backend.config.settings import Empresa
 import logging
 import uuid
 import json
@@ -31,7 +32,10 @@ def listar_productos_metals():
     """Lista productos de Frimetals usando el repositorio unificado (DRY)."""
     try:
         logger.debug("🌐 [API] Consultando productos de Frimetals via ProductoRepository")
-        repo = ProductoRepository(tenant="frimetals")
+        # Instancia standalone (piloto/cliente separado, catálogo ya migrado
+        # a db_productos): usa el modelo Producto estándar, no metals_productos.
+        tenant = "frimetals" if Empresa.CATALOGO_METALS_LEGACY else "friparts"
+        repo = ProductoRepository(tenant=tenant)
         productos = repo.listar_todos()
         return jsonify({"success": True, "productos": productos})
     except Exception as e:

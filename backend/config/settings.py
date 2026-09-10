@@ -52,6 +52,17 @@ class Empresa:
     # solo de uso interno de staff.
     MOSTRAR_PORTAL_CLIENTES = os.getenv('EMPRESA_PORTAL_CLIENTES', 'true').lower() == 'true'
 
+    # Compatibilidad con el catálogo legado 'metals_productos' (tabla
+    # separada de db_productos, ver MetalsProducto/ProductoRepository). La
+    # instancia compartida original (FRIPARTS+FRIMETALS en una sola base,
+    # hoy en Render) todavía depende de esta tabla -- default True para no
+    # cambiarle el comportamiento. Una instancia nueva de un solo cliente
+    # (ej. el piloto de FRIMETALS standalone, con su catálogo ya migrado a
+    # db_productos) define EMPRESA_CATALOGO_METALS_LEGACY=false para que
+    # ?division=frimetals / tenant="frimetals" usen el modelo Producto
+    # estándar en vez de buscar una tabla metals_productos que no existe ahí.
+    CATALOGO_METALS_LEGACY = os.getenv('EMPRESA_CATALOGO_METALS_LEGACY', 'true').lower() == 'true'
+
 
 class Almacenes:
     """Nombres de almacenes estandarizados."""

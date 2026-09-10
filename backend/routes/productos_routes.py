@@ -124,7 +124,7 @@ def buscar_productos(query):
         limite = request.args.get('limite', 30, type=int)
 
         # --- Lógica de Switch para FriMetals ---
-        if division == 'frimetals':
+        if division == 'frimetals' and Empresa.CATALOGO_METALS_LEGACY:
             # LINEA CLAVE: Cambio a tabla metals_productos para DBeaver
             rows = MetalsProducto.query.filter(
                 (MetalsProducto.codigo.ilike(termino)) |
@@ -204,7 +204,7 @@ def listar_productos():
         division = request.args.get('division', '').lower()
 
         # --- Lógica de Switch para FriMetals ---
-        if division == 'frimetals':
+        if division == 'frimetals' and Empresa.CATALOGO_METALS_LEGACY:
             # LINEA CLAVE: Cambio a tabla metals_productos para DBeaver
             rows = MetalsProducto.query.all()
             resultado = []
