@@ -163,6 +163,9 @@ with app.app_context():
         db.session.execute(text("ALTER TABLE db_ventas_staging ADD COLUMN IF NOT EXISTS descripcion_producto VARCHAR(255);"))
         db.session.execute(text("ALTER TABLE db_ventas_staging ADD COLUMN IF NOT EXISTS iva NUMERIC(18,2);"))
         db.session.execute(text("ALTER TABLE db_ventas_staging ADD COLUMN IF NOT EXISTS identificacion_cliente VARCHAR(50);"))
+        # Marca de pedido de exportación (elige plantilla WO al exportar) --
+        # ver Pedido.es_exportacion / FacturacionService.generar_dataframe_exportacion.
+        db.session.execute(text("ALTER TABLE db_pedidos ADD COLUMN IF NOT EXISTS es_exportacion BOOLEAN DEFAULT FALSE;"))
         # Secuencia nativa para el consecutivo PED-XXXX de db_pedidos (ver
         # PedidosService.generar_siguiente_id_pedido). Se crea y se arranca
         # (bootstrap) UNA sola vez -- el bloque completo queda dentro del

@@ -432,6 +432,14 @@ class Pedido(db.Model):
     progreso_despacho = db.Column(db.String(10), default='0%')
     delegado_a      = db.Column(db.String(150), nullable=True)
     observaciones   = db.Column(db.Text,        nullable=True)
+    # Marca a nivel de TODO el pedido (no por línea) para elegir la plantilla
+    # de World Office al exportar -- ver FacturacionService.generar_dataframe_exportacion.
+    # Deliberadamente separado del checkbox "Exportación (USD)" por ítem
+    # (precio_usd/trm_aplicada): ese es solo conversión de moneda de un
+    # producto puntual, y cada cliente de exportación negocia un precio
+    # distinto -- no sirve como señal de qué plantilla usar (decisión
+    # 2026-09-11, ver conversación sobre el pedido 104561).
+    es_exportacion  = db.Column(db.Boolean, default=False, nullable=True)
 
 
 class DbClienteEquivalencias(db.Model):

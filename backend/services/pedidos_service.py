@@ -433,6 +433,78 @@ class PedidosService:
     """
 
     @staticmethod
+    def detectar_exportados_sin_confirmar_wo(db_session, dias_gracia=2):
+        """
+        Reconciliación de integridad: pedidos que la app marcó EXPORTADO_WO
+        pero cuyo documento nunca volvió sincronizado desde World Office.
+
+        Hallazgo real (caso Autopartes Santa Maria, pedido 104561,
+        2026-09-04): procesar_datos_wo (facturacion_routes.py) marca un
+        pedido como EXPORTADO_WO en el momento en que se GENERA el archivo
+        para subir a WO -- no cuando WO confirma haberlo recibido. Si el
+        archivo nunca se importó, WO lo rechazó, o alguien lo anuló después,
+        la app se queda mostrando un pedido "exportado" que WO nunca tuvo,
+        sin que nadie se entere hasta que el cliente reclama.
+
+        db_ventas es la fuente de verdad de lo que WO sí tiene (poblada por
+        WoSyncService en cada sincronización comercial). El archivo generado
+        siempre usa 'Encab: Prefijo' = 'PED' (ver procesar_datos_wo), así que
+        el documento esperado en WO es exactamente 'PED-<wo_consecutivo>'.
+
+        dias_gracia evita falsos positivos el mismo día/día siguiente al
+        exportar: el reflejo en db_ventas depende del próximo ciclo de
+        sincronización, no es instantáneo (confirmado con datos reales:
+        pedidos exportados el mismo día 2026-09-10 ya aparecían sincronizados
+        al día siguiente).
+
+        Solo lectura -- no cambia estado de ningún pedido.
+
+        :return: lista de dicts (id_pedido, wo_consecutivo, cliente,
+            vendedor, fecha, dias_sin_confirmar, lineas, total) ordenada por
+            fecha ascendente (los más viejos primero).
+        """
+        try:
+            sql = text("""
+                SELECT
+                    p.id_pedido,
+                    p.wo_consecutivo,
+                    MIN(p.cliente)  AS cliente,
+                    MIN(p.vendedor) AS vendedor,
+                    MIN(p.fecha)    AS fecha,
+                    COUNT(*)        AS lineas,
+                    SUM(COALESCE(p.cantidad, 0) * COALESCE(p.precio_unitario, 0)) AS total
+                FROM db_pedidos p
+                WHERE p.estado = 'EXPORTADO_WO'
+                  AND p.wo_consecutivo IS NOT NULL
+                  AND TRIM(p.wo_consecutivo) != ''
+                  AND p.fecha <= (CURRENT_DATE - (:dias_gracia || ' days')::interval)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM db_ventas v
+                      WHERE v.documento = 'PED-' || p.wo_consecutivo
+                        AND v.clasificacion = 'pedido'
+                  )
+                GROUP BY p.id_pedido, p.wo_consecutivo
+                ORDER BY MIN(p.fecha) ASC;
+            """)
+            filas = db_session.execute(sql, {"dias_gracia": dias_gracia}).mappings().all()
+
+            hoy = datetime.now().date()
+            return [{
+                "id_pedido": f["id_pedido"],
+                "wo_consecutivo": f["wo_consecutivo"],
+                "cliente": f["cliente"],
+                "vendedor": f["vendedor"],
+                "fecha": f["fecha"].isoformat() if f["fecha"] else None,
+                "dias_sin_confirmar": (hoy - f["fecha"]).days if f["fecha"] else None,
+                "lineas": f["lineas"],
+                "total": float(f["total"] or 0),
+            } for f in filas]
+        except Exception as e:
+            db_session.rollback()
+            logger.error(f"❌ Error detectando pedidos EXPORTADO_WO sin confirmar: {e}")
+            raise
+
+    @staticmethod
     def obtener_desglose_comprometido(codigo, db_session):
         """
         Desglose por pedido de lo que compone `comprometido` para un código:

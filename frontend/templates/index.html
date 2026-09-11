@@ -4120,6 +4120,34 @@
             </header>
 
             <div class="content-container p-3 p-lg-4">
+                <div id="wo-sin-confirmar-alert" class="alert alert-danger border-0 shadow-sm rounded-4 mb-4" style="display:none;">
+                    <div class="d-flex align-items-start gap-2">
+                        <i class="fas fa-triangle-exclamation mt-1"></i>
+                        <div class="flex-grow-1">
+                            <div class="fw-bold mb-1">
+                                <span id="wo-sin-confirmar-count">0</span> pedido(s) marcados como exportados que World Office nunca confirmó
+                            </div>
+                            <div class="small text-muted mb-2">
+                                Se generó el archivo para World Office pero el documento nunca volvió sincronizado. Puede que nadie lo haya subido, que WO lo haya rechazado, o que lo hayan anulado allá.
+                            </div>
+                            <div class="table-responsive">
+                                <table class="table table-sm mb-0" id="tabla-wo-sin-confirmar">
+                                    <thead>
+                                        <tr>
+                                            <th>Pedido</th>
+                                            <th>Cliente</th>
+                                            <th>Vendedor</th>
+                                            <th>Fecha</th>
+                                            <th class="text-center">Días sin confirmar</th>
+                                            <th class="text-end">Total</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="tbody-wo-sin-confirmar"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
                 <div class="card shadow rounded-4 border-0 overflow-hidden">
                     <div
                         class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -4187,6 +4215,78 @@
                             <i class="fas fa-check-circle me-1"></i> <span id="wo-count-val">0</span>
                             pedidos
                             seleccionados
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Pedidos de Exportación -- plantilla WO distinta ("Otra Moneda TRM"),
+                     flujo separado a propósito porque cambia semántica de varios campos
+                     (FormaPago = incoterm+puerto, Moneda/Trm, Valor Unitario siempre en 0
+                     porque cada cliente negocia su propio precio y se completa en WO). -->
+                <div class="card shadow rounded-4 border-0 overflow-hidden mt-4">
+                    <div
+                        class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <div>
+                            <h5 class="mb-1 fw-bold text-dark"><i
+                                    class="fas fa-plane-departure text-info me-2"></i>Pedidos de Exportación Pendientes
+                            </h5>
+                            <small class="text-muted">Plantilla WO de exportación (Moneda/TRM/Incoterm). El
+                                precio unitario queda en 0 a propósito -- se completa en World Office con lo
+                                negociado con cada cliente.</small>
+                        </div>
+                        <div class="d-flex gap-2 align-items-center">
+                            <div class="input-group input-group-sm" style="width: 220px;"
+                                title="Consecutivo Inicial Manual (Opcional)">
+                                <span class="input-group-text bg-light text-muted"><i class="fas fa-hashtag"></i></span>
+                                <input type="number" id="consecutivo-inicial-wo-exp" class="form-control"
+                                    placeholder="Consecutivo Inicial (Opcional)">
+                            </div>
+                            <button class="btn btn-outline-primary"
+                                onclick="ModuloFacturacion.cargarPedidosPendientesExportacion()">
+                                <i class="fas fa-sync-alt"></i> Actualizar
+                            </button>
+                            <button class="btn btn-info text-white fw-bold px-4 shadow-sm"
+                                onclick="ModuloFacturacion.abrirPreviewWOExportacion()">
+                                <i class="fas fa-file-download me-2"></i> Generar Archivo de Exportación
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle mb-0" id="tabla-pedidos-exportar-exp">
+                                <thead class="bg-light">
+                                    <tr>
+                                        <th style="width: 50px;" class="text-center">
+                                            <div class="form-check d-flex justify-content-center">
+                                                <input class="form-check-input" type="checkbox" id="check-all-wo-exp"
+                                                    onchange="ModuloFacturacion.toggleSelectAllExportacion(this)"
+                                                    style="cursor: pointer;">
+                                            </div>
+                                        </th>
+                                        <th>Pedido</th>
+                                        <th>Cliente</th>
+                                        <th>Fecha</th>
+                                        <th>Vendedor</th>
+                                        <th class="text-center">Items</th>
+                                        <th class="text-end pe-4">Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="tbody-pedidos-exportar-exp">
+                                    <tr>
+                                        <td colspan="7" class="text-center py-5 text-muted"><i
+                                                class="fas fa-spinner fa-spin fa-2x mb-2"></i><br>Cargando
+                                            pedidos de exportación...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="card-footer bg-light border-0 py-3 d-flex justify-content-between align-items-center">
+                        <small class="text-muted"><i class="fas fa-info-circle me-1"></i> Solo pedidos marcados
+                            como Exportación al registrarlos.</small>
+                        <div id="wo-exp-selection-count" class="fw-bold text-info" style="display: none;">
+                            <i class="fas fa-check-circle me-1"></i> <span id="wo-exp-count-val">0</span>
+                            pedidos seleccionados
                         </div>
                     </div>
                 </div>
@@ -4282,6 +4382,18 @@
                         <div class="form-group">
                             <label for="ped-ciudad"><i class="fas fa-city"></i> Ciudad</label>
                             <input type="text" id="ped-ciudad" placeholder="Ciudad" readonly>
+                        </div>
+
+                        <!-- Fila 2.6: Tipo de pedido -- por defecto Nacional, solo se marca para
+                             el flujo de exportación (aprox. una vez al mes). Determina qué
+                             plantilla de World Office se genera en Facturación, ver
+                             FacturacionService.generar_dataframe_exportacion. -->
+                        <div class="form-group full-width">
+                            <label style="display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer; margin: 0;">
+                                <input type="checkbox" id="ped-es-exportacion" style="width: auto;">
+                                <i class="fas fa-plane-departure text-primary"></i>
+                                Este pedido es de <strong>Exportación</strong> (usa la plantilla WO de exportación al generar el archivo)
+                            </label>
                         </div>
 
                         <!-- Fila 3 -->
@@ -5582,7 +5694,7 @@
 
             <div class="modal-header bg-success text-white px-4 py-3"
                 style="display: flex; justify-content: space-between; align-items: center; border-radius: 12px 12px 0 0;">
-                <h4 class="m-0"><i class="fas fa-file-excel me-2"></i> Vista Previa Exportación World Office
+                <h4 class="m-0" id="modal-preview-wo-titulo"><i class="fas fa-file-excel me-2"></i> Vista Previa Exportación World Office
                 </h4>
                 <button class="btn-icon text-white hover-scale" id="btn-cerrar-preview-wo"
                     onclick="ModuloFacturacion.cerrarPreviewWO()"

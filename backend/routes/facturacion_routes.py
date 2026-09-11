@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, current_app
 from backend.utils.auth_middleware import require_role, ROL_ADMINS
 from backend.utils.formatters import limpiar_identificacion_tercero
 from backend.services.facturacion_service import FacturacionService, FacturacionDatosInvalidosException
+from backend.services.pedidos_service import PedidosService
 from backend.core.responses import api_success, api_error
 from backend.core import task_runner
 import pandas as pd
@@ -22,14 +23,18 @@ def procesar_datos_wo(ids_filter=None, consecutivo_inicial=None, incluir_auditor
     """Lógica centralizada: Genera Excel y Actualiza SQL simultáneamente con Auto-Sanado de Precios."""
     
     # 1. Obtener ítems originales haciendo un LEFT JOIN con Producto (db_productos)
+    # Excluye es_exportacion=True (isnot(True) también cubre NULL de pedidos
+    # históricos previos a esta columna): esos van por
+    # FacturacionService.generar_dataframe_exportacion, con su propia
+    # plantilla WO de 60 columnas -- no se debe mezclar en la nacional.
     query = db.session.query(Pedido, Producto.precio).select_from(Pedido).outerjoin(
         Producto,
         or_(
             Pedido.id_codigo == Producto.id_codigo,
             Pedido.id_codigo == Producto.codigo_sistema
         )
-    ).filter(Pedido.estado == 'PENDIENTE')
-    
+    ).filter(Pedido.estado == 'PENDIENTE', Pedido.es_exportacion.isnot(True))
+
     if ids_filter:
         query = query.filter(Pedido.id_pedido.in_(ids_filter))
     
@@ -217,6 +222,22 @@ def obtener_pedidos_pendientes():
         logger.error(f"Error en obtener_pedidos_pendientes SQL: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
+@facturacion_bp.route('/api/facturacion/pedidos-exportados-sin-confirmar', methods=['GET'])
+@require_role(ROL_ADMINS + ['JEFE ALMACEN', 'JEFE ALISTAMIENTO'])
+def obtener_pedidos_exportados_sin_confirmar():
+    """
+    Reconciliación: pedidos EXPORTADO_WO cuyo documento nunca volvió
+    sincronizado desde World Office (ver PedidosService.detectar_exportados_sin_confirmar_wo).
+    """
+    try:
+        pendientes = PedidosService.detectar_exportados_sin_confirmar_wo(db.session)
+        return jsonify({'success': True, 'pedidos': pendientes})
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error en obtener_pedidos_exportados_sin_confirmar: {e}")
+        return jsonify({'success': False, 'error': 'No fue posible obtener la reconciliación de pedidos exportados.'}), 500
+
 def _generar_excel_wo_task(task_id, ids_filter, consecutivo_inicial):
     """
     Trabajo de fondo de exportar_world_office: genera el DataFrame (que ya
@@ -303,6 +324,121 @@ def preview_world_office():
         
         if df.empty: return jsonify({'success': True, 'data': []})
         
+        preview = df.fillna('').head(100).to_dict(orient='records')
+        return jsonify({'success': True, 'data': preview})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ====================================================================
+# PEDIDOS DE EXPORTACIÓN (plantilla WO "Otra Moneda TRM", distinta de la
+# nacional de arriba) — flujo separado a propósito para no arriesgar el de
+# nacional: son ~57 vs 60 columnas con semántica distinta en varios campos
+# (ver FacturacionService.generar_dataframe_exportacion). Se mantiene la
+# tabla/selección de "Pedidos Pendientes" nacional intacta (procesar_datos_wo
+# ya excluye es_exportacion=True) y esto vive en su propia sección de la UI.
+# ====================================================================
+
+@facturacion_bp.route('/api/facturacion/pedidos-pendientes-exportacion', methods=['GET'])
+@require_role(ROL_ADMINS + ['JEFE ALMACEN', 'JEFE ALISTAMIENTO'])
+def obtener_pedidos_pendientes_exportacion():
+    """Pedidos PENDIENTES marcados como exportación (misma agrupación que /pedidos-pendientes)."""
+    try:
+        pendientes = Pedido.query.filter(
+            Pedido.estado == 'PENDIENTE', Pedido.es_exportacion.is_(True)
+        ).all()
+        agrupados = {}
+        for r in pendientes:
+            id_ped = r.id_pedido
+            if id_ped not in agrupados:
+                agrupados[id_ped] = {
+                    'id': id_ped, 'fecha': str(r.fecha), 'cliente': r.cliente,
+                    'vendedor': r.vendedor, 'items_count': 0, 'total': 0, 'items': []
+                }
+            cant = float(r.cantidad or 0); prec = float(r.precio_unitario or 0)
+            agrupados[id_ped]['items_count'] += 1
+            agrupados[id_ped]['total'] += (cant * prec)
+            agrupados[id_ped]['items'].append({'cod': r.id_codigo, 'cant': cant})
+
+        resultado = sorted(agrupados.values(), key=lambda x: x['fecha'], reverse=True)
+        return jsonify({'success': True, 'pedidos': resultado})
+    except Exception as e:
+        logger.error(f"Error en obtener_pedidos_pendientes_exportacion: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _generar_excel_wo_exportacion_task(task_id, ids_filter, consecutivo_inicial):
+    """Contraparte de _generar_excel_wo_task para la plantilla de exportación."""
+    try:
+        df, cnt = FacturacionService.generar_dataframe_exportacion(ids_filter, consecutivo_inicial)
+
+        if df.empty:
+            db.session.rollback()
+            task_runner.set_failed(task_id, 'No hay pedidos de exportación pendientes para exportar.')
+            return
+
+        db.session.commit()
+        logger.info(f"✅ SQL Commit: {cnt} pedidos de exportación marcados EXPORTADO_WO.")
+
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='ImportarWO_Exportacion')
+        output.seek(0)
+
+        filename = f'PEDIDOS_WO_EXPORTACION_{datetime.now().strftime("%Y%m%d")}.xlsx'
+        fd, tmp_path = tempfile.mkstemp(suffix='.xlsx', prefix='wo_export_')
+        with os.fdopen(fd, 'wb') as f:
+            f.write(output.getvalue())
+
+        task_runner.set_completed(
+            task_id, file_path=tmp_path, filename=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            result_meta={"actualizados": cnt}
+        )
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"❌ Error en exportación WO de exportación (task {task_id}): {e}")
+        task_runner.set_failed(task_id, str(e))
+
+
+@facturacion_bp.route('/api/exportar/world-office-exportacion', methods=['POST'])
+@require_role(ROL_ADMINS + ['JEFE ALMACEN', 'JEFE ALISTAMIENTO'])
+def exportar_world_office_exportacion():
+    data = request.get_json(silent=True) or {}
+    ids_filter = data.get('ids', None)
+    consecutivo_inicial = data.get('consecutivo_inicial', None)
+
+    task_id = task_runner.create_task()
+    app_obj = current_app._get_current_object()
+    task_runner.run_in_background(
+        task_id, app_obj, _generar_excel_wo_exportacion_task,
+        ids_filter, consecutivo_inicial
+    )
+
+    return api_success(data={"task_id": task_id}, status_code=202)
+
+
+@facturacion_bp.route('/api/exportar/world-office-exportacion/preview', methods=['GET', 'POST'])
+@require_role(ROL_ADMINS + ['JEFE ALMACEN', 'JEFE ALISTAMIENTO'])
+def preview_world_office_exportacion():
+    """Vista previa sin persistencia (rollback automático de la sesión)."""
+    try:
+        ids_filter = None
+        consecutivo_inicial = None
+        if request.method == 'POST':
+            data = request.get_json(silent=True) or {}
+            ids_filter = data.get('ids', None)
+            consecutivo_inicial = data.get('consecutivo_inicial', None)
+
+        df, _ = FacturacionService.generar_dataframe_exportacion(ids_filter, consecutivo_inicial)
+
+        # OBLIGATORIO: rollback para que el preview NO guarde cambios en la BD
+        db.session.rollback()
+
+        if df.empty:
+            return jsonify({'success': True, 'data': []})
+
         preview = df.fillna('').head(100).to_dict(orient='records')
         return jsonify({'success': True, 'data': preview})
     except Exception as e:

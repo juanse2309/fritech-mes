@@ -114,6 +114,7 @@ def registrar_pedido():
         direccion = data.get('direccion', '')
         ciudad = data.get('ciudad', '')
         forma_pago = data.get('forma_pago', 'Contado')
+        es_exportacion = bool(data.get('es_exportacion', False))
         descuento_global = str(data.get('descuento_global', '0'))
         observaciones = data.get('observaciones', '')
         productos = data.get('productos', [])
@@ -276,6 +277,7 @@ def registrar_pedido():
                 registro_existente.observaciones = observaciones
                 registro_existente.forma_de_pago = forma_pago
                 registro_existente.descuento = descuento_global
+                registro_existente.es_exportacion = es_exportacion
             else:
                 # INSERT
                 nuevo_registro = Pedido(
@@ -297,7 +299,8 @@ def registrar_pedido():
                     estado='PENDIENTE',
                     observaciones=observaciones,
                     forma_de_pago=forma_pago,
-                    descuento=descuento_global
+                    descuento=descuento_global,
+                    es_exportacion=es_exportacion
                 )
                 db.session.add(nuevo_registro)
             
@@ -421,6 +424,7 @@ def obtener_detalle_pedido(id_pedido):
             "descuento_global": getattr(cab, 'descuento', '0') or "0",
             "estado": cab.estado,
             "observaciones": cab.observaciones or "",
+            "es_exportacion": bool(getattr(cab, 'es_exportacion', False)),
             "productos": []
         }
         

@@ -57,6 +57,36 @@ const ModuloPedidos = {
             btnAgregar.addEventListener('click', () => this.agregarItemAlCarrito());
         }
 
+        // 2.a Enter en Producto/Cantidad/Precio: sin esto, el Enter nativo del
+        // navegador dispara el submit del <form> (hay un button[type=submit]
+        // más abajo, "Registrar Pedido") en vez de solo añadir el item a la
+        // lista -- abre el modal de "¿Confirmar Registro?" a medio llenar un
+        // producto, o directamente registra el pedido sin el item que se
+        // estaba tipeando todavía. Enter aquí debe comportarse como
+        // "Añadir al Pedido", nunca como enviar el formulario completo.
+        const inputProducto = document.getElementById('ped-producto');
+        const inputCantidad = document.getElementById('ped-cantidad');
+        const inputPrecioItem = document.getElementById('ped-precio');
+        const onEnterAgregarItem = (focusSiguiente) => (e) => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            if (focusSiguiente) {
+                focusSiguiente.focus();
+                if (focusSiguiente.select) focusSiguiente.select();
+            } else {
+                this.agregarItemAlCarrito();
+            }
+        };
+        if (inputProducto && inputCantidad) {
+            inputProducto.addEventListener('keydown', onEnterAgregarItem(inputCantidad));
+        }
+        if (inputCantidad && inputPrecioItem) {
+            inputCantidad.addEventListener('keydown', onEnterAgregarItem(inputPrecioItem));
+        }
+        if (inputPrecioItem) {
+            inputPrecioItem.addEventListener('keydown', onEnterAgregarItem(null));
+        }
+
         // 2.b Checkbox "Exportación (USD)" y botón "Consultar TRM"
         const chkUsd = document.getElementById('ped-es-usd');
         if (chkUsd) {
@@ -537,6 +567,8 @@ const ModuloPedidos = {
         document.getElementById('ped-pago').value = pedido.forma_pago || 'Contado';
         document.getElementById('ped-descuento-global').value = pedido.descuento_global || 0;
         document.getElementById('ped-observaciones').value = pedido.observaciones || '';
+        const chkExport = document.getElementById('ped-es-exportacion');
+        if (chkExport) chkExport.checked = !!pedido.es_exportacion;
 
         // Establecer cliente seleccionado para las validaciones
         this.clienteSeleccionado = {
@@ -803,6 +835,10 @@ const ModuloPedidos = {
         this.calcularTotalPedido();
 
         mostrarNotificacion(`✓ ${codigo} agregado (${cantidad} unidades)`, 'success');
+
+        // Devolver el foco a la cajita de producto para seguir ingresando el
+        // siguiente item sin tener que hacer scroll de vuelta hasta acá.
+        document.getElementById('ped-producto').focus();
     },
 
 
@@ -1096,6 +1132,7 @@ const ModuloPedidos = {
                 direccion: this.clienteSeleccionado.direccion || '',
                 ciudad: this.clienteSeleccionado.ciudad || '',
                 forma_pago: document.getElementById('ped-pago').value,
+                es_exportacion: document.getElementById('ped-es-exportacion')?.checked || false,
                 descuento_global: descuentoGlobal,
                 observaciones: document.getElementById('ped-observaciones').value || '',
                 productos: this.listaProductos.map(item => ({

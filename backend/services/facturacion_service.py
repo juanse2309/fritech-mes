@@ -4,11 +4,41 @@ exportación World Office que ya vive en facturacion_routes.py).
 Extraído de backend/app.py.
 """
 import logging
+from datetime import datetime
+import pandas as pd
+from sqlalchemy import or_, text
 from backend.core.sql_database import db
-from backend.models.sql_models import Producto
-from backend.utils.formatters import normalizar_codigo
+from backend.models.sql_models import Producto, Pedido, AppConfig
+from backend.utils.formatters import normalizar_codigo, limpiar_identificacion_tercero
 
 logger = logging.getLogger(__name__)
+
+# 60 columnas de la plantilla WO "Otra Moneda TRM" (uso real, exportación
+# pedido 104561, 2026-09-11) -- distinta de las 57 de la plantilla nacional
+# en facturacion_routes.procesar_datos_wo: agrega Moneda/Trm (encabezado y
+# detalle), Fecha Emision e Importacion; usa 'Pref Dto Ext'/'No. Dto Ext' en
+# vez de los nombres largos; no trae Fecha Entrega/Sucursal/Clasificación.
+COLUMNAS_WO_EXPORTACION = [
+    'Encab: Empresa', 'Encab: Tipo Documento', 'Encab: Prefijo', 'Encab: Documento Número',
+    'Encab: Fecha', 'Encab: Tercero Interno', 'Encab: Tercero Externo', 'Encab: Pref Dto Ext',
+    'Encab: No. Dto Ext', 'Encab: Nota', 'Encab: FormaPago', 'Encab: Moneda', 'Encab: Trm',
+    'Encab: Verificado', 'Encab: Anulado', 'Encab: Fecha Emision',
+    'Encab: Personalizado 1', 'Encab: Personalizado 2', 'Encab: Personalizado 3',
+    'Encab: Personalizado 4', 'Encab: Personalizado 5', 'Encab: Personalizado 6',
+    'Encab: Personalizado 7', 'Encab: Personalizado 8', 'Encab: Personalizado 9',
+    'Encab: Personalizado 10', 'Encab: Personalizado 11', 'Encab: Personalizado 12',
+    'Encab: Personalizado 13', 'Encab: Personalizado 14', 'Encab: Personalizado 15',
+    'Encab: Importacion',
+    'Detalle: Producto', 'Detalle: Bodega', 'Detalle: UnidadDeMedida', 'Detalle: Cantidad',
+    'Detalle: IVA', 'Detalle: Valor Unitario', 'Detalle: Descuento', 'Detalle: Vencimiento',
+    'Detalle: Nota', 'Detalle: Centro costos', 'Detalle: Moneda', 'Detalle: Trm',
+    'Detalle: Personalizado1', 'Detalle: Personalizado2', 'Detalle: Personalizado3',
+    'Detalle: Personalizado4', 'Detalle: Personalizado5', 'Detalle: Personalizado6',
+    'Detalle: Personalizado7', 'Detalle: Personalizado8', 'Detalle: Personalizado9',
+    'Detalle: Personalizado10', 'Detalle: Personalizado11', 'Detalle: Personalizado12',
+    'Detalle: Personalizado13', 'Detalle: Personalizado14', 'Detalle: Personalizado15',
+    'Detalle: Código Centro Costos',
+]
 
 
 class FacturacionDatosInvalidosException(Exception):
@@ -175,3 +205,137 @@ class FacturacionService:
 
         mensaje = f" Facturacion registrada: {cantidad_vendida} piezas de {codigo_sis} para {data['cliente']} (NIT: {nit_cliente})"
         return {'mensaje': mensaje}
+
+    @staticmethod
+    def _forma_pago_exportacion_defecto():
+        fila = db.session.get(AppConfig, 'wo_export.pedidos_formapago_defecto')
+        if fila and fila.valor not in (None, ''):
+            return fila.valor
+        return 'FOB-BUENAVENTURA'
+
+    @staticmethod
+    def generar_dataframe_exportacion(ids_filter=None, consecutivo_inicial=None):
+        """
+        Arma el DataFrame de exportación (60 columnas, plantilla WO "Otra
+        Moneda TRM") para pedidos PENDIENTE marcados es_exportacion=True.
+        Contraparte de facturacion_routes.procesar_datos_wo, pero para la
+        plantilla de exportación -- ver COLUMNAS_WO_EXPORTACION.
+
+        'Detalle: Valor Unitario' y 'Detalle: IVA' quedan SIEMPRE en 0 a
+        propósito: cada cliente de exportación negocia un precio distinto en
+        USD, y quien gestiona la cuenta lo completa directo en World Office
+        junto con la TRM del día real de la negociación (decisión explícita
+        2026-09-11, confirmado contra el archivo real usado para el pedido
+        104561 -- sus 43 líneas trajeron Valor Unitario=0 a propósito, no por
+        error). 'Encab/Detalle: Trm' sí se prellena con la TRM oficial del
+        día en que se genera el archivo como punto de partida razonable, pero
+        se espera que se corrija en WO si la negociación fue otro día.
+        'Encab: FormaPago' (aquí es Incoterm+puerto, no forma de pago) usa un
+        default configurable en AppConfig porque cada cliente puede variar.
+
+        Muta los objetos ORM (quema id_pedido/wo_consecutivo a doc_nro,
+        estado=EXPORTADO_WO) igual que procesar_datos_wo -- el caller decide
+        si hace commit o rollback (ver preview_world_office para el patrón
+        de vista previa sin persistencia).
+
+        :return: (df, cnt) -- cnt es la cantidad de pedidos (no líneas)
+            actualizados a EXPORTADO_WO.
+        """
+        query = db.session.query(Pedido, Producto.precio).select_from(Pedido).outerjoin(
+            Producto,
+            or_(
+                Pedido.id_codigo == Producto.id_codigo,
+                Pedido.id_codigo == Producto.codigo_sistema
+            )
+        ).filter(Pedido.estado == 'PENDIENTE', Pedido.es_exportacion.is_(True))
+
+        if ids_filter:
+            query = query.filter(Pedido.id_pedido.in_(ids_filter))
+
+        results = query.order_by(Pedido.id_pedido.asc()).all()
+        if not results:
+            return pd.DataFrame(), 0
+
+        try:
+            res_clientes = db.session.execute(text(
+                "SELECT nombre, identificacion FROM db_clientes "
+                "ORDER BY (id_direccion_wo IS NOT NULL), id"
+            )).mappings().all()
+            mapa_clientes = {str(c['nombre']).strip().upper(): str(c['identificacion']).strip() for c in res_clientes}
+        except Exception:
+            mapa_clientes = {}
+
+        try:
+            from backend.services.trm_service import obtener_trm_oficial, TrmNoDisponibleError
+            trm_hoy = obtener_trm_oficial()['trm']
+        except Exception as e:
+            logger.warning(f"⚠️ No se pudo consultar la TRM oficial para el archivo de exportación, queda en 0: {e}")
+            trm_hoy = 0.0
+
+        forma_pago_defecto = FacturacionService._forma_pago_exportacion_defecto()
+
+        rows_finales = []
+        mapeo_internos = {}
+        try:
+            curr_cons = int(str(consecutivo_inicial).strip()) if consecutivo_inicial and str(consecutivo_inicial).strip() else None
+        except Exception:
+            curr_cons = None
+
+        pedidos_actualizados = set()
+
+        for item, _precio_maestro in results:
+            id_orig = item.id_pedido
+            if id_orig not in mapeo_internos:
+                if curr_cons:
+                    val_cons = str(curr_cons)
+                    curr_cons += 1
+                else:
+                    val_cons = str(id_orig).strip().upper()
+                mapeo_internos[id_orig] = val_cons
+            doc_nro = mapeo_internos[id_orig]
+
+            item.id_pedido = doc_nro
+            item.wo_consecutivo = doc_nro
+            item.estado = 'EXPORTADO_WO'
+            pedidos_actualizados.add(id_orig)
+
+            nit_raw = mapa_clientes.get(str(item.cliente or '').upper(), item.nit or '')
+            nit_limpio = limpiar_identificacion_tercero(nit_raw)
+
+            vendedor_db = str(item.vendedor or '').strip()
+            v_id = '900315300'  # Fallback: NIT Friparts, mismo criterio que procesar_datos_wo
+            if vendedor_db:
+                try:
+                    row_user = db.session.execute(
+                        text("SELECT cedula FROM db_usuarios "
+                             "WHERE UPPER(TRIM(nombre_completo)) = UPPER(TRIM(:nombre))"),
+                        {"nombre": vendedor_db}
+                    ).first()
+                    if row_user and row_user[0]:
+                        v_id = str(row_user[0]).strip()
+                except Exception as ue:
+                    logger.warning(f"[WO-EXPORT] No se pudo resolver cédula para '{vendedor_db}': {ue}")
+
+            fecha_str = item.fecha.strftime('%d/%m/%Y') if item.fecha else datetime.now().strftime('%d/%m/%Y')
+            cant = float(item.cantidad or 0)
+
+            row = {col: "" for col in COLUMNAS_WO_EXPORTACION}
+            row.update({
+                'Encab: Empresa': 'FRIPARTS SAS', 'Encab: Tipo Documento': 'PED', 'Encab: Prefijo': 'PED',
+                'Encab: Documento Número': doc_nro,
+                'Encab: Fecha': fecha_str,
+                'Encab: Tercero Interno': v_id, 'Encab: Tercero Externo': nit_limpio,
+                'Encab: Nota': 'PEDIDO', 'Encab: FormaPago': forma_pago_defecto,
+                'Encab: Moneda': 'Dolares', 'Encab: Trm': trm_hoy,
+                'Encab: Fecha Emision': fecha_str,
+                'Detalle: Producto': item.id_codigo, 'Detalle: Bodega': 'Principal', 'Detalle: UnidadDeMedida': 'Und.',
+                'Detalle: Cantidad': cant, 'Detalle: IVA': 0,
+                'Detalle: Valor Unitario': 0,
+                'Detalle: Descuento': 0,
+                'Detalle: Vencimiento': fecha_str,
+                'Detalle: Moneda': 'Dolares', 'Detalle: Trm': trm_hoy,
+            })
+            rows_finales.append(row)
+
+        df = pd.DataFrame(rows_finales, columns=COLUMNAS_WO_EXPORTACION)
+        return df, len(pedidos_actualizados)
