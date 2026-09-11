@@ -1,4 +1,4 @@
-const CACHE_NAME = 'friparts-cache-v6';
+const CACHE_NAME = 'friparts-cache-v7';
 const STATIC_ASSETS = [
     '/static/css/styles.css',
     '/static/js/app.js'
