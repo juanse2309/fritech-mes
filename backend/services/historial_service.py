@@ -523,7 +523,12 @@ def construir_movimientos_historial(f_desde, f_hasta, tipo_filtro):
             for r in [dict(row._mapping) for row in res_raw]:
                 movimientos.append({
                     'Fecha': r.get('fecha') or '',
-                    'Tipo': safe_str(r.get('proceso', '')).upper() or 'METALS',
+                    # Literal 'METALS' -- historial.js (cargarHistorial) ya filtra
+                    # por división comparando contra este valor exacto
+                    # (r.Tipo === 'METALS'), preparado de antemano para esta
+                    # fuente de datos. El proceso real (Torno, Soldadura...)
+                    # va en 'Extra' para no perderlo de la vista de tarjeta/tabla.
+                    'Tipo': 'METALS',
                     'Producto': safe_str(r.get('codigo', '')),
                     'Responsable': safe_str(r.get('responsable', 'SISTEMA')),
                     'Cant': to_float(r.get('cantidad_ok')),
@@ -534,6 +539,7 @@ def construir_movimientos_historial(f_desde, f_hasta, tipo_filtro):
                     'duracion_segundos': None,
                     'tiempo_total_minutos': None,
                     'segundos_por_unidad': None,
+                    'proceso_metals': safe_str(r.get('proceso', '')),
                     'Extra': safe_str(r.get('descripcion', '')),
                     'Detalle': safe_str(r.get('observaciones', '')),
                     'HORA_INICIO': safe_str(r.get('hora_inicio', '')),
