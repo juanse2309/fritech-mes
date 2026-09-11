@@ -502,6 +502,49 @@ def construir_movimientos_historial(f_desde, f_hasta, tipo_filtro):
         except Exception as e:
             logger.error(f"Error Ventas: {e}")
 
+    # 5.5 METALS (FRIMETALS) -- metals_produccion.fecha es VARCHAR 'DD/MM/YYYY'
+    # (ver registrar_produccion_metals en metals_routes.py), no Date/Timestamp
+    # como el resto de las tablas de este archivo, por eso usa TO_DATE en vez
+    # de .between(). Gate por Empresa.NOMBRE: FriParts comparte la misma tabla
+    # metals_produccion en su base (legado), pero ese dato nunca debe
+    # mezclarse en el Historial Global de FriParts.
+    from backend.config.settings import Empresa
+    if Empresa.NOMBRE.upper() == 'FRIMETALS' and (not tipo_filtro or tipo_filtro.upper() == 'METALS'):
+        try:
+            sql_metals = """
+                SELECT id, fecha, responsable, proceso, maquina, id_pedido,
+                       codigo, descripcion, cantidad_ok, pnc, hora_inicio, hora_fin,
+                       tiempo, observaciones
+                FROM metals_produccion
+                WHERE TO_DATE(fecha, 'DD/MM/YYYY') BETWEEN :desde AND :hasta
+                ORDER BY TO_DATE(fecha, 'DD/MM/YYYY') DESC, id DESC
+            """
+            res_raw = db.session.execute(text(sql_metals), {"desde": f_desde, "hasta": f_hasta})
+            for r in [dict(row._mapping) for row in res_raw]:
+                movimientos.append({
+                    'Fecha': r.get('fecha') or '',
+                    'Tipo': safe_str(r.get('proceso', '')).upper() or 'METALS',
+                    'Producto': safe_str(r.get('codigo', '')),
+                    'Responsable': safe_str(r.get('responsable', 'SISTEMA')),
+                    'Cant': to_float(r.get('cantidad_ok')),
+                    'Orden': safe_str(r.get('id_pedido', '')),
+                    'maquina': safe_str(r.get('maquina', '')) or 'N/A',
+                    'peso_bujes': None,
+                    'cavidades': None,
+                    'duracion_segundos': None,
+                    'tiempo_total_minutos': None,
+                    'segundos_por_unidad': None,
+                    'Extra': safe_str(r.get('descripcion', '')),
+                    'Detalle': safe_str(r.get('observaciones', '')),
+                    'HORA_INICIO': safe_str(r.get('hora_inicio', '')),
+                    'HORA_FIN': safe_str(r.get('hora_fin', '')),
+                    'hoja': 'metals_produccion',
+                    'fila': to_int(r.get('id', 0)),
+                    'pnc_metals': to_float(r.get('pnc'))
+                })
+        except Exception as e:
+            logger.error(f"Error Metals Produccion: {e}")
+
     # 6. PNC
     if not tipo_filtro or tipo_filtro == 'PNC':
         try:

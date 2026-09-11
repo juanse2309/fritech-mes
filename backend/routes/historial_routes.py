@@ -13,7 +13,7 @@ from backend.core.sql_database import db
 from backend.models.sql_models import (
     ProduccionInyeccion, ProduccionPulido, RawVentas,
     Ensamble, Mezcla, BujeRevuelto,
-    PncInyeccion, PncPulido, PncEnsamble
+    PncInyeccion, PncPulido, PncEnsamble, MetalsProduccion
 )
 from backend.utils.auth_middleware import require_role, ROL_ADMINS
 from backend.services.historial_service import (
@@ -78,6 +78,13 @@ def obtener_detalle_historial():
             model = Mezcla
         elif hoja == 'db_ventas':
             model = RawVentas
+        elif hoja == 'metals_produccion':
+            # Solo lectura (ver detalle) -- el endpoint de edición de abajo
+            # (actualizar_registro_historial) no soporta esta hoja porque su
+            # MAPEO de campos está armado para el esquema de FriParts
+            # (fecha_inicia, orden_produccion, id_codigo...), que no
+            # corresponde a las columnas de metals_produccion.
+            model = MetalsProduccion
         else:
             return api_error(f'Hoja no soportada: {hoja}', status_code=400)
 

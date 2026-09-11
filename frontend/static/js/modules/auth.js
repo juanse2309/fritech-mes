@@ -1,6 +1,14 @@
 
 // auth.js - Manejo de Autenticación, Permisos y Portal B2B
 
+// Módulos visibles para el rol Admin/Gerencia de la instancia FRIMETALS
+// standalone (piloto). Whitelist explícita en vez de lista negra -- ver
+// applySidebarVisibility/applyPermissions.
+const FRIMETALS_ADMIN_PAGES = [
+    'inventario', 'almacen', 'historial', 'metals-pedidos',
+    'pedidos', 'asistencia', 'metals-dashboard', 'metals-produccion'
+];
+
 const AuthModule = {
     currentUser: null,
     authorizedPages: [],
@@ -520,7 +528,7 @@ const AuthModule = {
             select.innerHTML = '<option value="">Seleccione su nombre...</option>';
             usuariosActivos.forEach(user => {
                 const option = document.createElement('option');
-                option.value = user.nombre;
+                option.value = user.username || user.nombre;
                 option.dataset.dept = user.departamento;
                 option.textContent = user.nombre;
                 select.appendChild(option);
@@ -786,17 +794,25 @@ const AuthModule = {
         if (division === 'FRIPARTS') {
             allowedPages = allowedPages.filter(p => !p.startsWith('metals-'));
         } else if (division === 'FRIMETALS') {
-            let forbiddenInMetals = [
-                'dashboard', 'inyeccion', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc',
-                'facturacion', 'mezcla', 'reportes', 'auditoria-op',
-                'admin-clientes', 'portal-cliente'
-            ];
             if (role.includes('ADMIN') || role.includes('GERENCIA')) {
-                forbiddenInMetals = forbiddenInMetals.filter(p => !['admin-clientes'].includes(p));
-            }
-            allowedPages = allowedPages.filter(p => !forbiddenInMetals.includes(p));
-            if (!allowedPages.includes('metals-dashboard')) {
-                allowedPages.push('metals-dashboard');
+                // Lista blanca explícita (no lista negra): el admin de Metales
+                // hereda this.permissions['ADMIN'], pensada para FriParts, así
+                // que filtrar por "prohibidos" se queda corto cada vez que se
+                // agrega un módulo nuevo de FriParts (pasó con
+                // comercial-historico, cartera, notificaciones, modo-tv -- se
+                // colaban porque forbiddenInMetals no los listaba). Whitelist
+                // explícita = no hay gap posible.
+                allowedPages = [...FRIMETALS_ADMIN_PAGES];
+            } else {
+                let forbiddenInMetals = [
+                    'dashboard', 'inyeccion', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc',
+                    'facturacion', 'mezcla', 'reportes', 'auditoria-op',
+                    'admin-clientes', 'portal-cliente'
+                ];
+                allowedPages = allowedPages.filter(p => !forbiddenInMetals.includes(p));
+                if (!allowedPages.includes('metals-dashboard')) {
+                    allowedPages.push('metals-dashboard');
+                }
             }
         }
 
@@ -843,7 +859,9 @@ const AuthModule = {
         });
 
         // Garantía absoluta de visualización para el rol ADMIN en notificaciones push
-        if (role === 'ADMIN') {
+        // (solo FriParts -- FRIMETALS admin usa la whitelist explícita de arriba,
+        // que no incluye 'notificaciones' a propósito).
+        if (role === 'ADMIN' && division !== 'FRIMETALS') {
             const navNotif = document.getElementById('nav-notificaciones') || document.querySelector('[data-page="notificaciones"]');
             if (navNotif) {
                 console.log("🚀 Módulo de Notificaciones Push forzado como inmutable (Visible) para ADMIN.");
@@ -894,26 +912,27 @@ const AuthModule = {
             // Eliminar CUALQUIER módulo de Metales si entramos por FriParts
             allowedPages = allowedPages.filter(p => !p.startsWith('metals-'));
         } else if (division === 'FRIMETALS') {
-            // Eliminar módulos exclusivos de FriParts si entramos por Metales
-            // Incluimos TODO lo que no sea compartido o exclusivo de Metales
-            // pedidos y almacen son COMPARTIDOS (los usan STAFF/COMERCIAL FRIMETALS)
-            let forbiddenInMetals = [
-                'dashboard', 'inyeccion', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc',
-                'facturacion', 'mezcla', 'reportes', 'auditoria-op',
-                'admin-clientes', 'portal-cliente'
-            ];
-
-            // EXCEPCIÓN: Admins y Gerencia siempre pueden ver Clientes
             if (role.includes('ADMIN') || role.includes('GERENCIA')) {
-                forbiddenInMetals = forbiddenInMetals.filter(p => !['admin-clientes'].includes(p));
-            }
+                // Whitelist explícita -- ver misma nota en applySidebarVisibility.
+                console.log("🛡️ Admin/Gerencia de Metales: aplicando whitelist explícita de módulos.");
+                allowedPages = [...FRIMETALS_ADMIN_PAGES];
+            } else {
+                // Eliminar módulos exclusivos de FriParts si entramos por Metales
+                // Incluimos TODO lo que no sea compartido o exclusivo de Metales
+                // pedidos y almacen son COMPARTIDOS (los usan STAFF/COMERCIAL FRIMETALS)
+                let forbiddenInMetals = [
+                    'dashboard', 'inyeccion', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc',
+                    'facturacion', 'mezcla', 'reportes', 'auditoria-op',
+                    'admin-clientes', 'portal-cliente'
+                ];
 
-            console.log("🚫 Filtrando módulos de FriParts en sesión de Metales...");
-            allowedPages = allowedPages.filter(p => !forbiddenInMetals.includes(p));
+                console.log("🚫 Filtrando módulos de FriParts en sesión de Metales...");
+                allowedPages = allowedPages.filter(p => !forbiddenInMetals.includes(p));
 
-            // Forzar que el dashboard sea el de metales
-            if (!allowedPages.includes('metals-dashboard')) {
-                allowedPages.push('metals-dashboard');
+                // Forzar que el dashboard sea el de metales
+                if (!allowedPages.includes('metals-dashboard')) {
+                    allowedPages.push('metals-dashboard');
+                }
             }
         }
 

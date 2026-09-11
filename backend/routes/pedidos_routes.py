@@ -784,8 +784,13 @@ def listar_pedidos():
         
         logger.debug(f"🔍 [API] Listando pedidos - División: {division}, Búsqueda: {search}")
 
-        if division == 'frimetals':
-            # Consulta a la tabla metals_pedidos (mapeada en sql_models.py)
+        if division == 'frimetals' and Empresa.CATALOGO_METALS_LEGACY:
+            # Consulta a la tabla metals_pedidos (mapeada en sql_models.py) --
+            # solo para la instancia compartida legado (Render). Una instancia
+            # standalone (EMPRESA_CATALOGO_METALS_LEGACY=false) siempre
+            # escribe en db_pedidos vía registrar_pedido() sin importar la
+            # división, así que debe leer también de ahí (rama 'else' abajo)
+            # o el pedido registrado nunca aparece en el listado.
             query = MetalsPedido.query
             if search:
                 query = query.filter(
