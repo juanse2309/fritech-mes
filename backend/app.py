@@ -259,11 +259,17 @@ app.register_blueprint(ia_bp)
 app.register_blueprint(gerencia_bp)
 app.register_blueprint(auditoria_bp)
 app.register_blueprint(wo_export_bp)
-# Límite más estricto que el global: los agentes locales (agente_wo*.py)
-# sincronizan cada ~15 minutos según confirmó el usuario -- 20/min sigue
-# dejando margen amplio (300x) sin abrir la puerta a un agente en loop
-# descontrolado o un intento de fuerza bruta contra el token de sync.
-limiter.limit("20 per minute")(wo_bp)
+# Límite más estricto que el global, pero dimensionado para el patrón real
+# de trafico: agente_wo_comercial.py no manda 1 request por ciclo de sync,
+# manda un request POR CHUNK de 2000 registros (CHUNK_SIZE en el agente) --
+# con 109.175 registros comerciales del año esto ya son 55 chunks en una
+# sola corrida, y crece con el volumen de ventas. Un limite de 20/min (visto
+# en produccion: aborto la sync en el chunk 11/55 con 429) rompia la
+# sincronizacion completa, no solo la protegia. 150/min sigue acotando un
+# loop descontrolado o fuerza bruta contra el token (que además exige
+# X-API-Key/X-Sync-Token valido) con margen para varios años de crecimiento
+# de datos antes de tener que revisarlo de nuevo.
+limiter.limit("150 per minute")(wo_bp)
 app.register_blueprint(wo_bp)
 app.register_blueprint(cartera_bp)
 

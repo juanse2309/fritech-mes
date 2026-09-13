@@ -43,6 +43,14 @@ API_KEY = os.getenv("WO_SYNC_API_KEY")
 if not API_KEY:
     raise RuntimeError("WO_SYNC_API_KEY no está configurada")
 
+# Base para verificar_sync/solicitar_sync (mismo patron y misma variable que
+# agente_wo_cartera.py / agente_recordatorio_reporte_parcial.py /
+# agente_cierre_jornada_ensamble.py). Antes estas dos URLs estaban
+# hardcodeadas a Render sin pasar por ninguna variable de entorno, asi que
+# migrar solo API_RENDER_URL_COMERCIAL no bastaba: el chequeo/limpieza del
+# flag de sync seguia pegandole a Render sin importar el .env.
+SYNC_API_URL = os.getenv("SYNC_API_URL", "https://proyecto-friparts.onrender.com")
+
 # Fase 2 (conciliacion OP): permite `from backend.models.sql_models import
 # OpWoStaging` aunque este script se invoque como archivo suelto (python
 # backend/integration/agente_wo_comercial.py) desde cualquier cwd -- sin esto
@@ -511,7 +519,7 @@ def ejecutar_extraccion():
 def main():
     modo_forzado = "--forzar" in sys.argv
 
-    check_url = "https://proyecto-friparts.onrender.com/api/wo/verificar_sync"
+    check_url = f"{SYNC_API_URL}/api/wo/verificar_sync"
     sync_requerida = False
 
     logger.info("Verificando si hay solicitud de sincronización en el servidor...")
@@ -538,7 +546,7 @@ def main():
         if sync_requerida:
             logger.info(">> Limpiando flag de sincronización en el servidor...")
             try:
-                requests.post("https://proyecto-friparts.onrender.com/api/wo/solicitar_sync", json={"sync_pendiente": False}, timeout=10)
+                requests.post(f"{SYNC_API_URL}/api/wo/solicitar_sync", json={"sync_pendiente": False}, timeout=10)
                 logger.info("[OK] Flag limpio.")
             except Exception as e:
                 logger.warning(f"[WARN] No se pudo limpiar el flag: {e}")
