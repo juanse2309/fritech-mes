@@ -44,7 +44,11 @@ los clientes" — son dos pasos distintos en este proyecto.
    controlador solo recibe el request, delega a un servicio (`*_service.py`
    o un repositorio) y traduce el resultado a JSON. Si una tarea implica
    meter lógica o SQL en una ruta, hay que negarse y corregir el enfoque, no
-   hacerlo igual porque se pidió así.
+   hacerlo igual porque se pidió así. Esto aplica también a código ya
+   existente: si al tocar un archivo de rutas por otra razón se nota una
+   violación preexistente (lógica/SQL ya viviendo ahí), señalarla
+   explícitamente aunque nadie haya preguntado — no basta con no agregar más
+   violaciones nuevas.
 2. **Código defensivo.** Toda ejecución contra la base de datos (en el
    servicio, que es donde debe vivir) va envuelta en `try/except` con
    `db.session.rollback()` en el except — nunca dejar una sesión de
