@@ -497,7 +497,7 @@ const ModuloFacturacion = {
                 mostrarNotificacion('Generando Excel de World Office... esto puede tardar unos segundos.', 'info');
             }
 
-            const { downloadUrl, actualizadosCount } = await this._sondearExportacionWO(res.data.task_id);
+            const { downloadUrl, actualizadosCount, idsOmitidos } = await this._sondearExportacionWO(res.data.task_id);
 
             const a = document.createElement('a');
             a.style.display = 'none';
@@ -510,11 +510,15 @@ const ModuloFacturacion = {
             if (actualizadosCount > 0) {
                 msg += ` Se marcaron ${actualizadosCount} pedidos como EXPORTADO_WO.`;
             }
+            if (idsOmitidos && idsOmitidos.length > 0) {
+                msg += ` ⚠️ NO se incluyeron (estado ya no exportable): ${idsOmitidos.join(', ')}. Revísalos manualmente.`;
+            }
 
+            const hayOmitidos = idsOmitidos && idsOmitidos.length > 0;
             if (typeof Swal !== 'undefined') {
-                Swal.fire('Exportación Exitosa', msg, 'success');
+                Swal.fire('Exportación Exitosa', msg, hayOmitidos ? 'warning' : 'success');
             } else if (typeof mostrarNotificacion === 'function') {
-                mostrarNotificacion(msg, 'success');
+                mostrarNotificacion(msg, hayOmitidos ? 'warning' : 'success');
             } else {
                 alert(msg);
             }
@@ -557,7 +561,11 @@ const ModuloFacturacion = {
 
         const { status, download_url, error, result_meta } = estado.data;
         if (status === 'COMPLETED') {
-            return { downloadUrl: download_url, actualizadosCount: result_meta?.actualizados || 0 };
+            return {
+                downloadUrl: download_url,
+                actualizadosCount: result_meta?.actualizados || 0,
+                idsOmitidos: result_meta?.omitidos || []
+            };
         }
         if (status === 'FAILED') {
             throw new Error(error || 'Error generando el Excel de World Office');

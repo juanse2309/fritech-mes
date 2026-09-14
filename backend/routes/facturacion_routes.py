@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify, current_app
 from backend.utils.auth_middleware import require_role, ROL_ADMINS
 from backend.utils.formatters import limpiar_identificacion_tercero
 from backend.services.facturacion_service import FacturacionService, FacturacionDatosInvalidosException
-from backend.services.pedidos_service import PedidosService
+from backend.services.pedidos_service import PedidosService, ESTADOS_INMUTABLES_PEDIDO, ESTADOS_SENSIBLES_PEDIDO
 from backend.core.responses import api_success, api_error
 from backend.core import task_runner
 import pandas as pd
@@ -20,8 +20,25 @@ logger = logging.getLogger(__name__)
 
 
 def procesar_datos_wo(ids_filter=None, consecutivo_inicial=None, incluir_auditoria=False):
-    """Lógica centralizada: Genera Excel y Actualiza SQL simultáneamente con Auto-Sanado de Precios."""
-    
+    """
+    Lógica centralizada: Genera Excel y Actualiza SQL simultáneamente con
+    Auto-Sanado de Precios.
+
+    Caso real (Pedido PED-66585859, 2026-09-14): cuando NO se pasa
+    ids_filter (exportación automática por lote), solo se consideran
+    candidatos los pedidos en 'PENDIENTE' -- correcto, porque nadie los
+    seleccionó a mano todavía. Pero cuando SÍ se pasa ids_filter (alguien
+    los marcó explícitamente en la pantalla de Facturación), exigir además
+    estado=='PENDIENTE' es lo que causó el bug: si Almacén ya le dio
+    alistamiento a ese pedido entre que se cargó la lista y que corrió esta
+    función (corre en background, hay demora), su estado ya no es
+    'PENDIENTE' y quedaba EXCLUIDO en silencio -- nunca se le asignaba
+    wo_consecutivo ni se marcaba EXPORTADO_WO, sin ningún aviso. Por eso,
+    con selección explícita, solo se bloquean los estados que sí importan
+    proteger (ya exportado / ya facturado / cancelado / etc.), no cualquier
+    estado intermedio de picking.
+    """
+
     # 1. Obtener ítems originales haciendo un LEFT JOIN con Producto (db_productos)
     # Excluye es_exportacion=True (isnot(True) también cubre NULL de pedidos
     # históricos previos a esta columna): esos van por
@@ -33,14 +50,33 @@ def procesar_datos_wo(ids_filter=None, consecutivo_inicial=None, incluir_auditor
             Pedido.id_codigo == Producto.id_codigo,
             Pedido.id_codigo == Producto.codigo_sistema
         )
-    ).filter(Pedido.estado == 'PENDIENTE', Pedido.es_exportacion.isnot(True))
+    ).filter(Pedido.es_exportacion.isnot(True))
 
     if ids_filter:
-        query = query.filter(Pedido.id_pedido.in_(ids_filter))
-    
+        # Selección explícita: no exigir 'PENDIENTE', solo bloquear estados
+        # ya protegidos (evita re-exportar/duplicar en WO un pedido que ya
+        # tiene documento, o tocar uno cerrado/cancelado/facturado).
+        estados_bloqueados_reexportacion = ESTADOS_INMUTABLES_PEDIDO | ESTADOS_SENSIBLES_PEDIDO
+        query = query.filter(
+            Pedido.id_pedido.in_(ids_filter),
+            ~Pedido.estado.in_(estados_bloqueados_reexportacion)
+        )
+    else:
+        query = query.filter(Pedido.estado == 'PENDIENTE')
+
     results = query.order_by(Pedido.id_pedido.asc()).all()
+
+    # Diff entre lo que se pidió exportar y lo que realmente califica --
+    # antes esto se perdía en silencio (ver docstring). ids_filter puede
+    # traer duplicados o formato con espacios; se normaliza igual que
+    # Pedido.id_pedido para comparar de forma justa.
+    ids_omitidos = []
+    if ids_filter:
+        ids_encontrados = {str(r[0].id_pedido) for r in results}
+        ids_omitidos = sorted({str(i) for i in ids_filter} - ids_encontrados)
+
     if not results:
-        return pd.DataFrame(), 0
+        return pd.DataFrame(), 0, ids_omitidos
 
     # 2. Preparar Maestros (Clientes para NITs)
     # Un mismo nombre puede tener varias filas (histórico manual + sincronizado
@@ -195,7 +231,7 @@ def procesar_datos_wo(ids_filter=None, consecutivo_inicial=None, incluir_auditor
         else:
             df = df[columnas_wo]
     
-    return df, items_con_exito
+    return df, items_con_exito, ids_omitidos
 
 @facturacion_bp.route('/api/facturacion/pedidos-pendientes', methods=['GET'])
 @require_role(ROL_ADMINS + ['JEFE ALMACEN', 'JEFE ALISTAMIENTO'])
@@ -250,16 +286,21 @@ def _generar_excel_wo_task(task_id, ids_filter, consecutivo_inicial):
     result_meta.actualizados en /api/tasks/status/<task_id>.
     """
     try:
-        df, cnt = procesar_datos_wo(ids_filter, consecutivo_inicial)
+        df, cnt, ids_omitidos = procesar_datos_wo(ids_filter, consecutivo_inicial)
 
         if df.empty:
             db.session.rollback()
-            task_runner.set_failed(task_id, 'No hay datos para exportar.')
+            msg = 'No hay datos para exportar.'
+            if ids_omitidos:
+                msg += f' Pedidos omitidos por estado no exportable: {", ".join(ids_omitidos)}.'
+            task_runner.set_failed(task_id, msg)
             return
 
         # PERSISTENCIA EN SQL
         db.session.commit()
         logger.info(f"✅ SQL Commit: {cnt} items exportados exitosamente.")
+        if ids_omitidos:
+            logger.warning(f"⚠️ Pedidos solicitados pero omitidos (estado no exportable): {ids_omitidos}")
 
         # GENERAR ARCHIVO
         output = io.BytesIO()
@@ -275,7 +316,7 @@ def _generar_excel_wo_task(task_id, ids_filter, consecutivo_inicial):
         task_runner.set_completed(
             task_id, file_path=tmp_path, filename=filename,
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            result_meta={"actualizados": cnt}
+            result_meta={"actualizados": cnt, "omitidos": ids_omitidos}
         )
     except Exception as e:
         db.session.rollback()
@@ -317,15 +358,15 @@ def preview_world_office():
             ids_filter = data.get('ids', None)
             consecutivo_inicial = data.get('consecutivo_inicial', None)
         
-        df, _ = procesar_datos_wo(ids_filter, consecutivo_inicial, incluir_auditoria=True)
-        
+        df, _, ids_omitidos = procesar_datos_wo(ids_filter, consecutivo_inicial, incluir_auditoria=True)
+
         # OBLIGATORIO: Hacer rollback para que el preview NO guarde cambios en la BD
         db.session.rollback()
-        
-        if df.empty: return jsonify({'success': True, 'data': []})
-        
+
+        if df.empty: return jsonify({'success': True, 'data': [], 'omitidos': ids_omitidos})
+
         preview = df.fillna('').head(100).to_dict(orient='records')
-        return jsonify({'success': True, 'data': preview})
+        return jsonify({'success': True, 'data': preview, 'omitidos': ids_omitidos})
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
