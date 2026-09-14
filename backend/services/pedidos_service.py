@@ -439,7 +439,7 @@ class PedidosService:
         pero cuyo documento nunca volvió sincronizado desde World Office.
 
         Hallazgo real (caso Autopartes Santa Maria, pedido 104561,
-        2026-09-04): procesar_datos_wo (facturacion_routes.py) marca un
+        2026-09-04): FacturacionService.procesar_datos_wo marca un
         pedido como EXPORTADO_WO en el momento en que se GENERA el archivo
         para subir a WO -- no cuando WO confirma haberlo recibido. Si el
         archivo nunca se importó, WO lo rechazó, o alguien lo anuló después,

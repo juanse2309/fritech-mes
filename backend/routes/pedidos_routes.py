@@ -208,7 +208,7 @@ def registrar_pedido():
             # eso, a diferencia de Inyeccion/Pulido (donde la division reportada
             # es ambigua y NO debe inferirse), aqui es seguro y necesario anteponer
             # 'FR-' a un codigo numerico huerfano vía opt-in explicito: sin el
-            # prefijo, procesar_datos_wo() (facturacion_routes.py) escribe la
+            # prefijo, FacturacionService.procesar_datos_wo() escribe la
             # referencia incompleta en el archivo plano y World Office rechaza la
             # carga.
             codigo = preservar_o_normalizar_prefijo(prod.get('codigo', ''), prefijo_defecto=Empresa.PREFIJO_PRODUCTO_PRINCIPAL).upper()

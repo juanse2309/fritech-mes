@@ -4,7 +4,7 @@ wo_export_service.py
 Genera el archivo plano de Órdenes de Producción para subir a World Office
 (reunión 2026-08-25). Reemplaza la digitación manual de OP en WO.
 
-Servicio aparte y no una extensión de facturacion_routes.procesar_datos_wo a
+Servicio aparte y no una extensión de FacturacionService.procesar_datos_wo a
 propósito: ese está acoplado a Pedido, precios, clientes e IVA, y una OP no
 tiene nada de eso. Mismo criterio que ya aplicó agente_wo_comercial al
 separar la extracción de OP de la extracción comercial.
