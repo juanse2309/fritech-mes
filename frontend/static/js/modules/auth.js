@@ -227,12 +227,9 @@ const AuthModule = {
         this.currentStaffType = type;
         const modal = document.getElementById('login-modal');
         if (modal) {
-            // Personalizar título del modal según el tipo
-            const title = modal.querySelector('h2');
-            const sub = modal.querySelector('p');
-            if (title) title.textContent = type === 'FRIMETALS' ? 'FriMetals' : 'FriTech';
-            if (sub) sub.textContent = type === 'FRIMETALS' ? 'Módulo Metalmecánica' : 'Sistema de Producción';
-
+            // Título/subtítulo del modal ya vienen renderizados por el server
+            // según la instancia (Empresa.NOMBRE/SUBTITULO) -- no se pisan
+            // aquí por el tipo de tarjeta de staff clickeada.
             modal.style.display = 'flex';
             document.body.style.overflow = 'hidden';
 
@@ -747,21 +744,9 @@ const AuthModule = {
         const userRoleEl = document.querySelector('.user-role');
         if (userNameEl) userNameEl.textContent = this.currentUser.nombre;
         if (userRoleEl) userRoleEl.textContent = this.currentUser.rol;
-
-        // Juan Sebastian: Personalizar Branding del Sidebar según división
-        const division = this.currentUser.division || 'FRIPARTS';
-        const brandNameEl = document.getElementById('sidebar-company-name');
-        const brandSubEl = document.getElementById('sidebar-company-subtitle');
-
-        if (brandNameEl && brandSubEl) {
-            if (division === 'FRIMETALS') {
-                brandNameEl.textContent = 'FriMetals';
-                brandSubEl.textContent = 'Metalmecánica';
-            } else {
-                brandNameEl.textContent = 'FriTech';
-                brandSubEl.textContent = 'Sistema de Producción';
-            }
-        }
+        // Nombre/subtítulo del sidebar ya vienen renderizados por el server
+        // según la instancia (ver Empresa.NOMBRE/SUBTITULO en settings.py) --
+        // no se pisan aquí por división de usuario.
     },
 
     applySidebarVisibility: function () {

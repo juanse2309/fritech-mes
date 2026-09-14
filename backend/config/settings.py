@@ -33,6 +33,20 @@ class Empresa:
     propia instancia, sin tocar código.
     """
     NOMBRE = os.getenv('EMPRESA_NOMBRE', 'FRIPARTS')
+    # Texto corto que acompaña al nombre en el sidebar y el título de la
+    # pestaña del navegador (ej. "Sistema de Producción").
+    SUBTITULO = os.getenv('EMPRESA_SUBTITULO', 'Sistema de Producción')
+    # Archivo bajo frontend/static/img/ usado como logo del sidebar, del
+    # modal de login y del landing de esta instancia (imagen rectangular,
+    # el isologo tal cual). Debe existir ahí antes de desplegar -- no se
+    # sube automáticamente.
+    LOGO_ARCHIVO = os.getenv('EMPRESA_LOGO_ARCHIVO', 'logo_friparts.png')
+    # Íconos CUADRADOS (con padding, pensados para un mask circular/redondeado)
+    # usados como favicon, apple-touch-icon y en el manifest.json de la PWA --
+    # un logo rectangular ahí se ve recortado/aplastado. Deben existir en
+    # frontend/static/img/ antes de desplegar; NO se generan automáticamente.
+    ICONO_PWA_192 = os.getenv('EMPRESA_ICONO_PWA_192', 'icon-192.png')
+    ICONO_PWA_512 = os.getenv('EMPRESA_ICONO_PWA_512', 'icon-512.png')
     # Prefijo que se antepone a un código numérico huérfano SOLO cuando el
     # llamador pide explícitamente ese opt-in (ver
     # formatters.preservar_o_normalizar_prefijo) -- nunca se infiere de otra

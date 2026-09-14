@@ -295,10 +295,35 @@ def service_worker():
 
 @app.route('/manifest.json')
 def serve_manifest():
-    import os
-    from flask import send_from_directory
-    root_path = os.path.join(app.root_path, '..')
-    return send_from_directory(root_path, 'manifest.json', mimetype='application/manifest+json')
+    """Manifest de la PWA, generado por instancia desde Empresa (nombre e
+    íconos) en vez de servir un manifest.json estático -- así cada cliente
+    ve su propio nombre/ícono al instalar la app, no siempre el de FRIPARTS."""
+    from backend.config.settings import Empresa
+    manifest = {
+        "name": f"{Empresa.NOMBRE.title()} PWA",
+        "short_name": Empresa.NOMBRE.title(),
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#ffffff",
+        "theme_color": "#0d6efd",
+        "icons": [
+            {
+                "src": f"/static/img/{Empresa.ICONO_PWA_192}",
+                "sizes": "192x192",
+                "type": "image/png",
+                "purpose": "any maskable"
+            },
+            {
+                "src": f"/static/img/{Empresa.ICONO_PWA_512}",
+                "sizes": "512x512",
+                "type": "image/png",
+                "purpose": "any maskable"
+            }
+        ]
+    }
+    response = jsonify(manifest)
+    response.headers['Content-Type'] = 'application/manifest+json'
+    return response
 
 
 # --- VERSION DE RELEASE (semantica, se bumpea a mano en cada release) ---
@@ -306,7 +331,7 @@ def serve_manifest():
 # (cache-busting de CSS/JS en index.html, footer, loader). Distinta de
 # _APP_VERSION de abajo, que es el hash del deploy activo para detectar
 # frontend desactualizado -- no confundir ambas.
-RELEASE_VERSION = "1.8.58"
+RELEASE_VERSION = "1.8.59"
 
 # --- VERSION DEL DEPLOY ACTIVO ---
 # RENDER_GIT_COMMIT la puebla Render automaticamente en cada deploy (no hay
@@ -334,6 +359,9 @@ def index():
         return render_template(
             'index.html', usuarios=lista_usuarios, RELEASE_VERSION=RELEASE_VERSION,
             empresa_nombre=Empresa.NOMBRE,
+            empresa_subtitulo=Empresa.SUBTITULO,
+            empresa_logo=Empresa.LOGO_ARCHIVO,
+            empresa_icono_pwa=Empresa.ICONO_PWA_192,
             divisiones_staff=Empresa.DIVISIONES_STAFF,
             mostrar_portal_clientes=Empresa.MOSTRAR_PORTAL_CLIENTES,
         )

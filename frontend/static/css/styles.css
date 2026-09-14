@@ -151,6 +151,27 @@ body:not(.logged-in) [id^="toggle-sidebar"] {
     color: var(--primary);
 }
 
+.company-logo-img {
+    width: 2.5rem;
+    height: 2.5rem;
+    object-fit: contain;
+    border-radius: 6px;
+    background: white;
+    padding: 3px;
+}
+
+.brand-logo-img {
+    width: 4.5rem;
+    height: 4.5rem;
+    object-fit: contain;
+}
+
+.landing-logo-img {
+    width: 6rem;
+    height: 6rem;
+    object-fit: contain;
+}
+
 .company-logo h2 {
     font-size: 1.5rem;
     font-weight: 700;
