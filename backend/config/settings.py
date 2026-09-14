@@ -47,6 +47,24 @@ class Empresa:
     # frontend/static/img/ antes de desplegar; NO se generan automáticamente.
     ICONO_PWA_192 = os.getenv('EMPRESA_ICONO_PWA_192', 'icon-192.png')
     ICONO_PWA_512 = os.getenv('EMPRESA_ICONO_PWA_512', 'icon-512.png')
+    # Color de acento de la UI (badges, encabezados de tabla, paginación,
+    # scrollbars -- ver frontend/static/css/styles.css). Defaults = el morado
+    # que ya usa FRIPARTS hoy, para no cambiarle nada a esa instancia si no
+    # se configuran estas variables. "_OSCURO" es el tono de hover/activo de
+    # cada uno (ya existía como color fijo separado, no se deriva por
+    # cálculo para no arriesgar un tono distinto al que ya está en producción).
+    COLOR_PRIMARIO = os.getenv('EMPRESA_COLOR_PRIMARIO', '#6366f1')
+    COLOR_PRIMARIO_OSCURO = os.getenv('EMPRESA_COLOR_PRIMARIO_OSCURO', '#4f46e5')
+    COLOR_SECUNDARIO = os.getenv('EMPRESA_COLOR_SECUNDARIO', '#8b5cf6')
+    COLOR_SECUNDARIO_OSCURO = os.getenv('EMPRESA_COLOR_SECUNDARIO_OSCURO', '#7c3aed')
+
+    @classmethod
+    def color_primario_rgb(cls) -> str:
+        """'#6366f1' -> '99, 102, 241', para los rgba() de sombra ligados
+        al color primario (ver .badge.bg-primary, focus rings, etc)."""
+        h = cls.COLOR_PRIMARIO.lstrip('#')
+        return ', '.join(str(int(h[i:i + 2], 16)) for i in (0, 2, 4))
+
     # Prefijo que se antepone a un código numérico huérfano SOLO cuando el
     # llamador pide explícitamente ese opt-in (ver
     # formatters.preservar_o_normalizar_prefijo) -- nunca se infiere de otra

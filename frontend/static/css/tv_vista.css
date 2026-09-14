@@ -71,7 +71,7 @@ body.tv-mode #almacen-page .page-title h1 {
 body.tv-mode #almacen-page .page-title i {
     font-size: 2.5rem !important;
     /* Compactado de 3.5rem */
-    color: #4f46e5 !important;
+    color: var(--color-primary-dark, #4f46e5) !important;
 }
 
 /* TARJETAS DARK PRO (Como en la imagen) */

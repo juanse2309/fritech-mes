@@ -33,6 +33,16 @@
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
+        /* Color de acento por instancia (ver Empresa en settings.py) --
+           sobreescribe los valores por defecto de styles.css. */
+        :root {
+            --color-primary: {{ empresa_color_primario }};
+            --color-primary-dark: {{ empresa_color_primario_oscuro }};
+            --color-primary-rgb: {{ empresa_color_primario_rgb }};
+            --color-secondary: {{ empresa_color_secundario }};
+            --color-secondary-dark: {{ empresa_color_secundario_oscuro }};
+        }
+
         /* Estilos mínimos necesarios */
         .modal-custom {
             display: none;

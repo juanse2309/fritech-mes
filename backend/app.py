@@ -331,7 +331,7 @@ def serve_manifest():
 # (cache-busting de CSS/JS en index.html, footer, loader). Distinta de
 # _APP_VERSION de abajo, que es el hash del deploy activo para detectar
 # frontend desactualizado -- no confundir ambas.
-RELEASE_VERSION = "1.8.59"
+RELEASE_VERSION = "1.8.60"
 
 # --- VERSION DEL DEPLOY ACTIVO ---
 # RENDER_GIT_COMMIT la puebla Render automaticamente en cada deploy (no hay
@@ -362,6 +362,11 @@ def index():
             empresa_subtitulo=Empresa.SUBTITULO,
             empresa_logo=Empresa.LOGO_ARCHIVO,
             empresa_icono_pwa=Empresa.ICONO_PWA_192,
+            empresa_color_primario=Empresa.COLOR_PRIMARIO,
+            empresa_color_primario_oscuro=Empresa.COLOR_PRIMARIO_OSCURO,
+            empresa_color_primario_rgb=Empresa.color_primario_rgb(),
+            empresa_color_secundario=Empresa.COLOR_SECUNDARIO,
+            empresa_color_secundario_oscuro=Empresa.COLOR_SECUNDARIO_OSCURO,
             divisiones_staff=Empresa.DIVISIONES_STAFF,
             mostrar_portal_clientes=Empresa.MOSTRAR_PORTAL_CLIENTES,
         )
