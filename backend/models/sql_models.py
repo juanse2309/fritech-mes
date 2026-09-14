@@ -688,6 +688,34 @@ class ProgramacionInyeccion(db.Model):
     op_world_office = db.Column(db.String(100), index=True, nullable=True)
 
 
+class CancelacionMesLog(db.Model):
+    """
+    Bitácora de lo que ProgramacionService.cancelar() va a borrar físicamente
+    de db_programacion/db_inyeccion (botón 'Liberar Máquina' del dashboard
+    MES). Se escribe ANTES del DELETE, con una copia de los campos clave de
+    la fila, porque cancelar() no deja ningún otro rastro de quién ni qué se
+    borró -- incidente 2026-09-14: 3 máquinas con trabajo EN_PROCESO
+    perdieron su lote activo sin ninguna forma de saber desde la app quién
+    le dio al botón ni qué se estaba produciendo. No previene el borrado, es
+    la única fuente para reconstruirlo después.
+    """
+    __tablename__ = 'db_mes_cancelaciones_log'
+    __table_args__ = {'extend_existing': True}
+
+    id               = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    fecha_hora       = db.Column(db.DateTime, nullable=False, default=get_colombia_time)
+    responsable      = db.Column(db.String(150), nullable=True)
+    # 'db_programacion' (cola) o 'db_inyeccion' (trabajo activo EN_PROCESO)
+    tabla_origen     = db.Column(db.String(30), nullable=False)
+    id_original      = db.Column(db.Integer, nullable=True)
+    id_inyeccion     = db.Column(db.String(80), nullable=True)
+    maquina          = db.Column(db.String(80), nullable=True)
+    molde            = db.Column(db.String(50), nullable=True)
+    id_codigo        = db.Column(db.String(50), nullable=True)
+    cantidad         = db.Column(db.Numeric(18, 2), nullable=True)
+    estado_al_borrar = db.Column(db.String(50), nullable=True)
+    orden_produccion = db.Column(db.String(100), nullable=True)
+
 
 class Mezcla(db.Model):
     __tablename__ = 'db_mezcla'

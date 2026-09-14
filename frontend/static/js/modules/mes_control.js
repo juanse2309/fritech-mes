@@ -1614,46 +1614,47 @@ window.ModuloMes = {
             Swal.fire('Acceso Denegado', 'No tienes permisos para liberar máquinas.', 'error');
             return;
         }
+
+        // Se lee el estado ANTES de preguntar, para poder avisar explícitamente
+        // si esto va a borrar el lote EN_PROCESO -- no solo la cola pendiente
+        // (incidente 2026-09-14: el aviso genérico no mencionaba el trabajo
+        // activo y alguien confirmó sin saber que también se borraba).
+        const maquinaData = (this.dashboardData || []).find(m =>
+            (m.nombre || '').toUpperCase() === (maquina || '').toUpperCase()
+        );
+        const cola = maquinaData?.cola || [];
+        const trabajoActivo = maquinaData?.trabajo_activo || null;
+        const idActivo = trabajoActivo?.id_inyeccion || trabajoActivo?.id;
+        const idsProg = [...new Set(cola.map(p => p.id_programacion || p.id).filter(Boolean))];
+        const todosLosIds = [...idsProg];
+        if (idActivo) todosLosIds.push(idActivo);
+
+        if (todosLosIds.length === 0) {
+            Swal.fire('Aviso', 'No hay trabajos para cancelar en esta máquina.', 'info');
+            return;
+        }
+
+        const avisoActivo = idActivo ? `
+            <div class="alert alert-danger text-start mt-2 mb-0" style="font-size:.85rem">
+                <strong><i class="fas fa-exclamation-triangle me-1"></i> Esto incluye el lote EN PROCESO ahora mismo:</strong><br>
+                Molde ${trabajoActivo.molde || 'N/A'} &middot; ${trabajoActivo.producto || ''}
+                ${trabajoActivo.hora_inicio ? ` &middot; iniciado ${trabajoActivo.hora_inicio}` : ''}<br>
+                Se borra por completo, no se puede deshacer.
+            </div>` : '';
+
         const result = await Swal.fire({
-            title: '¿Liberar Máquina?',
-            text: `Se cancelarán todas las programaciones pendientes para ${maquina}.`,
+            title: idActivo ? '¿Liberar máquina y CANCELAR el lote en proceso?' : '¿Liberar Máquina?',
+            html: `<div class="text-start">Se cancelarán ${idsProg.length} programación(es) pendiente(s) para ${maquina}.${avisoActivo}</div>`,
             icon: 'warning',
             showCancelButton: true,
             confirmButtonColor: '#ef4444',
-            confirmButtonText: 'Sí, liberar',
+            confirmButtonText: idActivo ? 'Sí, cancelar TODO (incluye lo activo)' : 'Sí, liberar',
             cancelButtonText: 'Cancelar'
         });
 
         if (result.isConfirmed) {
             try {
                 mostrarLoading(true);
-
-                // Leer la cola de la máquina — Búsqueda insensible a mayúsculas
-                const maquinaData = (this.dashboardData || []).find(m => 
-                    (m.nombre || '').toUpperCase() === (maquina || '').toUpperCase()
-                );
-                const cola = maquinaData?.cola || [];
-
-                if (cola.length === 0) {
-                    mostrarLoading(false);
-                    Swal.fire('Aviso', 'No hay programaciones activas para esta máquina.', 'info');
-                    return;
-                }
-
-                // Obtener IDs de la cola (Programaciones)
-                const idsProg = [...new Set(cola.map(p => p.id_programacion || p.id).filter(Boolean))];
-                
-                // Obtener ID del trabajo activo (Producción) si aplica
-                const idActivo = maquinaData.trabajo_activo?.id_inyeccion || maquinaData.trabajo_activo?.id;
-
-                const todosLosIds = [...idsProg];
-                if (idActivo) todosLosIds.push(idActivo);
-
-                if (todosLosIds.length === 0) {
-                    mostrarLoading(false);
-                    Swal.fire('Aviso', 'No hay trabajos para cancelar en esta máquina.', 'info');
-                    return;
-                }
 
                 for (const id of todosLosIds) {
                     await fetchData(`/api/mes/cancelar/${id}`, { method: 'POST' });

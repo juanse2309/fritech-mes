@@ -2,7 +2,7 @@ import logging
 import uuid
 from datetime import datetime, date, timedelta
 from sqlalchemy import text
-from backend.models.sql_models import db, Maquina, ProgramacionInyeccion, ProduccionInyeccion, LecturaParcialInyeccion
+from backend.models.sql_models import db, Maquina, ProgramacionInyeccion, ProduccionInyeccion, LecturaParcialInyeccion, CancelacionMesLog
 from backend.services.op_numerador_service import OpNumeradorService
 from backend.utils.formatters import resolver_operario, normalizar_codigo
 from backend.utils.time_utils import get_colombia_time
@@ -309,7 +309,15 @@ class ProgramacionService:
             raise
 
     @staticmethod
-    def cancelar(id_target):
+    def _log_cancelacion(tabla_origen, responsable, **campos):
+        """Copia los campos clave de la fila ANTES de borrarla -- ver
+        CancelacionMesLog. Se agrega a la MISMA transacción que el DELETE
+        (mismo commit/rollback en cancelar()) a propósito: un log que
+        pudiera perderse en un borrado real no serviría para nada."""
+        db.session.add(CancelacionMesLog(tabla_origen=tabla_origen, responsable=responsable, **campos))
+
+    @staticmethod
+    def cancelar(id_target, responsable=None):
         """
         Fase 1b: libera una máquina cancelando por ID. Polimórfico: intenta
         primero en la cola de ProgramacionInyeccion (PK entero) y, si no
@@ -331,6 +339,10 @@ class ProgramacionService:
         `<int:id_target>`, que rechazaba el id_inyeccion con 404 ANTES de
         llegar aquí -- 'Liberar Máquina' cancelaba bien la cola pero
         siempre terminaba en error al intentar soltar el trabajo activo.
+
+        Cada fila se copia a CancelacionMesLog ANTES de su DELETE
+        (incidente 2026-09-14: un borrado sin ese registro es irrecuperable
+        y no deja ni rastro de quién lo hizo).
         """
         try:
             encontrado = False
@@ -344,12 +356,25 @@ class ProgramacionService:
             if id_entero is not None:
                 prog = db.session.get(ProgramacionInyeccion, id_entero)
                 if prog:
+                    ProgramacionService._log_cancelacion(
+                        'db_programacion', responsable,
+                        id_original=prog.id, maquina=prog.maquina, molde=prog.molde,
+                        id_codigo=prog.codigo_sistema, cantidad=prog.cantidad,
+                        estado_al_borrar=prog.estado, orden_produccion=prog.op_world_office,
+                    )
                     db.session.delete(prog)
                     encontrado = True
 
                 if not encontrado:
                     inyeccion = db.session.get(ProduccionInyeccion, id_entero)
                     if inyeccion:
+                        ProgramacionService._log_cancelacion(
+                            'db_inyeccion', responsable,
+                            id_original=inyeccion.id, id_inyeccion=inyeccion.id_inyeccion,
+                            maquina=inyeccion.maquina, molde=inyeccion.molde,
+                            id_codigo=inyeccion.id_codigo, cantidad=inyeccion.cantidad_real,
+                            estado_al_borrar=inyeccion.estado,
+                        )
                         db.session.delete(inyeccion)
                         encontrado = True
 
@@ -360,6 +385,13 @@ class ProgramacionService:
                 ).all()
                 if filas_lote:
                     for fila in filas_lote:
+                        ProgramacionService._log_cancelacion(
+                            'db_inyeccion', responsable,
+                            id_original=fila.id, id_inyeccion=fila.id_inyeccion,
+                            maquina=fila.maquina, molde=fila.molde,
+                            id_codigo=fila.id_codigo, cantidad=fila.cantidad_real,
+                            estado_al_borrar=fila.estado,
+                        )
                         db.session.delete(fila)
                     encontrado = True
 

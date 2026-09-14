@@ -113,7 +113,7 @@ def mes_cancelar(id_target):
     que 'Liberar Máquina' intentaba soltar el trabajo en curso.
     """
     try:
-        ProgramacionService.cancelar(id_target)
+        ProgramacionService.cancelar(id_target, responsable=session.get('user', 'SISTEMA'))
         return jsonify({'success': True}), 200
     except ProgramacionNoEncontradaException as e:
         return jsonify({'success': False, 'error': e.message}), 404
