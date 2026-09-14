@@ -645,6 +645,7 @@ function cargarPagina(nombrePagina, pushToHistory = true) {
         'pedidos': window.ModuloPedidos,
         'almacen': window.AlmacenModule,
         'cartera': window.ModuloCartera,
+        'costo': window.ModuloCosto,
         'portal-cliente': window.ModuloPortal,
         'admin-clientes': window.ModuloAdminClientes,
         'metals-produccion': window.ModuloMetals,
@@ -704,6 +705,12 @@ function cargarPagina(nombrePagina, pushToHistory = true) {
     const menuItem = document.querySelector(`.menu-item[data-page="${nombrePagina}"]`);
     if (menuItem) {
         menuItem.classList.add('active');
+        // Si la página activa vive dentro de un grupo plegable del sidebar
+        // (Producción, Comercial y Finanzas, etc.), despliégalo para que el
+        // usuario vea dónde está parado en vez de un grupo cerrado con el
+        // ítem activo escondido adentro.
+        const grupoPadre = menuItem.closest('.menu-group');
+        if (grupoPadre) grupoPadre.classList.add('expanded');
     }
 
     // Ensure overlay is removed when changing pages via any method
@@ -818,6 +825,7 @@ function inicializarModulo(nombrePagina) {
         'metals-pedidos': window.ModuloPedidos,
         'almacen': window.AlmacenModule,
         'cartera': window.ModuloCartera,
+        'costo': window.ModuloCosto,
         'admin-clientes': window.ModuloAdminClientes,
         'metals-produccion': window.ModuloMetals,
         'metals-dashboard': window.ModuloMetals,

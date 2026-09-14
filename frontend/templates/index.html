@@ -457,40 +457,92 @@
         <ul class="sidebar-menu"> <!-- Menú items - mantener igual -->
             <li class="menu-item" data-page="dashboard"> <a href="#"><i class="fas fa-chart-line"></i><span>Dashboard
                         IA</span></a> </li>
-            <li class="menu-item" data-page="comercial-historico"> <a href="#" onclick="cargarPagina('comercial-historico')"><i class="fas fa-chart-line text-success"></i><span>Analítica Comercial</span></a> </li>
-            <li class="menu-item" data-page="cartera"> <a href="#" onclick="cargarPagina('cartera')"><i class="fas fa-wallet text-danger"></i><span>Cartera</span></a> </li>
-            <li class="menu-item" data-page="inventario"> <a href="#"><i class="fas fa-boxes"></i><span>Productos y
-                        Existencias</span></a> </li>
-            <li class="menu-item" data-page="inyeccion"> <a href="#"><i
-                        class="fas fa-cogs"></i><span>Inyección</span></a> </li>
-            <!-- Módulo en pausa (se retomará más adelante): oculto del menú con d-none. -->
-            <li class="menu-item d-none" data-page="simulador"> <a href="#" onclick="cargarPagina('simulador')"><i
-                        class="fas fa-robot"></i><span>Simulador Producción</span></a> </li>
-            <li class="menu-item" data-page="pulido"> <a href="#"><i class="fas fa-cut"></i><span>Pulido</span></a>
+            <li class="menu-item" data-page="modo-tv"> <a href="#" onclick="cargarPagina('modo-tv')"><i class="fas fa-tv text-primary"></i><span>Modo TV</span></a> </li>
+
+            <!-- Grupo: Producción -->
+            <li class="menu-group expanded" data-group="produccion">
+                <a href="#" class="menu-group-header" onclick="AuthModule.toggleMenuGroup(this); return false;">
+                    <i class="fas fa-industry"></i><span>Producción</span>
+                    <i class="fas fa-chevron-down menu-group-chevron"></i>
+                </a>
+                <ul class="menu-group-items">
+                    <li class="menu-item" data-page="inyeccion"> <a href="#"><i
+                                class="fas fa-cogs"></i><span>Inyección</span></a> </li>
+                    <!-- Módulo en pausa (se retomará más adelante): oculto del menú con d-none. -->
+                    <li class="menu-item d-none" data-page="simulador"> <a href="#" onclick="cargarPagina('simulador')"><i
+                                class="fas fa-robot"></i><span>Simulador Producción</span></a> </li>
+                    <li class="menu-item" data-page="pulido"> <a href="#"><i class="fas fa-cut"></i><span>Pulido</span></a>
+                    </li>
+                    <li class="menu-item" data-page="ensamble"> <a href="#"><i
+                                class="fas fa-puzzle-piece"></i><span>Ensamble</span></a> </li>
+                    <li class="menu-item" data-page="empaque"> <a href="#"><i
+                                class="fas fa-box-open"></i><span>Empaque</span></a> </li>
+                    <li class="menu-item" data-page="mezcla"> <a href="#"><i class="fas fa-vial"></i><span>Mezcla
+                                Material</span></a> </li>
+                </ul>
             </li>
-            <li class="menu-item" data-page="ensamble"> <a href="#"><i
-                        class="fas fa-puzzle-piece"></i><span>Ensamble</span></a> </li>
-            <li class="menu-item" data-page="empaque"> <a href="#"><i
-                        class="fas fa-box-open"></i><span>Empaque</span></a> </li>
-            <li class="menu-item" data-page="exportacion-wo"> <a href="#"><i
-                        class="fas fa-file-export"></i><span>Exportar a WO</span></a> </li>
-            <li class="menu-item" data-page="pnc"> <a href="#"><i
-                        class="fas fa-exclamation-triangle"></i><span>PNC</span></a> </li>
-            <li class="menu-item" data-page="facturacion"> <a href="#"><i
-                        class="fas fa-file-invoice-dollar"></i><span>Generación WO</span></a> </li>
-            <li class="menu-item" data-page="almacen"> <a href="#"><i class="fas fa-warehouse"></i><span>Gestión
-                        de Pedidos</span></a> </li>
-            <li class="menu-item" data-page="mezcla"> <a href="#"><i class="fas fa-vial"></i><span>Mezcla
-                        Material</span></a> </li>
+
+            <!-- Grupo: Comercial y Finanzas -->
+            <li class="menu-group" data-group="comercial">
+                <a href="#" class="menu-group-header" onclick="AuthModule.toggleMenuGroup(this); return false;">
+                    <i class="fas fa-hand-holding-dollar"></i><span>Comercial y Finanzas</span>
+                    <i class="fas fa-chevron-down menu-group-chevron"></i>
+                </a>
+                <ul class="menu-group-items">
+                    <li class="menu-item" data-page="comercial-historico"> <a href="#" onclick="cargarPagina('comercial-historico')"><i class="fas fa-chart-line text-success"></i><span>Analítica Comercial</span></a> </li>
+                    <li class="menu-item" data-page="cartera"> <a href="#" onclick="cargarPagina('cartera')"><i class="fas fa-wallet text-danger"></i><span>Cartera</span></a> </li>
+                    <li class="menu-item" data-page="costo"> <a href="#" onclick="cargarPagina('costo')"><i class="fas fa-coins text-warning"></i><span>Costo</span></a> </li>
+                    <li class="menu-item" data-page="pedidos"> <a href="#"><i
+                                class="fas fa-shopping-basket"></i><span>Pedidos</span></a> </li>
+                </ul>
+            </li>
+
+            <!-- Grupo: Almacén e Inventario -->
+            <li class="menu-group" data-group="almacen-inventario">
+                <a href="#" class="menu-group-header" onclick="AuthModule.toggleMenuGroup(this); return false;">
+                    <i class="fas fa-warehouse"></i><span>Almacén e Inventario</span>
+                    <i class="fas fa-chevron-down menu-group-chevron"></i>
+                </a>
+                <ul class="menu-group-items">
+                    <li class="menu-item" data-page="almacen"> <a href="#"><i class="fas fa-warehouse"></i><span>Gestión
+                                de Pedidos</span></a> </li>
+                    <li class="menu-item" data-page="inventario"> <a href="#"><i class="fas fa-boxes"></i><span>Productos y
+                                Existencias</span></a> </li>
+                    <li class="menu-item" data-page="pnc"> <a href="#"><i
+                                class="fas fa-exclamation-triangle"></i><span>PNC</span></a> </li>
+                </ul>
+            </li>
+
+            <!-- Grupo: World Office -->
+            <li class="menu-group" data-group="world-office">
+                <a href="#" class="menu-group-header" onclick="AuthModule.toggleMenuGroup(this); return false;">
+                    <i class="fas fa-globe"></i><span>World Office</span>
+                    <i class="fas fa-chevron-down menu-group-chevron"></i>
+                </a>
+                <ul class="menu-group-items">
+                    <li class="menu-item" data-page="exportacion-wo"> <a href="#"><i
+                                class="fas fa-file-export"></i><span>Exportar a WO</span></a> </li>
+                    <li class="menu-item" data-page="facturacion"> <a href="#"><i
+                                class="fas fa-file-invoice-dollar"></i><span>Generación WO</span></a> </li>
+                    <li class="menu-item" data-page="auditoria-op"> <a href="#" onclick="cargarPagina('auditoria-op')"><i class="fas fa-clipboard-check text-warning"></i><span>Auditoría de OP</span></a> </li>
+                </ul>
+            </li>
+
+            <!-- Grupo: Administración -->
+            <li class="menu-group" data-group="administracion">
+                <a href="#" class="menu-group-header" onclick="AuthModule.toggleMenuGroup(this); return false;">
+                    <i class="fas fa-user-shield"></i><span>Administración</span>
+                    <i class="fas fa-chevron-down menu-group-chevron"></i>
+                </a>
+                <ul class="menu-group-items">
+                    <li class="menu-item" data-page="asistencia"> <a href="#"><i class="fas fa-user-clock"></i><span>Control de
+                                Asistencia</span></a> </li>
+                    <li class="menu-item" id="nav-notificaciones" data-page="notificaciones"> <a href="#"><i class="fas fa-bullhorn"></i><span>Notificaciones Push</span></a> </li>
+                </ul>
+            </li>
+
             <li class="menu-item" data-page="historial"> <a href="#"><i class="fas fa-history"></i><span>Historial
                         Global</span></a> </li>
-            <li class="menu-item" data-page="pedidos"> <a href="#"><i
-                        class="fas fa-shopping-basket"></i><span>Pedidos</span></a> </li>
-            <li class="menu-item" data-page="asistencia"> <a href="#"><i class="fas fa-user-clock"></i><span>Control de
-                        Asistencia</span></a> </li>
-            <li class="menu-item" id="nav-notificaciones" data-page="notificaciones"> <a href="#"><i class="fas fa-bullhorn"></i><span>Notificaciones Push</span></a> </li>
-            <li class="menu-item" data-page="auditoria-op"> <a href="#" onclick="cargarPagina('auditoria-op')"><i class="fas fa-clipboard-check text-warning"></i><span>Auditoría de OP</span></a> </li>
-            <li class="menu-item" data-page="modo-tv"> <a href="#" onclick="cargarPagina('modo-tv')"><i class="fas fa-tv text-primary"></i><span>Modo TV</span></a> </li>
 
             <!-- SECCION FRIMETALS -->
             <li class="menu-item" data-page="metals-dashboard"> <a href="#"><i
@@ -5274,6 +5326,91 @@
             </div>
         </div>
 
+        <!-- MÓDULO COSTO (Rentabilidad por Pedido, solo Administración) -->
+        <div id="costo-page" class="page">
+            <style>
+                #costo-page .table th,
+                #costo-page .table td {
+                    padding: 14px 18px;
+                }
+                #costo-page .table td {
+                    font-variant-numeric: tabular-nums;
+                }
+            </style>
+            <header class="top-bar">
+                <button class="btn-icon" id="toggle-sidebar-costo">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <div class="page-title">
+                    <h1><i class="fas fa-coins"></i> Costo</h1>
+                    <p class="subtitle">Costo de fabricar la pieza vs precio de venta por pedido (sin costos operativos, eso lo calcula World Office)</p>
+                </div>
+                <div class="top-controls">
+                    <button class="btn btn-primary" id="btn-refrescar-costo" onclick="ModuloCosto.cargar()">
+                        <i class="fas fa-sync"></i> Actualizar
+                    </button>
+                </div>
+            </header>
+
+            <div class="alert alert-warning d-none mt-2" id="costo-modulo-aviso-incompletos" role="alert"></div>
+
+            <div class="row g-4 mb-4 mt-2">
+                <div class="col-md-4">
+                    <div class="card shadow-sm border-0 h-100" style="border-radius: 16px;">
+                        <div class="card-body text-center">
+                            <h6 class="text-muted text-uppercase fw-bold small mb-2">Venta Total</h6>
+                            <h3 class="fw-bold text-primary" id="costo-modulo-venta-val">$0</h3>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card shadow-sm border-0 h-100" style="border-radius: 16px;">
+                        <div class="card-body text-center">
+                            <h6 class="text-muted text-uppercase fw-bold small mb-2">Costo Total Piezas</h6>
+                            <h3 class="fw-bold text-danger" id="costo-modulo-costo-val">$0</h3>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card shadow-sm border-0 h-100" style="border-radius: 16px;">
+                        <div class="card-body text-center">
+                            <h6 class="text-muted text-uppercase fw-bold small mb-2">Margen</h6>
+                            <h3 class="fw-bold text-success" id="costo-modulo-margen-val">$0 (0%)</h3>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card shadow-sm border-0" style="border-radius: 16px;">
+                <div class="card-header bg-white border-0 pt-4 pb-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                    <h5 class="fw-bold mb-0 text-dark"><i class="fas fa-list me-2 text-muted"></i>Rentabilidad por Pedido</h5>
+                    <div class="d-flex flex-wrap align-items-center gap-2">
+                        <input type="text" id="costo-modulo-buscador" class="form-control form-control-sm" placeholder="Buscar pedido o cliente..." style="width: 240px;" oninput="ModuloCosto.filtrar()">
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive" style="max-height: 65vh; overflow-y: auto;">
+                        <table class="table table-hover table-striped align-middle mb-0 responsive-mobile">
+                            <thead>
+                                <tr>
+                                    <th style="cursor:pointer; position: sticky; top: 0; z-index: 2; background: #f1f5f9;" onclick="ModuloCosto.ordenarPor('id_pedido')">Pedido <i class="fas fa-sort text-muted"></i></th>
+                                    <th style="cursor:pointer; position: sticky; top: 0; z-index: 2; background: #f1f5f9;" onclick="ModuloCosto.ordenarPor('cliente')">Cliente</th>
+                                    <th style="cursor:pointer; position: sticky; top: 0; z-index: 2; background: #f1f5f9;" onclick="ModuloCosto.ordenarPor('fecha')">Fecha <i class="fas fa-sort text-muted"></i></th>
+                                    <th style="position: sticky; top: 0; z-index: 2; background: #f1f5f9;">Estado</th>
+                                    <th class="text-end" style="cursor:pointer; position: sticky; top: 0; z-index: 2; background: #f1f5f9;" onclick="ModuloCosto.ordenarPor('venta_total')">Venta</th>
+                                    <th class="text-end" style="cursor:pointer; position: sticky; top: 0; z-index: 2; background: #f1f5f9;" onclick="ModuloCosto.ordenarPor('costo_total')">Costo</th>
+                                    <th class="text-end" style="cursor:pointer; position: sticky; top: 0; z-index: 2; background: #f1f5f9;" onclick="ModuloCosto.ordenarPor('margen')">Margen <i class="fas fa-sort text-muted"></i></th>
+                                </tr>
+                            </thead>
+                            <tbody id="costo-modulo-tbody">
+                                <tr><td colspan="7" class="text-center py-5 text-muted"><i class="fas fa-spinner fa-spin fa-2x"></i></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- METALS: Producción FRIMETALS -->
         <div id="metals-produccion-page" class="page">
             <header class="top-bar" style="justify-content: flex-start; gap: 20px;">
@@ -5859,6 +5996,7 @@
     <script src="/static/js/modules/pedidos.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/almacen.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/cartera.js?v={{ RELEASE_VERSION }}"></script>
+    <script src="/static/js/modules/costo.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/metals.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/portal_client.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/admin_clientes.js?v={{ RELEASE_VERSION }}"></script>

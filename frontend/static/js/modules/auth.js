@@ -69,10 +69,10 @@ const AuthModule = {
 
     // Matriz de Permisos por Rol (Modelo RBAC Estricto basado en Departamentos)
     permissions: {
-        'ADMINISTRACION': ['dashboard', 'inventario', 'inyeccion', 'simulador', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc', 'facturacion', 'mezcla', 'historial', 'reportes', 'pedidos', 'almacen', 'admin-clientes', 'asistencia', 'nomina', 'gerencia', 'notificaciones', 'comercial-historico', 'cartera', 'auditoria-op', 'modo-tv', 'metals-dashboard', 'metals-produccion', 'metals-pedidos', 'metals-torno', 'metals-laser', 'metals-soldadura', 'metals-marcadora', 'metals-taladro', 'metals-dobladora', 'metals-pintura', 'metals-zincado', 'metals-horno', 'metals-pulido-m'],
-        'ADMINISTRADOR': ['dashboard', 'inventario', 'inyeccion', 'simulador', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc', 'facturacion', 'mezcla', 'historial', 'reportes', 'pedidos', 'almacen', 'admin-clientes', 'asistencia', 'nomina', 'gerencia', 'notificaciones', 'comercial-historico', 'cartera', 'auditoria-op', 'modo-tv', 'metals-dashboard', 'metals-produccion', 'metals-pedidos', 'metals-torno', 'metals-laser', 'metals-soldadura', 'metals-marcadora', 'metals-taladro', 'metals-dobladora', 'metals-pintura', 'metals-zincado', 'metals-horno', 'metals-pulido-m'],
-        'ADMIN': ['dashboard', 'inventario', 'inyeccion', 'simulador', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc', 'facturacion', 'mezcla', 'historial', 'reportes', 'pedidos', 'almacen', 'admin-clientes', 'asistencia', 'nomina', 'gerencia', 'notificaciones', 'comercial-historico', 'cartera', 'auditoria-op', 'modo-tv', 'metals-dashboard', 'metals-produccion', 'metals-pedidos', 'metals-torno', 'metals-laser', 'metals-soldadura', 'metals-marcadora', 'metals-taladro', 'metals-dobladora', 'metals-pintura', 'metals-zincado', 'metals-horno', 'metals-pulido-m'],
-        'GERENCIA': ['dashboard', 'inventario', 'inyeccion', 'simulador', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc', 'facturacion', 'mezcla', 'historial', 'reportes', 'pedidos', 'almacen', 'admin-clientes', 'asistencia', 'nomina', 'gerencia', 'notificaciones', 'comercial-historico', 'cartera', 'auditoria-op', 'modo-tv', 'metals-dashboard', 'metals-produccion', 'metals-pedidos'],
+        'ADMINISTRACION': ['dashboard', 'inventario', 'inyeccion', 'simulador', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc', 'facturacion', 'mezcla', 'historial', 'reportes', 'pedidos', 'almacen', 'admin-clientes', 'asistencia', 'nomina', 'gerencia', 'notificaciones', 'comercial-historico', 'cartera', 'costo', 'auditoria-op', 'modo-tv', 'metals-dashboard', 'metals-produccion', 'metals-pedidos', 'metals-torno', 'metals-laser', 'metals-soldadura', 'metals-marcadora', 'metals-taladro', 'metals-dobladora', 'metals-pintura', 'metals-zincado', 'metals-horno', 'metals-pulido-m'],
+        'ADMINISTRADOR': ['dashboard', 'inventario', 'inyeccion', 'simulador', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc', 'facturacion', 'mezcla', 'historial', 'reportes', 'pedidos', 'almacen', 'admin-clientes', 'asistencia', 'nomina', 'gerencia', 'notificaciones', 'comercial-historico', 'cartera', 'costo', 'auditoria-op', 'modo-tv', 'metals-dashboard', 'metals-produccion', 'metals-pedidos', 'metals-torno', 'metals-laser', 'metals-soldadura', 'metals-marcadora', 'metals-taladro', 'metals-dobladora', 'metals-pintura', 'metals-zincado', 'metals-horno', 'metals-pulido-m'],
+        'ADMIN': ['dashboard', 'inventario', 'inyeccion', 'simulador', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc', 'facturacion', 'mezcla', 'historial', 'reportes', 'pedidos', 'almacen', 'admin-clientes', 'asistencia', 'nomina', 'gerencia', 'notificaciones', 'comercial-historico', 'cartera', 'costo', 'auditoria-op', 'modo-tv', 'metals-dashboard', 'metals-produccion', 'metals-pedidos', 'metals-torno', 'metals-laser', 'metals-soldadura', 'metals-marcadora', 'metals-taladro', 'metals-dobladora', 'metals-pintura', 'metals-zincado', 'metals-horno', 'metals-pulido-m'],
+        'GERENCIA': ['dashboard', 'inventario', 'inyeccion', 'simulador', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc', 'facturacion', 'mezcla', 'historial', 'reportes', 'pedidos', 'almacen', 'admin-clientes', 'asistencia', 'nomina', 'gerencia', 'notificaciones', 'comercial-historico', 'cartera', 'costo', 'auditoria-op', 'modo-tv', 'metals-dashboard', 'metals-produccion', 'metals-pedidos'],
         // === FRIMETALS ROLES (Phase 2 Multi-Tenant) ===
         'STAFF FRIMETALS': ['metals-dashboard', 'metals-produccion', 'metals-pedidos', 'metals-torno', 'metals-laser', 'metals-soldadura', 'metals-marcadora', 'metals-taladro', 'metals-dobladora', 'metals-pintura', 'metals-zincado', 'metals-horno', 'metals-pulido-m', 'pedidos', 'almacen', 'asistencia'],
         'JEFE DE PLANTA': ['metals-dashboard', 'metals-produccion', 'metals-pedidos', 'metals-torno', 'metals-laser', 'metals-soldadura', 'metals-marcadora', 'metals-taladro', 'metals-dobladora', 'metals-pintura', 'metals-zincado', 'metals-horno', 'metals-pulido-m', 'pedidos', 'almacen', 'asistencia', 'historial', 'inventario', 'exportacion-wo'],
@@ -88,7 +88,7 @@ const AuthModule = {
         'JEFE INYECCION': ['dashboard', 'inyeccion', 'simulador', 'mezcla', 'asistencia', 'exportacion-wo', 'modo-tv'],
         'INYECCION': ['dashboard', 'inyeccion', 'mezcla', 'asistencia', 'modo-tv'],
         'JEFE PULIDO': ['dashboard', 'pulido', 'historial', 'asistencia', 'exportacion-wo', 'modo-tv'],
-        'PULIDO': ['dashboard', 'pulido', 'historial', 'asistencia', 'modo-tv'],
+        'PULIDO': ['dashboard', 'pulido', 'historial', 'asistencia'],
         'ALISTAMIENTO': ['almacen', 'empaque', 'asistencia'],
         'ENSAMBLE': ['inyeccion', 'ensamble', 'asistencia'],
         'CLIENTE': ['portal-cliente'],
@@ -868,6 +868,24 @@ const AuthModule = {
                 navNotif.style.setProperty('display', 'block', 'important');
             }
         }
+
+        // Oculta el encabezado de un grupo plegable del sidebar (Producción,
+        // Comercial y Finanzas, etc.) cuando ninguno de sus .menu-item quedó
+        // visible tras el filtrado de permisos de arriba -- si no, un rol sin
+        // acceso a nada de ese grupo vería un encabezado que despliega vacío.
+        document.querySelectorAll('.sidebar-menu .menu-group').forEach(grupo => {
+            const items = grupo.querySelectorAll('.menu-item');
+            const hayVisible = Array.from(items).some(item => item.style.display !== 'none');
+            grupo.style.display = hayVisible ? '' : 'none';
+        });
+    },
+
+    // Alterna abierto/cerrado un grupo plegable del sidebar (Producción,
+    // Comercial y Finanzas, etc.). `header` es el <a class="menu-group-header">
+    // clickeado; su padre .menu-group carga el estado (clase 'expanded').
+    toggleMenuGroup: function (header) {
+        const grupo = header.closest('.menu-group');
+        if (grupo) grupo.classList.toggle('expanded');
     },
 
     applyPermissions: function (isLogin = false, skipRedirect = false) {

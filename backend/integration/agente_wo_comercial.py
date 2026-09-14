@@ -489,12 +489,12 @@ def ejecutar_extraccion():
 
         is_auto = "--auto" in sys.argv or os.getenv("AUTO_SYNC") == "True"
         if not is_auto:
-            confirmacion = input("\nPresiona ENTER para enviar los datos a Render (o Ctrl+C para cancelar)...")
+            confirmacion = input(f"\nPresiona ENTER para enviar los datos a {API_URL} (o Ctrl+C para cancelar)...")
         else:
             logger.info("[INFO] Modo automático detectado. Omitiendo freno de seguridad manual...")
 
         # Envío POST
-        logger.info(">> Enviando datos a Render por lotes...")
+        logger.info(f">> Enviando datos a {API_URL} por lotes...")
         headers = {
             "Content-Type": "application/json",
             "X-API-Key": API_KEY,

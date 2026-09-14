@@ -106,6 +106,15 @@ const AlmacenModule = {
             if (menuLink) menuLink.textContent = 'Gestión Pedidos';
         }
 
+        // RBAC: el botón "Ver Cartera" (y su modal) expone saldo vencido de
+        // clientes -- en esta vista solo debe verlo Administración y Comercial,
+        // igual que el badge de "Mora" en cada tarjeta de pedido más abajo.
+        const rolInicialCartera = AuthModule.normalizeRole(window.AppState?.user?.rol || window.AppState?.user?.role);
+        const btnVerCartera = document.getElementById('btn-ver-cartera-almacen');
+        if (btnVerCartera && !['ADMIN', 'COMERCIAL'].includes(rolInicialCartera)) {
+            btnVerCartera.style.display = 'none';
+        }
+
         // Marcar como inicializado
         this._inicializado = true;
 
@@ -364,7 +373,7 @@ const AlmacenModule = {
                         <div class="card-body" style="padding: 15px; flex: 1; display: flex; flex-direction: column;">
                             <h6 class="card-title fw-bold mb-1 d-flex align-items-center flex-wrap" style="color: #1e293b; cursor: pointer; font-size: 0.85rem; line-height: 1.3; margin-bottom: 4px !important; gap: 6px;" onclick="AlmacenModule.abrirModal('${pedido.id_pedido}')">
                                 <span>${pedido.cliente}</span>
-                                ${(parseFloat(pedido.saldo_vencido_total) || 0) > 0 ? `
+                                ${(['ADMIN', 'COMERCIAL'].includes(currentRole) && (parseFloat(pedido.saldo_vencido_total) || 0) > 0) ? `
                                 <span class="badge" style="background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; font-size: 0.6rem; padding: 3px 7px; border-radius: 6px; font-weight: 700; text-transform: none;" title="Cartera vencida del cliente (solo informativo, no bloquea el despacho)">
                                     <i class="fas fa-exclamation-circle me-1"></i>Mora: ${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(pedido.saldo_vencido_total)}
                                 </span>` : ''}

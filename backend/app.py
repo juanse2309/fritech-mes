@@ -225,6 +225,7 @@ from backend.routes.pnc_routes import pnc_bp
 from backend.routes.simulador_routes import simulador_bp
 from backend.routes.asistente_routes import asistente_bp
 from backend.routes.cartera_routes import cartera_bp
+from backend.routes.costo_routes import costo_bp
 from backend.routes.tasks_routes import tasks_bp
 
 app.register_blueprint(auth_bp)
@@ -272,6 +273,7 @@ app.register_blueprint(wo_export_bp)
 limiter.limit("150 per minute")(wo_bp)
 app.register_blueprint(wo_bp)
 app.register_blueprint(cartera_bp)
+app.register_blueprint(costo_bp)
 
 from backend.routes.pwa_routes import pwa_bp
 app.register_blueprint(pwa_bp)
@@ -304,7 +306,7 @@ def serve_manifest():
 # (cache-busting de CSS/JS en index.html, footer, loader). Distinta de
 # _APP_VERSION de abajo, que es el hash del deploy activo para detectar
 # frontend desactualizado -- no confundir ambas.
-RELEASE_VERSION = "1.8.57"
+RELEASE_VERSION = "1.8.58"
 
 # --- VERSION DEL DEPLOY ACTIVO ---
 # RENDER_GIT_COMMIT la puebla Render automaticamente en cada deploy (no hay

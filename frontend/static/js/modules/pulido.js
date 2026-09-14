@@ -1354,6 +1354,11 @@ const ModuloPulido = {
             return;
         }
 
+        if (data.cantidad_real === 0) {
+            Swal.fire('Cantidad en 0', 'La cantidad de piezas buenas no puede ser 0 al cerrar el reporte. Verifica el dato antes de guardar.', 'warning');
+            return;
+        }
+
         await this.enviarAServidor(data);
     },
 
@@ -1463,6 +1468,11 @@ const ModuloPulido = {
 
             if (!data.responsable || !data.codigo_producto || !data.cantidad_recibida || data.cantidad_recibida <= 0) {
                 Swal.fire('Atención', 'Faltan campos obligatorios (Responsable, Referencia o Cantidad mayor a 0)', 'warning');
+                return;
+            }
+
+            if (data.cantidad_real === 0) {
+                Swal.fire('Cantidad en 0', 'La cantidad de piezas buenas no puede ser 0 al cerrar el reporte. Verifica el dato antes de guardar.', 'warning');
                 return;
             }
 

@@ -134,7 +134,7 @@ def ejecutar_extraccion():
             logger.warning("[!] No se encontraron registros. Se aborta el envío (el backend además rechaza catálogos vacíos).")
             return
 
-        logger.info(">> Enviando datos a Render...")
+        logger.info(f">> Enviando datos a {API_URL}...")
         headers = {
             "Content-Type": "application/json",
             "X-API-Key": API_KEY,

@@ -65,6 +65,32 @@ class CantidadExcedeInyectadoException(Exception):
         )
         super().__init__(self.message)
 
+
+class CantidadRealCeroException(Exception):
+    """
+    Bloqueo duro: un reporte de Pulido que cierra el ciclo (cualquier estado
+    que no sea uno de los "en progreso" -- ver ESTADOS_PULIDO_EN_PROGRESO)
+    no puede quedar con cantidad_real (piezas buenas) en 0. Un cierre en 0
+    casi siempre es un dato mal digitado o un envío a medio terminar, no una
+    producción real -- si el 100% del lote salió defectuoso, el flujo
+    correcto sigue siendo registrar el PNC, nunca dejar todo en cero.
+    Los checkpoints intermedios (pausa/cola, inicio de sesión) sí legítimamente
+    mandan cantidad_real=0 porque el operario aún no ha terminado -- por eso
+    esta validación solo aplica fuera de ESTADOS_PULIDO_EN_PROGRESO.
+    """
+    def __init__(self, message=None):
+        self.message = message or (
+            "La cantidad de piezas buenas (cantidad_real) no puede ser 0 al "
+            "cerrar un reporte de Pulido. Verifica el dato antes de guardar."
+        )
+        super().__init__(self.message)
+
+# Estados de un registro de Pulido que todavía no cerraron el ciclo --
+# cantidad_real=0 es legítimo en cualquiera de estos (checkpoint de
+# pausa/cola, o inicio de sesión con el cronómetro corriendo). Ver
+# CantidadRealCeroException y PulidoService.validar_cantidad_real.
+ESTADOS_PULIDO_EN_PROGRESO = ['TRABAJANDO', 'EN_PROCESO', 'PAUSADO', 'PAUSADO_COLA']
+
 # Pulido no tiene turno nocturno: jornada única 07:00-17:00 (10h de span).
 # Confirmado por el usuario el 2026-08-03 tras auditoría de horas mal digitadas.
 DURACION_MAXIMA_TURNO_HORAS = 10
@@ -950,6 +976,17 @@ class PulidoService:
         hoy = get_colombia_time().date()
         if fecha_reporte != hoy:
             raise FechaPulidoInvalidaException(fecha_reporte, hoy)
+
+    @staticmethod
+    def validar_cantidad_real(cantidad_real: float, estado: str) -> None:
+        """
+        Rechaza el reporte si cantidad_real (piezas buenas) es 0 y el estado
+        no es uno de ESTADOS_PULIDO_EN_PROGRESO -- ver CantidadRealCeroException.
+        """
+        if (estado or '').strip().upper() in ESTADOS_PULIDO_EN_PROGRESO:
+            return
+        if not cantidad_real or cantidad_real <= 0:
+            raise CantidadRealCeroException()
 
     @staticmethod
     def validar_saldo_op(op: str, referencia: str, cantidad_nueva_total: float,

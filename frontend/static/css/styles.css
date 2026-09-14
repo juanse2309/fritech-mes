@@ -215,6 +215,62 @@ body:not(.logged-in) [id^="toggle-sidebar"] {
     text-align: center;
 }
 
+.menu-group {
+    margin-bottom: 10px;
+}
+
+.menu-group-header {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 15px 20px;
+    color: rgba(255, 255, 255, 0.8);
+    text-decoration: none;
+    border-radius: var(--border-radius);
+    transition: var(--transition);
+    font-weight: 500;
+    cursor: pointer;
+}
+
+.menu-group-header:hover {
+    background: rgba(67, 97, 238, 0.2);
+    color: white;
+}
+
+.menu-group-header i:first-child {
+    font-size: 1.2rem;
+    width: 24px;
+    text-align: center;
+}
+
+.menu-group-header span {
+    flex: 1;
+}
+
+.menu-group-chevron {
+    font-size: 0.85rem !important;
+    width: auto !important;
+    transition: transform 0.2s ease;
+}
+
+.menu-group.expanded .menu-group-chevron {
+    transform: rotate(180deg);
+}
+
+.menu-group-items {
+    list-style: none;
+    max-height: 0;
+    overflow: hidden;
+}
+
+.menu-group.expanded .menu-group-items {
+    max-height: 1000px;
+}
+
+.menu-group-items .menu-item a {
+    padding-left: 40px;
+}
+
 .sidebar-footer {
     padding-top: 15px;
     margin-top: auto;

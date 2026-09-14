@@ -10,7 +10,7 @@ from backend.utils.auth_middleware import (
 from backend.models.sql_models import db, ProduccionPulido, PncInyeccion, PncPulido, PncEnsamble, BujeRevuelto, Producto, TrazabilidadLote, PulidoOverride, PulidoPendienteAutorizacion
 from backend.utils.formatters import normalizar_codigo, preservar_o_normalizar_prefijo, normalizar_codigo_sin_prefijo
 from backend.services.audit_service import AuditService, OwnershipMismatchException, TurnoInvalidoException
-from backend.services.pulido_service import PulidoService, FechaPulidoInvalidaException, CantidadExcedeInyectadoException
+from backend.services.pulido_service import PulidoService, FechaPulidoInvalidaException, CantidadExcedeInyectadoException, CantidadRealCeroException
 from backend.services.pausas_service import PausasService
 from backend.services.programacion_pulido_service import ProgramacionPulidoService
 from backend.utils.time_utils import get_colombia_time
@@ -105,6 +105,12 @@ def _ejecutar_persistencia_pulido(registro, data, responsable, ahora,
     registro.lote = data.get('lote') or 'SIN LOTE'
     registro.cantidad_recibida = float(data.get('cantidad_recibida') or 0)
     registro.almacen_destino = data.get('almacen_destino', 'P. TERMINADO')
+
+    # Bloqueo duro: cantidad_real=0 solo es válido en un checkpoint
+    # intermedio (pausa/cola, sesión recién iniciada) -- ver
+    # ESTADOS_PULIDO_EN_PROGRESO. Cualquier cierre de ciclo con 0 piezas
+    # buenas se rechaza antes de tocar inventario/consistencia.
+    PulidoService.validar_cantidad_real(registro.cantidad_real, registro.estado)
 
     # Validación de consistencia (Bujes Buenos + PNC <= Total)
     total_reportado = registro.cantidad_real + registro.pnc_inyeccion + registro.pnc_pulido
@@ -584,6 +590,10 @@ def registrar_pulido():
             orden_produccion=e.op, referencia=e.referencia,
             inyectado=e.inyectado, ya_reportado=e.ya_reportado, disponible=e.disponible
         )
+
+    except CantidadRealCeroException as e:
+        db.session.rollback()
+        return api_error(e.message, status_code=400, code="PULIDO_CANTIDAD_REAL_CERO")
 
     except TurnoInvalidoException as e:
         db.session.rollback()
