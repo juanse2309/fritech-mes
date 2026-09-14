@@ -118,10 +118,31 @@ class AuthService:
 
     @staticmethod
     def obtener_responsables_metals():
-        """Lista de responsables de Metales (staff frimetals / administración / jefe de planta)."""
+        """
+        Lista de responsables de Metales (staff frimetals / administración /
+        jefe de planta / comercial frimetals). Es la función que de verdad
+        llena el selector de login al abrir la tarjeta "STAFF FRIMETALS"
+        (ver AuthModule.openStaffLogin -> loadResponsables ->
+        GET /api/auth/metals/responsables) -- el `usuarios` que renderiza
+        index.html en el server (obtener_staff_frimetals_admin_activo) queda
+        sobreescrito por ese fetch apenas se abre el modal, así que el
+        filtro que importa para ese dropdown es este.
+
+        `ilike` en vez de `in_()` exacto: 2026-09-14, un usuario con rol
+        guardado como 'COMERCIAL FRIMETALS' (mayúsculas, por convención de
+        _FRIMETALS_ROLES en tenant.py) no aparecía porque `in_()` compara
+        con case-sensitivity exacta contra el string en minúsculas de la
+        lista -- no asumir el casing real en la base a partir de cómo luce
+        el string literal en el código.
+        """
         usuarios_db = Usuario.query.filter(
             Usuario.activo == True,
-            Usuario.rol.in_(['staff frimetals', 'administracion', 'jefe de planta'])
+            or_(
+                Usuario.rol.ilike('staff frimetals'),
+                Usuario.rol.ilike('administracion'),
+                Usuario.rol.ilike('jefe de planta'),
+                Usuario.rol.ilike('comercial frimetals'),
+            )
         ).order_by(Usuario.nombre_completo).all()
 
         return [{
