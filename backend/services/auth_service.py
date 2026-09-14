@@ -134,16 +134,27 @@ class AuthService:
     @staticmethod
     def obtener_staff_frimetals_admin_activo():
         """
-        Usuarios activos de staff frimetals / administración, para poblar el
-        selector de la página principal (index.html). Filtro histórico por
-        `ilike` + solo 2 roles — deliberadamente NO se unificó con
-        `obtener_responsables_metals` (que además incluye 'jefe de planta' y
-        usa `in_`) para no arriesgar cambiar el comportamiento de la página
-        principal al extraer esta consulta de app.py.
+        Usuarios activos de staff frimetals / administración / comercial
+        frimetals, para poblar el selector de la página principal
+        (index.html). Filtro histórico por `ilike` — deliberadamente NO se
+        unificó con `obtener_responsables_metals` (que además incluye 'jefe
+        de planta' y usa `in_`) para no arriesgar cambiar el comportamiento
+        de la página principal al extraer esta consulta de app.py.
+
+        'comercial frimetals' se agregó 2026-09-14: sin ese rol, personal
+        comercial de Frimetals no podía ni siquiera aparecer en el selector
+        de login (quedaba con rol 'comercial' a secas, que además tenant.py
+        no reconoce como Frimetals). El sufijo 'frimetals' en el nombre del
+        rol es namespacing deliberado (ver _FRIMETALS_ROLES en
+        backend/core/tenant.py) -- no matchea ningún rol real de FRIPARTS,
+        así que ensanchar este filtro no le agrega nadie al selector de esa
+        instancia.
         """
         return Usuario.query.filter(
             Usuario.activo == True,
-            (Usuario.rol.ilike('staff frimetals')) | (Usuario.rol.ilike('administracion'))
+            (Usuario.rol.ilike('staff frimetals'))
+            | (Usuario.rol.ilike('administracion'))
+            | (Usuario.rol.ilike('comercial frimetals'))
         ).order_by(Usuario.nombre_completo).all()
 
     @staticmethod
