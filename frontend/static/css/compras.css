@@ -1,0 +1,11 @@
+/* compras.css — Módulo de Compras a Proveedores Externos
+   Grilla responsiva para las tarjetas de solicitudes/OC/recepción/tránsito.
+   Las tarjetas en sí usan las clases de Bootstrap ya cargadas en la app
+   (card, card-body, shadow-sm, rounded-4) -- este archivo solo resuelve el
+   acomodo en grilla, que Bootstrap no da gratis fuera de su sistema row/col. */
+
+.cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 16px;
+}

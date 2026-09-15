@@ -233,6 +233,92 @@ def _adjuntar_ept(cursor, mapping, registros):
     logger.info(f"[OK] EPT cruzada: {con_ept} de {len(registros)} lineas de OP tienen entrada registrada.")
 
 
+def extraer_ordenes_compra(cursor, col_nit):
+    """
+    Fase 2 del módulo de Compras a Proveedores (plan 2026-09-15): extrae
+    documentos Tipo_de_Documento='OC' desde la misma vista de WO que ya
+    usa la extracción comercial/OP -- no requiere conexión ni vista nueva.
+
+    Confirmado contra WO real (2026-09-15, lectura de solo diagnóstico
+    autorizada por el usuario): 'OC' es una serie de consecutivos PROPIA
+    e independiente -- no comparte bloque con OP ni con ningún otro tipo
+    de documento (293 documentos reales, numerados 1-297 al momento de
+    confirmar), y no lleva prefijo (a diferencia de OP). Por eso la
+    extracción aquí es más simple que extraer_ordenes_produccion: no hace
+    falta cruzar contra Movimientos_Inventario ni EPT, con el
+    Numero_de_Documento del encabezado basta para el numerador.
+
+    col_nit: nombre de columna ya autodetectado en ejecutar_extraccion()
+    (confirmado 'Identificacion_Tercero' contra WO real, pero se recibe
+    como parámetro en vez de hardcodearse -- mismo criterio defensivo que
+    el resto de este archivo, por si cambia de nombre en otra versión de WO).
+    """
+    logger.info(">> Extrayendo Ordenes de Compra (Tipo_de_Documento='OC')...")
+
+    select_nit = f"E.[{col_nit}]" if col_nit else "NULL"
+    sql_oc = f"""
+    SELECT
+        E.Numero_de_Documento AS numero_documento,
+        E.Fecha AS fecha,
+        E.Anulado AS anulado,
+        E.Verificado AS verificado,
+        {select_nit} AS proveedor_nit
+    FROM [FRIPARTS2021].[dbo].[Vista_Tabla_Encabezados] E
+    WHERE E.Tipo_de_Documento = 'OC'
+    """
+    cursor.execute(sql_oc)
+    columnas = [c[0] for c in cursor.description]
+
+    registros = []
+    for row in cursor.fetchall():
+        item = dict(zip(columnas, row))
+        numero_doc = item.get('numero_documento')
+        if numero_doc is None:
+            continue
+        registros.append({
+            "numero_oc": f"OC-{int(numero_doc)}",
+            "consecutivo": int(numero_doc),
+            "proveedor_nit": str(item.get('proveedor_nit') or '').strip() or None,
+            "fecha": item.get('fecha'),
+            "anulado": bool(item.get('anulado') or 0),
+            "verificado": bool(item.get('verificado') or 0),
+        })
+
+    logger.info(f"[OK] {len(registros)} OC extraídas de WO.")
+    return registros
+
+
+def guardar_staging_oc(registros):
+    """
+    Persistencia directa a Postgres -- mismo patrón que
+    guardar_staging_op(): db_oc_wo_staging es una tabla interna de
+    diagnóstico (para el numerador de OC), sin dato financiero de
+    cliente, así que no necesita el envoltorio de seguridad de la sync
+    comercial. Truncate + bulk insert en una sola transacción.
+    """
+    from sqlalchemy import create_engine, text
+    from backend.models.sql_models import OcWoStaging
+
+    db_url = os.getenv("DATABASE_URL")
+    if not db_url:
+        logger.error("[OC-STAGING] DATABASE_URL no configurada -- se omite la persistencia del staging de OC.")
+        return
+
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+    engine = create_engine(db_url)
+    try:
+        OcWoStaging.__table__.create(engine, checkfirst=True)
+        with engine.begin() as conn:
+            conn.execute(OcWoStaging.__table__.delete())
+            if registros:
+                conn.execute(OcWoStaging.__table__.insert(), registros)
+        logger.info(f"[OK] db_oc_wo_staging actualizada: {len(registros)} OC (truncate+insert atomico).")
+    finally:
+        engine.dispose()
+
+
 def guardar_staging_op(registros):
     """
     Persistencia directa a Postgres -- no pasa por recibir_comercial ni por
@@ -386,6 +472,16 @@ def ejecutar_extraccion():
                     col_nit = c
                     break
         logger.info(f"[AUDITORIA] Columna de NIT/identificación detectada en Vista_Tabla_Encabezados: '{col_nit}'")
+
+        # 1.c Módulo de Compras (plan 2026-09-15): extraer y persistir OC
+        # con el mismo cursor y el mismo col_nit ya detectado. Aislado en
+        # su propio try/except -- mismo criterio que el bloque de OP: un
+        # fallo aquí nunca debe tumbar la sync comercial que sigue abajo.
+        try:
+            registros_oc = extraer_ordenes_compra(cursor, col_nit)
+            guardar_staging_oc(registros_oc)
+        except Exception as e:
+            logger.error(f"[OC-STAGING] Falló extrayendo/guardando OC (no afecta la sync comercial): {e}")
 
         # OJO: la columna Iva en Vista_Tabla_Movimientos_Inventario es la TASA
         # del renglon (0.19 = 19%, 0.00 = exento), no el monto en pesos --

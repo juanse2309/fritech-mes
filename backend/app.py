@@ -184,6 +184,11 @@ with app.app_context():
                 END IF;
             END $$;
         """))
+        # codigo_producto se agregó a db_solicitudes_compra después de la
+        # primera iteración del módulo de Compras (2026-09-15) -- ALTER
+        # idempotente para no romper una base que ya haya corrido
+        # db.create_all() con el esquema viejo (sin esta columna).
+        db.session.execute(text("ALTER TABLE db_solicitudes_compra ADD COLUMN IF NOT EXISTS codigo_producto VARCHAR(50);"))
         db.session.commit()
         logger.debug("✅ [DB] Tablas y columna fecha_registro en db_pulido verificadas/creadas con éxito")
     except Exception as e_db:
@@ -227,6 +232,8 @@ from backend.routes.asistente_routes import asistente_bp
 from backend.routes.cartera_routes import cartera_bp
 from backend.routes.costo_routes import costo_bp
 from backend.routes.tasks_routes import tasks_bp
+from backend.routes.compras_routes import compras_bp
+from backend.routes.wo_export_compras_routes import wo_export_compras_bp
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(tasks_bp)
@@ -274,6 +281,8 @@ limiter.limit("150 per minute")(wo_bp)
 app.register_blueprint(wo_bp)
 app.register_blueprint(cartera_bp)
 app.register_blueprint(costo_bp)
+app.register_blueprint(compras_bp)
+app.register_blueprint(wo_export_compras_bp)
 
 from backend.routes.pwa_routes import pwa_bp
 app.register_blueprint(pwa_bp)

@@ -25,6 +25,7 @@
     <link rel="stylesheet" href="/static/css/pulido.css?v={{ RELEASE_VERSION }}">
     <link rel="stylesheet" href="/static/css/inventario.css?v={{ RELEASE_VERSION }}">
     <link rel="stylesheet" href="/static/css/ensamble.css?v={{ RELEASE_VERSION }}">
+    <link rel="stylesheet" href="/static/css/compras.css?v={{ RELEASE_VERSION }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Bootstrap para modales -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -520,6 +521,8 @@
                                 Existencias</span></a> </li>
                     <li class="menu-item" data-page="pnc"> <a href="#"><i
                                 class="fas fa-exclamation-triangle"></i><span>PNC</span></a> </li>
+                    <li class="menu-item" data-page="compras"> <a href="#"><i
+                                class="fas fa-truck-loading"></i><span>Compras a Proveedores</span></a> </li>
                 </ul>
             </li>
 
@@ -4036,6 +4039,111 @@
         </div>
 
 
+        <div id="compras-page" class="page" style="display: none;">
+            <header class="top-bar">
+                <button class="btn-icon" id="toggle-sidebar-compras">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <div class="page-title">
+                    <h1><i class="fas fa-truck-loading"></i> Compras a Proveedores</h1>
+                    <p class="subtitle">Solicitud → Orden de Compra → Recepción → Granallado/Zincado → Factura</p>
+                </div>
+            </header>
+
+            <div class="container-fluid py-4">
+                <!-- Pestañas de nivel 1: una por rol. ModuloCompras.aplicarVisibilidadPorRol
+                     oculta las que no aplican y activa la primera visible
+                     (mismo patrón que #ensamble-tabs / ModuloEnsamble.switchTab). -->
+                <ul class="nav nav-pills mb-4 gap-2" id="compras-tabs">
+                    <li class="nav-item" id="compras-tab-btn-solicitud">
+                        <button class="nav-link shadow-sm" data-tab="solicitud" onclick="ModuloCompras.switchTab('solicitud')">
+                            <i class="fas fa-hand-paper me-2"></i> Solicitar
+                        </button>
+                    </li>
+                    <li class="nav-item" id="compras-tab-btn-orden">
+                        <button class="nav-link shadow-sm" data-tab="orden" onclick="ModuloCompras.switchTab('orden')">
+                            <i class="fas fa-file-invoice me-2"></i> Órdenes de Compra
+                        </button>
+                    </li>
+                    <li class="nav-item" id="compras-tab-btn-recepcion">
+                        <button class="nav-link shadow-sm" data-tab="recepcion" onclick="ModuloCompras.switchTab('recepcion')">
+                            <i class="fas fa-dolly me-2"></i> Recepción
+                        </button>
+                    </li>
+                </ul>
+
+                <!-- ============================================================
+                     Pestaña Solicitar (Albeiro / rol ENSAMBLE): señala qué hace
+                     falta, SIN cantidades, eligiendo el producto de una lista. -->
+                <div id="compras-tab-solicitud" class="compras-tab-content" style="display:none;">
+                    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+                        <h3 class="mb-0"><i class="fas fa-hand-paper"></i> Mis solicitudes</h3>
+                        <button type="button" class="btn btn-primary" onclick="ModuloCompras.abrirFormularioSolicitud()">
+                            <i class="fas fa-plus"></i> Señalar qué hace falta
+                        </button>
+                    </div>
+                    <div id="compras-lista-solicitudes" class="cards-grid"><!-- JS: ModuloCompras.renderSolicitudes --></div>
+                </div>
+
+                <!-- ============================================================
+                     Pestaña Órdenes de Compra (Diego / ROL_ADMINS): sub-pestañas
+                     para no apilar la lista de pendientes, el formulario y el
+                     listado todo junto -- el formulario se abre en un modal. -->
+                <div id="compras-tab-orden" class="compras-tab-content" style="display:none;">
+                    <ul class="nav nav-pills mb-3 gap-2" id="compras-orden-subtabs">
+                        <li class="nav-item">
+                            <button class="nav-link active shadow-sm" data-subtab="pendientes" onclick="ModuloCompras.switchSubtabOrden('pendientes')">
+                                Solicitudes pendientes <span class="badge bg-warning text-dark" id="badge-solicitudes-pendientes">0</span>
+                            </button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link shadow-sm" data-subtab="listado" onclick="ModuloCompras.switchSubtabOrden('listado')">
+                                Órdenes de Compra
+                            </button>
+                        </li>
+                    </ul>
+
+                    <div id="compras-orden-sub-pendientes" class="compras-subtab-content">
+                        <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+                            <span class="text-muted small">Marca las que vas a incluir en la orden (opcional) y crea la orden cuando quieras.</span>
+                            <button type="button" class="btn btn-primary" onclick="ModuloCompras.abrirFormularioOC()">
+                                <i class="fas fa-plus-circle"></i> Crear Orden de Compra
+                            </button>
+                        </div>
+                        <div id="compras-lista-solicitudes-pendientes" class="cards-grid"><!-- JS --></div>
+                    </div>
+
+                    <div id="compras-orden-sub-listado" class="compras-subtab-content" style="display:none;">
+                        <div id="compras-lista-ordenes" class="cards-grid"><!-- JS: ModuloCompras.renderOrdenes --></div>
+                    </div>
+                </div>
+
+                <!-- ============================================================
+                     Pestaña Recepción (Zoe / rol JEFE AUXILIAR INVENTARIO). -->
+                <div id="compras-tab-recepcion" class="compras-tab-content" style="display:none;">
+                    <ul class="nav nav-pills mb-3 gap-2" id="compras-recepcion-subtabs">
+                        <li class="nav-item">
+                            <button class="nav-link active shadow-sm" data-subtab="pendientes" onclick="ModuloCompras.switchSubtabRecepcion('pendientes')">
+                                <i class="fas fa-truck-loading me-1"></i> Pendientes de recepción
+                            </button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link shadow-sm" data-subtab="transito" onclick="ModuloCompras.switchSubtabRecepcion('transito')">
+                                <i class="fas fa-shield-alt me-1"></i> Tránsito externo (Granallado/Zincado)
+                            </button>
+                        </li>
+                    </ul>
+
+                    <div id="compras-recepcion-sub-pendientes" class="compras-subtab-content">
+                        <div id="compras-lista-recepcion" class="cards-grid"><!-- JS: ModuloCompras.renderPendientesRecepcion --></div>
+                    </div>
+                    <div id="compras-recepcion-sub-transito" class="compras-subtab-content" style="display:none;">
+                        <div id="compras-lista-transito" class="cards-grid"><!-- JS: ModuloCompras.renderTransito --></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div id="simulador-page" class="page">
             <header class="top-bar">
                 <button class="btn-icon" id="toggle-sidebar-simulador">
@@ -5977,6 +6085,7 @@
     <script src="/static/js/modules/dashboard_tour.js?v={{ RELEASE_VERSION }}"></script>
     <script>console.log("✅ dashboard.js cargado");</script>
     <script src="/static/js/modules/inventario.js?v={{ RELEASE_VERSION }}"></script>
+    <script src="/static/js/modules/compras.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/inyeccion.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/mes_control.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/inyeccion_tour.js?v={{ RELEASE_VERSION }}"></script>

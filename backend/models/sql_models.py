@@ -1278,6 +1278,237 @@ class AppConfig(db.Model):
     actualizado_en  = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+# ============================================================================
+# MODULO DE COMPRAS A PROVEEDORES EXTERNOS (plan 2026-09-15)
+# ============================================================================
+# Flujo: Albeiro señala que hace falta (SolicitudCompra, sin cantidades) ->
+# Diego arma la Orden de Compra real (OrdenCompraProveedor + LineaOrdenCompra)
+# -> Zoe recibe (RecepcionOC + LineaRecepcionOC, puede ser N parciales) ->
+# lo recibido puede salir a maquila externa (TransitoExternoOC, siempre
+# ligado a la linea de recepcion de origen) -> Diego cierra el ciclo
+# cargando la Factura de Compra del proveedor ya autorizada por
+# Contabilidad (fuera de FRITECH) y el sistema la concilia contra lo que
+# Zoe conto (FacturaCompraOC + LineaFacturaCompraOC).
+#
+# Reemplaza al modulo "Procura" (retirado 2026-08-20, ver DbProveedor/
+# OrdenCompra mas abajo) -- por eso el nombre de clase/tabla de la OC nueva
+# es deliberadamente distinto (OrdenCompraProveedor / db_ordenes_compra) y
+# cada endpoint de escritura exige @require_role desde el dia uno.
+# ============================================================================
+
+class SolicitudCompra(db.Model):
+    """Lo que Albeiro (o cualquier usuario con su rol) señala que hace
+    falta comprar -- deliberadamente SIN cantidad, eso lo define Diego al
+    armar la OC. estado EN_OC/RECHAZADA es lo que le confirma a Albeiro
+    "sí se pidió" o por qué no."""
+    __tablename__ = 'db_solicitudes_compra'
+    __table_args__ = {'extend_existing': True}
+
+    id                  = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    item_descripcion    = db.Column(db.Text, nullable=False)
+    # Producto elegido del catálogo real (Producto.codigo_sistema), no texto
+    # libre -- decisión del usuario 2026-09-15: Albeiro elige de una lista
+    # para que la referencia sea exacta, y Diego la reutiliza directamente
+    # al armar la línea de la OC sin tener que volver a escribirla/adivinarla.
+    codigo_producto     = db.Column(db.String(50), index=True, nullable=True)
+    urgencia            = db.Column(db.String(20), default='NORMAL')  # NORMAL / URGENTE
+    nota                = db.Column(db.Text, nullable=True)
+    solicitado_por      = db.Column(db.String(150), nullable=False)
+    departamento        = db.Column(db.String(100), nullable=True)
+    estado              = db.Column(db.String(20), default='PENDIENTE')  # PENDIENTE / EN_OC / RECHAZADA / CANCELADA
+    id_oc_vinculada     = db.Column(db.String(30), index=True, nullable=True)
+    motivo_rechazo      = db.Column(db.Text, nullable=True)
+    resuelto_por        = db.Column(db.String(150), nullable=True)
+    resuelto_en         = db.Column(db.DateTime, nullable=True)
+    creado_en           = db.Column(db.DateTime, default=get_colombia_time)
+
+
+class OrdenCompraProveedor(db.Model):
+    """Encabezado de Orden de Compra real (Diego). Nombre de clase/tabla
+    distinto del viejo OrdenCompra/ordenes_de_compra (vertical retirada,
+    ver mas abajo) -- ese esquema es plano/texto y no soporta estados ni
+    tránsito externo."""
+    __tablename__ = 'db_ordenes_compra'
+    __table_args__ = {'extend_existing': True}
+
+    id                  = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    numero_oc           = db.Column(db.String(30), unique=True, index=True, nullable=False)
+    consecutivo         = db.Column(db.BigInteger, nullable=False)
+    proveedor_nit       = db.Column(db.String(50), index=True, nullable=False)
+    proveedor_nombre    = db.Column(db.String(200), nullable=True)  # denormalizado al crear
+    fecha_oc            = db.Column(db.Date, nullable=False)
+    # String(30), no 20: 'PARCIALMENTE_RECIBIDA' tiene 21 caracteres --
+    # hallazgo de la prueba de estrés con datos reales (2026-09-15), no
+    # una suposición de diseño.
+    estado              = db.Column(db.String(30), default='ABIERTA')
+    # ABIERTA / PARCIALMENTE_RECIBIDA / RECIBIDA_TOTAL / RECHAZADA / ANULADA
+    nota                = db.Column(db.Text, nullable=True)
+    creado_por          = db.Column(db.String(150), nullable=False)
+    creado_en           = db.Column(db.DateTime, default=get_colombia_time)
+    anulada_motivo      = db.Column(db.Text, nullable=True)
+    exportada_wo        = db.Column(db.Boolean, default=False)
+    exportada_por       = db.Column(db.String(150), nullable=True)
+    exportada_en        = db.Column(db.DateTime, nullable=True)
+
+
+class LineaOrdenCompra(db.Model):
+    """Detalle de una OC: referencia + cantidad pedida. codigo_producto es
+    opcional porque un ítem comprado a un proveedor externo puede no
+    existir todavía en el catálogo Producto."""
+    __tablename__ = 'db_lineas_orden_compra'
+    __table_args__ = {'extend_existing': True}
+
+    id                  = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    id_oc               = db.Column(db.Integer, index=True, nullable=False)
+    numero_oc           = db.Column(db.String(30), index=True, nullable=False)
+    codigo_producto     = db.Column(db.String(50), index=True, nullable=True)
+    descripcion         = db.Column(db.String(500), nullable=False)
+    cantidad_pedida     = db.Column(db.Numeric(18, 2), nullable=False)
+    unidad_medida       = db.Column(db.String(20), default='Und.')
+    valor_unitario      = db.Column(db.Numeric(18, 2), nullable=True)
+    id_solicitud        = db.Column(db.Integer, index=True, nullable=True)
+
+
+class RecepcionOC(db.Model):
+    """Un evento de recepción (Zoe) -- grano por EVENTO, no por OC, para
+    soportar N recepciones parciales sobre la misma orden hasta
+    completarla."""
+    __tablename__ = 'db_recepciones_oc'
+    __table_args__ = {'extend_existing': True}
+
+    id                  = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    id_oc               = db.Column(db.Integer, index=True, nullable=False)
+    numero_oc           = db.Column(db.String(30), index=True, nullable=False)
+    fecha_recepcion     = db.Column(db.Date, nullable=False)
+    estado_recepcion    = db.Column(db.String(20), nullable=False)  # RECIBIDA_TOTAL / RECIBIDA_PARCIAL / RECHAZADA
+    recibido_por        = db.Column(db.String(150), nullable=False)
+    observaciones       = db.Column(db.Text, nullable=True)
+    creado_en           = db.Column(db.DateTime, default=get_colombia_time)
+
+
+class LineaRecepcionOC(db.Model):
+    """Cuánto llegó de cada línea de OC en un evento de recepción dado.
+    excede_tolerancia se calcula en el servicio (tolerancia de 20
+    unidades sobre lo pedido, decisión del usuario 2026-09-15) y dispara
+    el aviso a Diego."""
+    __tablename__ = 'db_lineas_recepcion_oc'
+    __table_args__ = {'extend_existing': True}
+
+    id                    = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    id_recepcion          = db.Column(db.Integer, index=True, nullable=False)
+    id_linea_oc           = db.Column(db.Integer, index=True, nullable=False)
+    cantidad_recibida     = db.Column(db.Numeric(18, 2), default=0)
+    cantidad_rechazada    = db.Column(db.Numeric(18, 2), default=0)
+    motivo_rechazo        = db.Column(db.Text, nullable=True)
+    excede_tolerancia     = db.Column(db.Boolean, default=False)
+
+
+class TransitoExternoOC(db.Model):
+    """Sub-flujo de maquila externa (Granallado/Zincado). Ligado SIEMPRE a
+    la línea de recepción de origen (nunca a la OC completa ni a la
+    recepción completa) -- decisión explícita del usuario: mucho de lo
+    recibido va a maquila, no necesariamente el lote completo de una
+    recepción, y hace falta trazabilidad exacta hasta la OC."""
+    __tablename__ = 'db_transito_externo_oc'
+    __table_args__ = {'extend_existing': True}
+
+    id                      = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    id_linea_recepcion_oc   = db.Column(db.Integer, index=True, nullable=False)
+    proceso                 = db.Column(db.String(20), nullable=False)  # GRANALLADO / ZINCADO
+    proveedor_proceso_nit   = db.Column(db.String(50), nullable=True)
+    cantidad_enviada        = db.Column(db.Numeric(18, 2), nullable=False)
+    fecha_envio             = db.Column(db.Date, nullable=False)
+    enviado_por             = db.Column(db.String(150), nullable=True)
+    estado                  = db.Column(db.String(20), default='ENVIADO')
+    # ENVIADO / EN_PROCESO / RETORNADO / RETORNADO_PARCIAL
+    cantidad_retornada      = db.Column(db.Numeric(18, 2), nullable=True)
+    fecha_retorno           = db.Column(db.Date, nullable=True)
+    retornado_por           = db.Column(db.String(150), nullable=True)
+    # Confirmación explícita de las dos puntas (decisión del usuario
+    # 2026-09-15): cuánto salió vs. cuánto volvió -- nunca se asume que
+    # coincide. Positivo = se perdió/rechazó algo en el proceso externo.
+    diferencia_envio_retorno = db.Column(db.Numeric(18, 2), nullable=True)
+    creado_en               = db.Column(db.DateTime, default=get_colombia_time)
+
+
+class HistorialTransitoExternoOC(db.Model):
+    """Auditoría de transiciones del tránsito externo -- pieza nueva sin
+    precedente reutilizable (Ensamble solo guarda el último estado, ver
+    ChecklistEnsamble). Cada clic en el chip de Granallado/Zincado escribe
+    aquí además de actualizar TransitoExternoOC.estado."""
+    __tablename__ = 'db_historial_transito_externo_oc'
+    __table_args__ = {'extend_existing': True}
+
+    id                  = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    id_transito         = db.Column(db.Integer, index=True, nullable=False)
+    estado_anterior     = db.Column(db.String(20), nullable=True)
+    estado_nuevo        = db.Column(db.String(20), nullable=False)
+    usuario             = db.Column(db.String(150), nullable=False)
+    fecha               = db.Column(db.DateTime, default=get_colombia_time)
+    observaciones       = db.Column(db.Text, nullable=True)
+
+
+class FacturaCompraOC(db.Model):
+    """Cierre del ciclo: la Factura de Compra (FC) del proveedor, ya
+    autorizada por Contabilidad FUERA de FRITECH (correo + su propio
+    proceso -- no se modela aquí). Diego carga sus datos y el sistema la
+    concilia contra lo que Zoe contó. Siempre 1 FC = 1 OC (decisión del
+    usuario), por eso id_oc es único aquí."""
+    __tablename__ = 'db_facturas_compra_oc'
+    __table_args__ = {'extend_existing': True}
+
+    id                  = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    id_oc               = db.Column(db.Integer, unique=True, index=True, nullable=False)
+    numero_oc           = db.Column(db.String(30), index=True, nullable=False)
+    numero_factura      = db.Column(db.String(80), nullable=False)
+    fecha_factura       = db.Column(db.Date, nullable=False)
+    cargada_por         = db.Column(db.String(150), nullable=False)
+    fecha_carga         = db.Column(db.DateTime, default=get_colombia_time)
+    estado_conciliacion = db.Column(db.String(20), default='PENDIENTE')  # COINCIDE / DISCREPANCIA / PENDIENTE
+    observaciones       = db.Column(db.Text, nullable=True)
+
+
+class LineaFacturaCompraOC(db.Model):
+    """diferencia_vs_recibido se calcula en el servicio: cantidad_facturada
+    - SUM(cantidad_recibida) de LineaRecepcionOC para esa línea. Si es
+    distinto de 0 en cualquier línea, la factura completa marca
+    DISCREPANCIA a nivel de cabecera."""
+    __tablename__ = 'db_lineas_factura_compra_oc'
+    __table_args__ = {'extend_existing': True}
+
+    id                      = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    id_factura              = db.Column(db.Integer, index=True, nullable=False)
+    id_linea_oc             = db.Column(db.Integer, index=True, nullable=False)
+    cantidad_facturada      = db.Column(db.Numeric(18, 2), nullable=False)
+    valor_unitario_facturado = db.Column(db.Numeric(18, 2), nullable=True)
+    diferencia_vs_recibido  = db.Column(db.Numeric(18, 2), nullable=True)
+
+
+class OcWoStaging(db.Model):
+    """
+    Staging de Ordenes de Compra extraidas de World Office
+    (Tipo_de_Documento='OC' en Vista_Tabla_Encabezados). Poblada por
+    agente_wo_comercial.py, mismo patron que OpWoStaging.
+
+    Confirmado contra WO real (2026-09-15, lectura autorizada por el
+    usuario): 'OC' es una serie de consecutivos PROPIA e independiente --
+    no comparte bloque con OP ni con ningun otro tipo de documento (293
+    documentos reales, numerados 1-297 al momento de confirmar). Por eso
+    OcNumeradorService es mas simple que OpNumeradorService: no hace falta
+    logica de "bloque activo".
+    """
+    __tablename__ = 'db_oc_wo_staging'
+    __table_args__ = {'extend_existing': True}
+
+    id              = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    numero_oc       = db.Column(db.String(30), index=True, nullable=True)
+    consecutivo     = db.Column(db.BigInteger, nullable=True)
+    proveedor_nit   = db.Column(db.String(50), nullable=True)
+    fecha           = db.Column(db.DateTime, nullable=True)
+    anulado         = db.Column(db.Boolean, default=False)
+    verificado      = db.Column(db.Boolean, default=False)
+
+
 class SuscripcionesPush(db.Model):
     """
     Entidad plana (SQL-First) para almacenar los endpoints de Web Push de cada dispositivo/usuario.
