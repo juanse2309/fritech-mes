@@ -936,7 +936,27 @@ const ModuloInyeccion = {
         // Si disparos es NaN, lo tomamos como 0 para los cálculos pero NO sobrescribimos el input
         const disparosCalculo = isNaN(disparos) ? 0 : disparos;
 
-        // Sincronizar items si estamos en modo validación
+        // Sincronizar items si estamos en modo validación. El campo Disparos
+        // de este formulario es compartido por todos los productos del lote
+        // (un mismo golpe de máquina puede llenar varias cavidades con
+        // códigos distintos), así que cualquier tecleo aquí recorre TODOS
+        // los items -- no solo el que se está editando.
+        //
+        // BUG (regresión reportada 2026-09-15): este bloque pisaba
+        // item.manual_buenas = null incondicionalmente, borrando en
+        // silencio la cantidad real que Zoe ya había validado para
+        // productos que ni siquiera estaba tocando en ese momento. Al
+        // quedar manual_buenas en null, piezasBuenas se recalculaba como
+        // teórica - pnc (con pnc todavía en 0 la mayoría de las veces), y
+        // ESO es lo que sale como 'buenas' hacia validar_lote -- terminaba
+        // subiendo a WO igual que cant_contador en vez de la cantidad real
+        // auditada. Ver memoria del proyecto / WoExportService._lineas_inyeccion.
+        //
+        // Fix: solo recalcular piezasBuenas desde la teórica cuando el item
+        // NO tiene todavía una cantidad real validada manualmente. Si ya la
+        // tiene (caso normal al cargar un lote para validar, ver
+        // cargarLoteParaValidar), se preserva tal cual -- solo se
+        // sincroniza el contador de disparos compartido.
         if (this.esValidacionMode && this.items && this.items.length > 0 && disparosCalculo > 0) {
             let reRender = false;
             this.items.forEach(item => {
@@ -944,8 +964,9 @@ const ModuloInyeccion = {
                     item.disparos = disparosCalculo;
                     const produccionTeorica = item.disparos * item.no_cavidades;
                     item.cantidad_real = produccionTeorica;
-                    item.piezasBuenas = Math.max(0, produccionTeorica - item.pnc);
-                    item.manual_buenas = null;
+                    if (item.manual_buenas === null || item.manual_buenas === undefined) {
+                        item.piezasBuenas = Math.max(0, produccionTeorica - item.pnc);
+                    }
                     reRender = true;
                 }
             });
