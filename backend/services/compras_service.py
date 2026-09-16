@@ -243,6 +243,17 @@ class OrdenCompraService:
         ).order_by(OrdenCompraProveedor.fecha_oc.asc()).all()
 
     @staticmethod
+    def recibidas_o_cerradas():
+        """OC que ya salieron de 'pendientes de recepción' (recibidas del
+        todo o rechazadas). Sin esto, Zoe pierde de vista una OC apenas
+        termina de recibirla -- no tiene ningún otro lugar donde volver a
+        verla (bug real reportado 2026-09-16: 'en recepción... también
+        desaparecía')."""
+        return OrdenCompraProveedor.query.filter(
+            OrdenCompraProveedor.estado.in_(['RECIBIDA_TOTAL', 'RECHAZADA'])
+        ).order_by(OrdenCompraProveedor.creado_en.desc()).limit(50).all()
+
+    @staticmethod
     def obtener_por_numero(numero_oc):
         return OrdenCompraProveedor.query.filter_by(numero_oc=numero_oc).first()
 

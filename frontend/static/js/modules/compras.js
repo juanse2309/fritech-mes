@@ -94,6 +94,7 @@ const ModuloCompras = {
 
         if (nombre === 'pendientes') this.cargarPendientesRecepcion();
         if (nombre === 'transito') this.cargarTransito();
+        if (nombre === 'recibidas') this.cargarRecibidas();
     },
 
     // ------------------------------------------------------------------
@@ -541,6 +542,54 @@ const ModuloCompras = {
         } catch (e) {
             console.error('[Compras] Error cargando órdenes de compra:', e);
         }
+        this.cargarEstadoExportWO();
+    },
+
+    cargarEstadoExportWO: async function () {
+        try {
+            const res = await fetch('/api/wo/compras/exportables');
+            const body = await res.json();
+            this.renderEstadoExportWO(!!body?.data?.exportacion_habilitada);
+        } catch (e) {
+            console.error('[Compras] Error consultando estado de exportación a WO:', e);
+        }
+    },
+
+    renderEstadoExportWO: function (habilitada) {
+        const cont = document.getElementById('compras-wo-export-estado');
+        if (!cont) return;
+        if (habilitada) {
+            cont.innerHTML = `
+                <div class="alert alert-success d-flex justify-content-between align-items-center py-2 px-3 mb-0">
+                    <span><i class="fas fa-check-circle"></i> Exportación a World Office activada.</span>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="ModuloCompras.cambiarExportWO(false)">Desactivar</button>
+                </div>`;
+        } else {
+            cont.innerHTML = `
+                <div class="alert alert-warning d-flex justify-content-between align-items-center py-2 px-3 mb-0">
+                    <span><i class="fas fa-exclamation-triangle"></i> Exportación a World Office desactivada -- el botón "Exportar a WO" no hace nada hasta activarla.</span>
+                    <button class="btn btn-sm btn-primary" onclick="ModuloCompras.cambiarExportWO(true)">Activar</button>
+                </div>`;
+        }
+    },
+
+    cambiarExportWO: async function (activar) {
+        if (activar) {
+            const { isConfirmed } = await Swal.fire({
+                title: '¿Activar exportación a World Office?',
+                html: 'Desde ahora, al darle "Exportar a WO" a una orden de compra se va a generar un archivo real para subir al importador de WO. Los valores fijos (bodega, forma de pago, IVA, tercero) ya se confirmaron contra una carga de prueba real el 2026-09-15.',
+                icon: 'warning', showCancelButton: true, confirmButtonText: 'Sí, activar',
+            });
+            if (!isConfirmed) return;
+        }
+        try {
+            await this._api('/api/wo/compras/habilitar', {
+                method: 'PATCH', body: JSON.stringify({ habilitado: activar }),
+            });
+            this.cargarEstadoExportWO();
+        } catch (e) {
+            Swal.fire('No se pudo cambiar el estado', e.message, 'error');
+        }
     },
 
     renderOrdenes: async function (lista) {
@@ -730,6 +779,34 @@ const ModuloCompras = {
         cont.innerHTML = tarjetas.join('');
     },
 
+    cargarRecibidas: async function () {
+        try {
+            const data = await this._api('/api/compras/ordenes/recibidas');
+            this.renderRecibidas(data || []);
+        } catch (e) {
+            console.error('[Compras] Error cargando OC recibidas:', e);
+        }
+    },
+
+    renderRecibidas: function (lista) {
+        const cont = document.getElementById('compras-lista-recibidas');
+        if (!cont) return;
+        if (!lista.length) {
+            cont.innerHTML = '<div class="text-center py-4 bg-light rounded-4 text-muted">Todavía no hay OC recibidas por completo ni rechazadas.</div>';
+            return;
+        }
+        const badgeEstado = { RECIBIDA_TOTAL: 'bg-success', RECHAZADA: 'bg-danger' };
+        cont.innerHTML = lista.map(o => `
+            <div class="card shadow-sm border-0 rounded-4 p-3">
+                <div class="d-flex justify-content-between align-items-start">
+                    <strong>${this._esc(o.numero_oc)}</strong>
+                    <span class="badge ${badgeEstado[o.estado] || 'bg-secondary'}">${o.estado}</span>
+                </div>
+                <div class="text-muted small">${this._esc(o.proveedor_nombre || o.proveedor_nit)} · ${o.fecha_oc}</div>
+            </div>
+        `).join('');
+    },
+
     abrirRegistrarRecepcion: async function (numero_oc) {
         try {
             const detalle = await this._api(`/api/compras/ordenes/${encodeURIComponent(numero_oc)}`);
@@ -770,6 +847,10 @@ const ModuloCompras = {
                 showCancelButton: true,
                 width: 600,
                 preConfirm: () => {
+                    if (!document.getElementById('rec-fecha').value) {
+                        Swal.showValidationMessage('Falta la fecha de recepción');
+                        return false;
+                    }
                     const lineas = Array.from(document.querySelectorAll('.rec-linea-recibida'))
                         .map(i => {
                             const idLinea = i.dataset.idLinea;
@@ -781,6 +862,14 @@ const ModuloCompras = {
                             };
                         })
                         .filter(l => l.cantidad_recibida > 0 || l.cantidad_rechazada > 0);
+                    // Si deja todo en blanco no hay nada que registrar -- antes
+                    // esto cerraba el modal en silencio como si hubiera
+                    // guardado algo (bug real reportado 2026-09-16, misma
+                    // familia del silent-drop ya corregido en creación de OC).
+                    if (!lineas.length) {
+                        Swal.showValidationMessage('Escribe cantidad recibida o rechazada en al menos una línea -- si no llegó nada todavía, cierra sin confirmar');
+                        return false;
+                    }
                     return {
                         fecha_recepcion: document.getElementById('rec-fecha').value,
                         estado_recepcion: document.getElementById('rec-estado').value,
@@ -789,7 +878,7 @@ const ModuloCompras = {
                 },
             });
 
-            if (!formValues || !formValues.lineas.length) return;
+            if (!formValues) return;
 
             const resultado = await this._api(`/api/compras/ordenes/${encodeURIComponent(numero_oc)}/recepciones`, {
                 method: 'POST', body: JSON.stringify(formValues),

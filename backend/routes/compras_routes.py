@@ -342,6 +342,17 @@ def listar_ordenes_pendientes_recepcion():
         return api_error("Error interno listando OC pendientes de recepción", status_code=500)
 
 
+@compras_bp.route('/api/compras/ordenes/recibidas', methods=['GET'])
+@require_role(ROLES_COMPRAS_RECEPCION)
+def listar_ordenes_recibidas():
+    try:
+        ordenes = OrdenCompraService.recibidas_o_cerradas()
+        return api_success(data=[_ser_orden(o) for o in ordenes])
+    except Exception as e:
+        logger.error(f"❌ Error listando OC recibidas: {e}")
+        return api_error("Error interno listando OC recibidas", status_code=500)
+
+
 @compras_bp.route('/api/compras/ordenes/<numero_oc>', methods=['GET'])
 @require_role(ROLES_COMPRAS_ADMIN + ['JEFE AUXILIAR INVENTARIO'])
 def detalle_orden(numero_oc):

@@ -51,6 +51,24 @@ class WoExportComprasService:
     def esta_habilitado():
         return str(WoExportComprasService._config('wo_export.compras_habilitado', 'false')).lower() in ('true', '1', 'si', 'sí')
 
+    @staticmethod
+    def fijar_habilitado(activo):
+        """Prende/apaga el guard. Los valores de FIJOS_OC (wo_templates_compras.py)
+        ya se confirmaron contra una carga de prueba real en el importador
+        de WO (2026-09-15) -- esto solo persiste la decisión de negocio de
+        activarlo, no reemplaza esa verificación."""
+        try:
+            fila = db.session.get(AppConfig, 'wo_export.compras_habilitado')
+            valor = 'true' if activo else 'false'
+            if fila:
+                fila.valor = valor
+            else:
+                db.session.add(AppConfig(clave='wo_export.compras_habilitado', valor=valor))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
+
     # ------------------------------------------------------------------
     # Construcción del dataset
     # ------------------------------------------------------------------

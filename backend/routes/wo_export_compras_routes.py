@@ -51,6 +51,21 @@ def listar_exportables():
         return api_error(str(e), status_code=500)
 
 
+@wo_export_compras_bp.route('/api/wo/compras/habilitar', methods=['PATCH'])
+@require_role(ROL_ADMINS)
+def habilitar_exportacion():
+    """Prende/apaga el guard de exportación (ver esta_habilitado). Los
+    valores fijos de la plantilla ya se confirmaron contra una carga de
+    prueba real en WO -- esto solo registra la decisión de activarlo."""
+    data = request.get_json() or {}
+    try:
+        WoExportComprasService.fijar_habilitado(bool(data.get('habilitado')))
+        return api_success(data={'exportacion_habilitada': WoExportComprasService.esta_habilitado()})
+    except Exception as e:
+        logger.error(f"❌ Error cambiando el flag de exportación de Compras a WO: {e}")
+        return api_error("Error interno cambiando el flag de exportación", status_code=500)
+
+
 @wo_export_compras_bp.route('/api/wo/compras/preview', methods=['POST'])
 @require_role(ROL_ADMINS)
 def preview_exportacion():
