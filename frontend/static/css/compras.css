@@ -9,3 +9,13 @@
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
     gap: 16px;
 }
+
+/* Tarjetas con más contenido (líneas de OC/recepción con varios datos por
+   línea) necesitan más ancho que una tarjeta simple de solicitud/orden --
+   300px las dejaba apretadas y forzaba scroll horizontal dentro de la
+   tarjeta (bug real reportado 2026-09-16). */
+.cards-grid-wide {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+    gap: 16px;
+}

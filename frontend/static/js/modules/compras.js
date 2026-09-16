@@ -507,13 +507,13 @@ const ModuloCompras = {
     cargarOrdenes: async function () {
         try {
             const data = await this._api('/api/compras/ordenes');
-            this.renderOrdenes(data || []);
+            await this.renderOrdenes(data || []);
         } catch (e) {
             console.error('[Compras] Error cargando órdenes de compra:', e);
         }
     },
 
-    renderOrdenes: function (lista) {
+    renderOrdenes: async function (lista) {
         const cont = document.getElementById('compras-lista-ordenes');
         if (!cont) return;
         if (!lista.length) {
@@ -524,23 +524,43 @@ const ModuloCompras = {
             ABIERTA: 'bg-warning text-dark', PARCIALMENTE_RECIBIDA: 'bg-info',
             RECIBIDA_TOTAL: 'bg-success', RECHAZADA: 'bg-danger', ANULADA: 'bg-secondary',
         };
-        cont.innerHTML = lista.map(o => `
-            <div class="card shadow-sm border-0 rounded-4 p-3">
-                <div class="d-flex justify-content-between align-items-start">
-                    <strong>${this._esc(o.numero_oc)}</strong>
-                    <span class="badge ${badgeEstado[o.estado] || 'bg-secondary'}">${o.estado}</span>
+
+        // Se trae el detalle (líneas) de cada OC -- antes la tarjeta solo
+        // mostraba encabezado y quedaba "genérica", sin decir qué se pidió
+        // ni por cuánto (feedback real 2026-09-16).
+        const tarjetas = await Promise.all(lista.map(async (o) => {
+            let lineas = [];
+            try {
+                const detalle = await this._api(`/api/compras/ordenes/${encodeURIComponent(o.numero_oc)}`);
+                lineas = detalle.lineas || [];
+            } catch (e) { /* si falla el detalle, la tarjeta igual muestra el encabezado */ }
+
+            const total = lineas.reduce((s, l) => s + (l.cantidad_pedida * (l.valor_unitario || 0)), 0);
+            const resumenLineas = lineas.map(l =>
+                `<div class="small text-truncate">• ${this._esc(l.descripcion)} <span class="text-muted">(${l.cantidad_pedida} ${this._esc(l.unidad_medida || '')})</span></div>`
+            ).join('');
+
+            return `
+                <div class="card shadow-sm border-0 rounded-4 p-3">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <strong>${this._esc(o.numero_oc)}</strong>
+                        <span class="badge ${badgeEstado[o.estado] || 'bg-secondary'}">${o.estado}</span>
+                    </div>
+                    <div class="text-muted small">${this._esc(o.proveedor_nombre || o.proveedor_nit)} · ${o.fecha_oc}</div>
+                    <div class="small fw-semibold mt-2">${lineas.length} línea(s)${total > 0 ? ' · $' + total.toLocaleString('es-CO') : ''}</div>
+                    <div class="mt-1">${resumenLineas}</div>
+                    <div class="mt-2 d-flex gap-1 flex-wrap">
+                        <button class="btn btn-sm btn-outline-primary" onclick="ModuloCompras.abrirCargarFactura('${this._esc(o.numero_oc)}')">
+                            <i class="fas fa-file-invoice-dollar"></i> Factura (FC)
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="ModuloCompras.exportarOrdenWO('${this._esc(o.numero_oc)}')">
+                            <i class="fas fa-file-export"></i> Exportar a WO
+                        </button>
+                    </div>
                 </div>
-                <div class="text-muted small">${this._esc(o.proveedor_nombre || o.proveedor_nit)} · ${o.fecha_oc}</div>
-                <div class="mt-2 d-flex gap-1 flex-wrap">
-                    <button class="btn btn-sm btn-outline-primary" onclick="ModuloCompras.abrirCargarFactura('${this._esc(o.numero_oc)}')">
-                        <i class="fas fa-file-invoice-dollar"></i> Factura (FC)
-                    </button>
-                    <button class="btn btn-sm btn-outline-secondary" onclick="ModuloCompras.exportarOrdenWO('${this._esc(o.numero_oc)}')">
-                        <i class="fas fa-file-export"></i> Exportar a WO
-                    </button>
-                </div>
-            </div>
-        `).join('');
+            `;
+        }));
+        cont.innerHTML = tarjetas.join('');
     },
 
     exportarOrdenWO: async function (numero_oc) {
@@ -644,13 +664,19 @@ const ModuloCompras = {
             } catch (e) {
                 return '';
             }
+            // Sin tabla a propósito: una tabla de 4 columnas no cabe en una
+            // tarjeta angosta sin scroll horizontal (bug real reportado
+            // 2026-09-16). Cada línea es su nombre + 3 badges que envuelven
+            // libremente -- nunca se corta ni pide scroll.
             const filas = detalle.lineas.map(l => `
-                <tr>
-                    <td>${this._esc(l.descripcion)}</td>
-                    <td>${l.cantidad_pedida}</td>
-                    <td>${l.cantidad_recibida_acumulada}</td>
-                    <td>${l.pendiente}</td>
-                </tr>
+                <div class="border-bottom py-2">
+                    <div class="small fw-semibold">${this._esc(l.descripcion)}</div>
+                    <div class="d-flex gap-1 flex-wrap mt-1">
+                        <span class="badge bg-light text-dark border">Pedido: ${l.cantidad_pedida}</span>
+                        <span class="badge bg-light text-dark border">Recibido: ${l.cantidad_recibida_acumulada}</span>
+                        <span class="badge ${l.pendiente > 0 ? 'bg-warning text-dark' : 'bg-success'}">Pendiente: ${l.pendiente}</span>
+                    </div>
+                </div>
             `).join('');
             return `
                 <div class="card shadow-sm border-0 rounded-4 p-3">
@@ -659,13 +685,8 @@ const ModuloCompras = {
                         <span class="badge bg-warning text-dark">${o.estado}</span>
                     </div>
                     <div class="text-muted small">${this._esc(o.proveedor_nombre || o.proveedor_nit)} · ${o.fecha_oc}</div>
-                    <div class="table-responsive mt-2">
-                        <table class="table table-sm mb-0">
-                            <thead><tr><th>Línea</th><th>Pedido</th><th>Recibido</th><th>Pendiente</th></tr></thead>
-                            <tbody>${filas}</tbody>
-                        </table>
-                    </div>
-                    <div class="d-flex gap-1 flex-wrap">
+                    <div class="mt-2">${filas}</div>
+                    <div class="d-flex gap-1 flex-wrap mt-2">
                         <button class="btn btn-sm btn-primary" onclick="ModuloCompras.abrirRegistrarRecepcion('${this._esc(o.numero_oc)}')">
                             <i class="fas fa-truck-loading"></i> Registrar recepción
                         </button>
