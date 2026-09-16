@@ -472,15 +472,45 @@ const ModuloCompras = {
                     Swal.showValidationMessage('Selecciona el proveedor y la fecha');
                     return false;
                 }
-                const lineas = Array.from(document.querySelectorAll('#modal-oc-lineas .oc-linea-row')).map(fila => ({
-                    descripcion: fila.querySelector('.oc-linea-descripcion').value.trim(),
-                    cantidad_pedida: parseFloat(fila.querySelector('.oc-linea-cantidad').value || 0),
-                    codigo_producto: fila.querySelector('.oc-linea-codigo').value.trim() || null,
-                    unidad_medida: fila.querySelector('.oc-linea-unidad').value.trim() || 'Und.',
-                    valor_unitario: fila.querySelector('.oc-linea-valor').value ? parseFloat(fila.querySelector('.oc-linea-valor').value) : null,
-                    id_solicitud: fila.dataset.idSolicitud ? parseInt(fila.dataset.idSolicitud) : null,
-                })).filter(l => l.descripcion && l.cantidad_pedida > 0);
 
+                // Bug real reportado (2026-09-16): si se marcan 2+
+                // solicitudes, cada una llega precargada como línea -- pero
+                // si Diego olvida llenar la cantidad de UNA de ellas (fácil
+                // de pasar por alto con varias apiladas), esa línea antes
+                // se descartaba EN SILENCIO (el "required" del input no
+                // hace nada dentro de un modal Swal, no es un <form> real)
+                // y la solicitud quedaba huérfana en "Pendiente" para
+                // siempre, sin que nadie se enterara. Ahora se bloquea y se
+                // avisa exactamente cuál línea le falta la cantidad, en vez
+                // de simplemente omitirla.
+                const filas = Array.from(document.querySelectorAll('#modal-oc-lineas .oc-linea-row'));
+                const incompletas = [];
+                const lineas = [];
+                filas.forEach(fila => {
+                    const descripcion = fila.querySelector('.oc-linea-descripcion').value.trim();
+                    if (!descripcion) return; // fila que nadie tocó (ej. "+Agregar línea" de más) -- se ignora sin avisar
+                    const cantidadStr = fila.querySelector('.oc-linea-cantidad').value;
+                    const cantidad_pedida = parseFloat(cantidadStr || 0);
+                    if (!cantidadStr || cantidad_pedida <= 0) {
+                        incompletas.push(descripcion);
+                        return;
+                    }
+                    lineas.push({
+                        descripcion,
+                        cantidad_pedida,
+                        codigo_producto: fila.querySelector('.oc-linea-codigo').value.trim() || null,
+                        unidad_medida: fila.querySelector('.oc-linea-unidad').value.trim() || 'Und.',
+                        valor_unitario: fila.querySelector('.oc-linea-valor').value ? parseFloat(fila.querySelector('.oc-linea-valor').value) : null,
+                        id_solicitud: fila.dataset.idSolicitud ? parseInt(fila.dataset.idSolicitud) : null,
+                    });
+                });
+
+                if (incompletas.length) {
+                    Swal.showValidationMessage(
+                        `Falta la cantidad en: ${incompletas.join(', ')} -- complétala o quita esa línea con la papelera antes de crear la orden.`
+                    );
+                    return false;
+                }
                 if (!lineas.length) {
                     Swal.showValidationMessage('Agrega al menos una línea con descripción y cantidad');
                     return false;
