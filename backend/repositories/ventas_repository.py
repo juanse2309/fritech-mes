@@ -29,6 +29,7 @@ class VentasRepository:
                     p.nit, p.cliente, p.direccion, p.ciudad, p.id_codigo, p.descripcion,
                     p.cantidad, p.precio_unitario, p.total, p.observaciones, p.progreso,
                     p.progreso_despacho, p.cant_alistada,
+                    p.tiene_pedido_frimetals, p.estado_envio_frimetals, p.no_disponible,
                     cw.saldo_vencido_total
                 FROM db_pedidos p
                 LEFT JOIN (
@@ -75,6 +76,8 @@ class VentasRepository:
                         "progreso": str(r['progreso'] or '0').replace('%', ''),
                         "progreso_despacho": str(r['progreso_despacho'] or '0').replace('%', ''),
                         "saldo_vencido_total": float(r['saldo_vencido_total'] or 0),
+                        "tiene_pedido_frimetals": bool(r['tiene_pedido_frimetals']),
+                        "estado_envio_frimetals": str(r['estado_envio_frimetals'] or '').strip() or None,
                         "productos": []
                     }
 
@@ -96,7 +99,9 @@ class VentasRepository:
                     "precio_unitario": _parse_num(r['precio_unitario']),
                     "total": _parse_num(r['total']),
                     "cant_alistada": str(r['cant_alistada'] or '0'),
-                    "cant_lista": str(r['cant_alistada'] or '0')
+                    "cant_lista": str(r['cant_alistada'] or '0'),
+                    "no_disponible": bool(r['no_disponible']),
+                    "estado_envio_frimetals": str(r['estado_envio_frimetals'] or '').strip() or None
                 })
 
             return list(agrupados.values())

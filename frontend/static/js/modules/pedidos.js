@@ -569,6 +569,8 @@ const ModuloPedidos = {
         document.getElementById('ped-observaciones').value = pedido.observaciones || '';
         const chkExport = document.getElementById('ped-es-exportacion');
         if (chkExport) chkExport.checked = !!pedido.es_exportacion;
+        const chkFrimetals = document.getElementById('ped-tiene-frimetals');
+        if (chkFrimetals) chkFrimetals.checked = !!pedido.tiene_pedido_frimetals;
 
         // Establecer cliente seleccionado para las validaciones
         this.clienteSeleccionado = {
@@ -1133,6 +1135,7 @@ const ModuloPedidos = {
                 ciudad: this.clienteSeleccionado.ciudad || '',
                 forma_pago: document.getElementById('ped-pago').value,
                 es_exportacion: document.getElementById('ped-es-exportacion')?.checked || false,
+                tiene_pedido_frimetals: document.getElementById('ped-tiene-frimetals')?.checked || false,
                 descuento_global: descuentoGlobal,
                 observaciones: document.getElementById('ped-observaciones').value || '',
                 productos: this.listaProductos.map(item => ({

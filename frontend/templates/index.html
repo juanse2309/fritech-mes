@@ -4576,6 +4576,18 @@
                             </label>
                         </div>
 
+                        <!-- Fila 2.7: Aviso manual de que el mismo cliente también tiene un
+                             pedido pendiente en FRIMETALS -- instancia/BD separada, no hay
+                             enlace real, solo queda guardado con este pedido para que la
+                             etiqueta "FRIMETALS" aparezca sola en Gestión de Pedidos. -->
+                        <div class="form-group full-width">
+                            <label style="display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer; margin: 0;">
+                                <input type="checkbox" id="ped-tiene-frimetals" style="width: auto;">
+                                <i class="fas fa-industry text-primary"></i>
+                                Este cliente <strong>también tiene pedido pendiente en FRIMETALS</strong> (avisa a Almacén para coordinar el despacho)
+                            </label>
+                        </div>
+
                         <!-- Fila 3 -->
                         <div class="form-group">
                             <label for="ped-producto"><i class="fas fa-box-open"></i> Producto</label>

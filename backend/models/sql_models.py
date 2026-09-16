@@ -440,6 +440,27 @@ class Pedido(db.Model):
     # distinto -- no sirve como señal de qué plantilla usar (decisión
     # 2026-09-11, ver conversación sobre el pedido 104561).
     es_exportacion  = db.Column(db.Boolean, default=False, nullable=True)
+    # Marca manual a nivel de TODO el pedido: el mismo cliente también tiene
+    # un pedido pendiente en FRIMETALS (instancia/BD separada -- ver
+    # CLAUDE.md). Es solo un aviso para que Almacén vaya a revisar allá antes
+    # de despachar, NO un enlace real a un id_pedido de Frimetals (no existe
+    # tal relación entre ambas bases de datos). Relevante solo en la
+    # instancia de FriParts.
+    tiene_pedido_frimetals = db.Column(db.Boolean, default=False, nullable=True)
+    # Seguimiento manual, a nivel de TODO el pedido, de la salida física de
+    # un pedido desde la planta de Frimetals hacia la bodega de FriParts.
+    # Valores: NULL, 'ENVIADO_FRIPARTS', 'DESPACHADO_FRIPARTS'. El despacho
+    # real al cliente lo sigue manejando FriParts con /api/pedidos/despacho;
+    # 'DESPACHADO_FRIPARTS' es solo un cierre informativo en el tablero de
+    # Frimetals, no dispara nada -- son bases de datos separadas. Relevante
+    # solo en la instancia de Frimetals.
+    estado_envio_frimetals = db.Column(db.String(30), nullable=True)
+    # Marca manual por LÍNEA de producto: el ítem no se puede alistar/surtir
+    # (faltante de stock). Ya viajaba en el payload de
+    # /api/pedidos/actualizar-alistamiento pero nunca se persistía -- se
+    # guarda para que el faltante sobreviva a recargar la página o a
+    # revisarlo otro día.
+    no_disponible   = db.Column(db.Boolean, default=False, nullable=True)
 
 
 class DbClienteEquivalencias(db.Model):

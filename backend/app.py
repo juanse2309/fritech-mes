@@ -192,7 +192,26 @@ with app.app_context():
         db.session.commit()
         logger.debug("✅ [DB] Tablas y columna fecha_registro en db_pulido verificadas/creadas con éxito")
     except Exception as e_db:
+        db.session.rollback()
         logger.error(f"❌ Error creando tablas de base de datos: {e_db}")
+
+    # Etiqueta cruzada FriParts<->Frimetals (marcas manuales, ver
+    # Pedido.tiene_pedido_frimetals / estado_envio_frimetals / no_disponible
+    # en sql_models.py) -- mismas columnas en ambas instancias, cada una usa
+    # solo la mitad que le aplica. Bloque try/except propio y separado del de
+    # arriba: ese bloque no hace rollback si alguna ALTER falla (ej. si
+    # cartera_wo aún no existe en esta instancia), lo que aborta la
+    # transacción y deja SIN APLICAR cualquier ALTER posterior en el mismo
+    # try -- este bloque no debe depender de que ese código preexistente
+    # haya corrido con éxito.
+    try:
+        db.session.execute(text("ALTER TABLE db_pedidos ADD COLUMN IF NOT EXISTS tiene_pedido_frimetals BOOLEAN DEFAULT FALSE;"))
+        db.session.execute(text("ALTER TABLE db_pedidos ADD COLUMN IF NOT EXISTS estado_envio_frimetals VARCHAR(30);"))
+        db.session.execute(text("ALTER TABLE db_pedidos ADD COLUMN IF NOT EXISTS no_disponible BOOLEAN DEFAULT FALSE;"))
+        db.session.commit()
+    except Exception as e_db_frimetals:
+        db.session.rollback()
+        logger.error(f"❌ Error agregando columnas Frimetals a db_pedidos: {e_db_frimetals}")
 # ---------------------------------------------
 
 # Login Blueprints

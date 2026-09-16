@@ -366,6 +366,12 @@ const AlmacenModule = {
                                 </div>
                                 <div class="d-flex flex-wrap gap-1 align-items-center justify-content-end" style="flex: 1;">
                                     ${esParaMi && !isFrimetals ? '<span class="badge bg-info" style="font-size: 0.6rem; padding: 4px 6px; font-weight: 700; border-radius: 4px;"><i class="fas fa-user-check me-1"></i>MÍO</span>' : ''}
+                                    ${!isFrimetals ? `
+                                    <span class="badge ${pedido.tiene_pedido_frimetals ? '' : 'border'}" style="cursor: pointer; font-size: 0.6rem; padding: 4px 6px; font-weight: 700; border-radius: 4px; background: ${pedido.tiene_pedido_frimetals ? '#334155' : '#f8fafc'}; color: ${pedido.tiene_pedido_frimetals ? '#fff' : '#64748b'};"
+                                        onclick="event.stopPropagation(); AlmacenModule.toggleFrimetals('${pedido.id_pedido}', ${!pedido.tiene_pedido_frimetals})"
+                                        title="Marcar que este cliente también tiene pedido pendiente en Frimetals">
+                                        <i class="fas fa-industry me-1"></i>FRIMETALS
+                                    </span>` : ''}
                                     <span class="badge" style="background: ${colorStatus}; font-size: 0.6rem; padding: 4px 6px; text-transform: uppercase; font-weight: 700; border-radius: 4px;">${pedido.estado}</span>
                                 </div>
                             </div>
@@ -418,6 +424,48 @@ const AlmacenModule = {
                                         aria-valuenow="${progresoEnviado}" aria-valuemin="0" aria-valuemax="100"></div>
                                 </div>
                             </div>
+
+                            <!-- Seguimiento manual de envío físico Frimetals -> FriParts, POR LÍNEA
+                                 (permite envíos parciales -- ver toggleEnvioFrimetalsLinea en el
+                                 checklist del modal). Aquí solo se resume el progreso agregado y,
+                                 cuando TODAS las líneas ya están enviadas, se habilita el cierre. -->
+                            ${isFrimetals ? (() => {
+                    const productos = pedido.productos || [];
+                    const totalLineas = productos.length;
+                    const enviadas = productos.filter(p => p.estado_envio_frimetals === 'ENVIADO_FRIPARTS' || p.estado_envio_frimetals === 'DESPACHADO_FRIPARTS').length;
+                    const cerrado = totalLineas > 0 && productos.every(p => p.estado_envio_frimetals === 'DESPACHADO_FRIPARTS');
+
+                    if (cerrado) {
+                        return `
+                            <div class="mt-3 pt-3 border-top" style="border-top: 1px dashed #e2e8f0 !important;">
+                                <span class="badge bg-success" style="font-size: 0.65rem; padding: 5px 8px; font-weight: 700; border-radius: 4px;">
+                                    <i class="fas fa-check-double me-1"></i>DESPACHADO POR FRIPARTS
+                                </span>
+                            </div>`;
+                    }
+                    if (totalLineas > 0 && enviadas === totalLineas) {
+                        return `
+                            <div class="mt-3 pt-3 border-top d-flex flex-wrap align-items-center gap-2" style="border-top: 1px dashed #e2e8f0 !important;">
+                                <span class="badge" style="background:#7c3aed; font-size: 0.65rem; padding: 5px 8px; font-weight: 700; border-radius: 4px;">
+                                    <i class="fas fa-shipping-fast me-1"></i>ENVIADO A FRIPARTS (${enviadas}/${totalLineas})
+                                </span>
+                                <button class="btn btn-sm btn-outline-success" style="font-size: 0.65rem; padding: 3px 8px;"
+                                    onclick="event.stopPropagation(); AlmacenModule.actualizarEnvioFrimetals('${pedido.id_pedido}', 'DESPACHADO_FRIPARTS')"
+                                    title="FriParts ya confirmó que despachó este pedido al cliente">
+                                    Marcar despachado por FriParts
+                                </button>
+                            </div>`;
+                    }
+                    if (enviadas > 0) {
+                        return `
+                            <div class="mt-3 pt-3 border-top" style="border-top: 1px dashed #e2e8f0 !important;" onclick="AlmacenModule.abrirModal('${pedido.id_pedido}')">
+                                <span class="badge" style="background:#ede9fe; color:#5b21b6; font-size: 0.65rem; padding: 5px 8px; font-weight: 700; border-radius: 4px; cursor: pointer;" title="Abrir para marcar más líneas como enviadas">
+                                    <i class="fas fa-shipping-fast me-1"></i>Enviado a FriParts: ${enviadas}/${totalLineas}
+                                </span>
+                            </div>`;
+                    }
+                    return '';
+                })() : ''}
 
                             <!-- 3. Condición para renderizar completamente o NO renderizar la delegación -->
                             ${!isFrimetals ? `
@@ -488,6 +536,65 @@ const AlmacenModule = {
         if (enviado > 0) return '#facc15';     // Amarillo: Envío parcial
         if (alisado === 100) return '#6366f1'; // Azul: Listo para enviar
         return '#f97316';                      // Naranja: Pendiente/Faltante
+    },
+
+    /**
+     * Marca/desmarca (lado FriParts) que el mismo cliente también tiene un
+     * pedido pendiente en Frimetals. Es solo un aviso manual para Almacén,
+     * no un enlace real a un pedido de Frimetals (instancias/BD separadas).
+     */
+    toggleFrimetals: async function (id_pedido, nuevoValor) {
+        try {
+            const response = await fetch('/api/pedidos/marcar-frimetals', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id_pedido, tiene_pedido_frimetals: nuevoValor })
+            });
+            const data = await response.json();
+            if (!data.success) {
+                mostrarNotificacion(data.error || 'No se pudo actualizar la etiqueta Frimetals', 'error');
+                return;
+            }
+            const pedido = this.pedidosPendientes.find(p => p.id_pedido === id_pedido);
+            if (pedido) pedido.tiene_pedido_frimetals = nuevoValor;
+            this.renderizarTarjetas();
+        } catch (e) {
+            console.error('❌ [Almacen] Error actualizando etiqueta Frimetals:', e);
+            mostrarNotificacion('Error de conexión', 'error');
+        }
+    },
+
+    /**
+     * Actualiza (lado Frimetals) el seguimiento manual de envío físico hacia
+     * la bodega de FriParts. El despacho real al cliente lo sigue marcando
+     * FriParts con su propio mecanismo -- este estado es solo informativo
+     * para el tablero de Frimetals.
+     */
+    actualizarEnvioFrimetals: async function (id_pedido, nuevoEstado) {
+        try {
+            const response = await fetch('/api/pedidos/actualizar-envio-frimetals', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id_pedido, estado: nuevoEstado })
+            });
+            const data = await response.json();
+            if (!data.success) {
+                mostrarNotificacion(data.error || 'No se pudo actualizar el estado de envío', 'error');
+                return;
+            }
+            const pedido = this.pedidosPendientes.find(p => p.id_pedido === id_pedido);
+            if (pedido) {
+                pedido.estado_envio_frimetals = nuevoEstado;
+                // El cierre aplica a TODAS las líneas -- reflejarlo local para
+                // que el resumen agregado de la tarjeta (basado en productos[])
+                // quede consistente sin esperar un refresco del servidor.
+                (pedido.productos || []).forEach(p => { p.estado_envio_frimetals = nuevoEstado; });
+            }
+            this.renderizarTarjetas();
+        } catch (e) {
+            console.error('❌ [Almacen] Error actualizando envío Frimetals:', e);
+            mostrarNotificacion('Error de conexión', 'error');
+        }
     },
 
     /**
@@ -714,13 +821,27 @@ const AlmacenModule = {
                 </div>
 
                 <!-- Status Toggle Actions -->
-                <div class="d-flex align-items-center justify-content-between gap-2 border-top pt-3">
+                <div class="d-flex align-items-center justify-content-between gap-2 border-top pt-3 flex-wrap">
                     <!-- NO DISPONIBLE button (always enabled) -->
-                    <button class="btn btn-sm ${prod.no_disponible ? 'btn-danger' : 'btn-outline-danger'}" 
+                    <button class="btn btn-sm ${prod.no_disponible ? 'btn-danger' : 'btn-outline-danger'}"
                             onclick="AlmacenModule.toggleNoDisponible(${index})"
                             style="font-size: 0.7rem; padding: 6px 10px; border-radius: 8px; font-weight: 700; transition: all 0.2s;">
                         <i class="fas fa-ban me-1"></i> ${prod.no_disponible ? 'REVERTIR' : 'NO DISPONIBLE'}
                     </button>
+
+                    ${isMetals ? (() => {
+                    if (prod.estado_envio_frimetals === 'DESPACHADO_FRIPARTS') {
+                        return `<span class="badge bg-success" style="font-size: 0.65rem; padding: 6px 10px;"><i class="fas fa-check-double me-1"></i>DESPACHADO POR FRIPARTS</span>`;
+                    }
+                    const yaEnviada = prod.estado_envio_frimetals === 'ENVIADO_FRIPARTS';
+                    return `
+                        <button class="btn btn-sm ${yaEnviada ? 'btn-outline-secondary' : 'btn-outline-primary'}"
+                                onclick="AlmacenModule.toggleEnvioFrimetalsLinea(${index})"
+                                ${(!isCompletoAlisado && !yaEnviada) ? 'disabled' : ''}
+                                style="font-size: 0.7rem; padding: 6px 10px; border-radius: 8px; font-weight: 700; transition: all 0.2s;">
+                            <i class="fas fa-truck-loading me-1"></i> ${yaEnviada ? 'REVERTIR ENVÍO' : 'ENVIADO A FRIPARTS'}
+                        </button>`;
+                })() : ''}
 
                     <div class="d-flex align-items-center gap-2">
                         <span class="text-muted small fw-bold" style="transition: color 0.3s; ${labelStyle}">
@@ -830,6 +951,30 @@ const AlmacenModule = {
         } else {
             this.renderizarProductosChecklist();
         }
+    },
+
+    /**
+     * Marca/revierte (lado Frimetals, POR LÍNEA -- permite envíos
+     * parciales) que esta línea ya salió físicamente hacia FriParts. Solo
+     * queda en estado local hasta que se pulse "Guardar" (mismo patrón que
+     * toggleNoDisponible): se persiste junto con el resto del alistamiento
+     * vía /api/pedidos/actualizar-alistamiento. Una vez el pedido completo
+     * se cierra (DESPACHADO_FRIPARTS) esta línea deja de ser editable aquí.
+     */
+    toggleEnvioFrimetalsLinea: function (index) {
+        const prod = this.pedidoActual.productos[index];
+        if (prod.estado_envio_frimetals === 'DESPACHADO_FRIPARTS') return;
+
+        const yaEnviada = prod.estado_envio_frimetals === 'ENVIADO_FRIPARTS';
+        if (!yaEnviada && (parseInt(prod.cant_lista) || 0) < (parseInt(prod.cantidad) || 0)) {
+            mostrarNotificacion('Esta línea debe quedar 100% alistada antes de marcarla como enviada', 'warning');
+            return;
+        }
+
+        prod.estado_envio_frimetals = yaEnviada ? null : 'ENVIADO_FRIPARTS';
+
+        if (window.HapticFeedback) window.HapticFeedback.medium();
+        this.renderizarProductosChecklist();
     },
 
     /**
@@ -988,7 +1133,8 @@ const AlmacenModule = {
             codigo: p.codigo,
             cant_lista: p.cant_lista,
             despachado: p.despachado,
-            no_disponible: p.no_disponible || false
+            no_disponible: p.no_disponible || false,
+            estado_envio_frimetals: p.estado_envio_frimetals || null
         }));
 
         try {

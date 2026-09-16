@@ -282,6 +282,11 @@ class PedidoNoEncontradoError(ReasignacionClienteError):
     """El id_pedido no existe en db_pedidos, ni en su variante con/sin 'PED-'."""
 
 
+class EnvioFrimetalsIncompletoError(ValueError):
+    """Se intentó cerrar el envío Frimetals->FriParts (DESPACHADO_FRIPARTS)
+    sin que todas las líneas del pedido estuvieran ya en ENVIADO_FRIPARTS."""
+
+
 class PedidoEstadoInmutableError(ReasignacionClienteError):
     """El pedido está en un estado que no admite reasignación de cliente."""
 
@@ -762,6 +767,24 @@ class PedidosService:
 
             # Persistir cantidad segura (como entero para evitar bug de .0 -> 000)
             item.cant_alistada = str(int(cant_segura))
+            # Faltante por línea (antes solo viajaba en el payload sin persistir).
+            item.no_disponible = bool(d.get("no_disponible", False))
+
+            # Seguimiento manual de envío Frimetals->FriParts, POR LÍNEA (permite
+            # envíos parciales: cada producto se marca por separado, no el pedido
+            # completo). Solo se toca si el payload trae el campo explícitamente
+            # -- un guardado normal de alistamiento (sin este campo, ej. usuarios
+            # FriParts) no debe borrar un valor ya marcado. Una vez la línea llega
+            # a 'DESPACHADO_FRIPARTS' (cierre desde actualizar_envio_frimetals)
+            # queda protegida: un guardado posterior de alistamiento no la reabre.
+            if "estado_envio_frimetals" in d and item.estado_envio_frimetals != 'DESPACHADO_FRIPARTS':
+                nuevo_envio = d.get("estado_envio_frimetals")
+                nuevo_envio = str(nuevo_envio).strip().upper() if nuevo_envio else None
+                if nuevo_envio == 'ENVIADO_FRIPARTS' and cantidad_total > 0 and cant_segura >= cantidad_total:
+                    item.estado_envio_frimetals = 'ENVIADO_FRIPARTS'
+                elif nuevo_envio is None:
+                    item.estado_envio_frimetals = None
+                # cualquier otro valor se ignora silenciosamente -- no rompe el resto del guardado
 
             # Lógica de progreso y estado por item
             if cantidad_total > 0:
@@ -812,3 +835,76 @@ class PedidosService:
             "items_actualizados": items_actualizados,
             "movimientos_inventario": movimientos_inventario,
         }
+
+    # 'ENVIADO_FRIPARTS' ya no se marca aquí -- se marca POR LÍNEA dentro de
+    # actualizar_alistamiento (permite envíos parciales, un producto a la vez).
+    # Este set queda solo para el cierre final a nivel de todo el pedido.
+    ESTADOS_ENVIO_FRIMETALS = {'DESPACHADO_FRIPARTS'}
+
+    @staticmethod
+    def marcar_pedido_frimetals(id_pedido, tiene_pedido_frimetals, db_session):
+        """
+        Marca/desmarca a nivel de TODO el pedido que el mismo cliente también
+        tiene un pedido pendiente en Frimetals. Es un aviso manual para que
+        Almacén (FriParts) vaya a revisar la otra instancia antes de
+        despachar -- NO es un enlace real a un id_pedido de Frimetals (ambas
+        instancias tienen bases de datos separadas, no hay relación posible).
+
+        No hace commit: mismo contrato que actualizar_alistamiento, el
+        caller (route) confirma o revierte la transacción completa.
+
+        :raises PedidoNoEncontradoError: id_pedido sin filas en db_pedidos.
+        """
+        actualizadas = db_session.query(Pedido).filter_by(id_pedido=id_pedido).update(
+            {"tiene_pedido_frimetals": bool(tiene_pedido_frimetals)}
+        )
+        if not actualizadas:
+            raise PedidoNoEncontradoError(f"Pedido {id_pedido} no encontrado en SQL")
+
+        db_session.flush()
+        return {"tiene_pedido_frimetals": bool(tiene_pedido_frimetals)}
+
+    @staticmethod
+    def actualizar_envio_frimetals(id_pedido, nuevo_estado, db_session):
+        """
+        Cierra, a nivel de TODO el pedido, el seguimiento manual de envío
+        desde la planta de Frimetals hacia la bodega de FriParts, una vez
+        CADA línea ya se marcó por separado como 'ENVIADO_FRIPARTS' (ver
+        actualizar_alistamiento -- ahí se marca por línea para permitir
+        envíos parciales, un producto a la vez). El despacho real al cliente
+        lo sigue manejando FriParts con su propio mecanismo
+        (/api/pedidos/despacho) -- 'DESPACHADO_FRIPARTS' es solo un cierre
+        informativo en el tablero de Frimetals, no dispara nada del otro
+        lado (bases de datos separadas).
+
+        :raises ValueError: nuevo_estado fuera de ESTADOS_ENVIO_FRIMETALS.
+        :raises EnvioFrimetalsIncompletoError: aún falta alguna línea por
+            marcar 'ENVIADO_FRIPARTS'.
+        :raises PedidoNoEncontradoError: id_pedido sin filas en db_pedidos.
+        """
+        estado_normalizado = str(nuevo_estado or "").strip().upper()
+        if estado_normalizado not in PedidosService.ESTADOS_ENVIO_FRIMETALS:
+            raise ValueError(
+                f"Estado de envío Frimetals inválido: '{nuevo_estado}'. "
+                f"Valores permitidos: {sorted(PedidosService.ESTADOS_ENVIO_FRIMETALS)}"
+            )
+
+        items_sql = db_session.query(Pedido).filter_by(id_pedido=id_pedido).all()
+        if not items_sql:
+            raise PedidoNoEncontradoError(f"Pedido {id_pedido} no encontrado en SQL")
+
+        pendientes = [
+            it.id_codigo for it in items_sql
+            if it.estado_envio_frimetals not in ('ENVIADO_FRIPARTS', 'DESPACHADO_FRIPARTS')
+        ]
+        if pendientes:
+            raise EnvioFrimetalsIncompletoError(
+                f"Aún falta marcar 'Enviado a FriParts' en: {', '.join(pendientes)}"
+            )
+
+        db_session.query(Pedido).filter_by(id_pedido=id_pedido).update(
+            {"estado_envio_frimetals": estado_normalizado}
+        )
+
+        db_session.flush()
+        return {"estado_envio_frimetals": estado_normalizado}

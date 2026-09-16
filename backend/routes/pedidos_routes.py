@@ -22,6 +22,11 @@ logger = logging.getLogger(__name__)
 # consulta/gestión interna de pedidos que no tienen matiz de ownership por cliente.
 ROLES_PEDIDOS_INTERNOS = ROL_ADMINS + ROL_COMERCIALES + ROL_JEFES + ['ALISTAMIENTO']
 
+# Reusa la misma lista de roles de Frimetals que metals_routes.py en vez de
+# mantener una tercera copia (ya existe una duplicación conocida entre
+# backend/core/tenant.py y metals_routes.py, no se agrega una más aquí).
+from backend.routes.metals_routes import ROLES_METALS
+
 
 def _resolve_tenant():
     """Resuelve el tenant desde la sesión."""
@@ -115,6 +120,7 @@ def registrar_pedido():
         ciudad = data.get('ciudad', '')
         forma_pago = data.get('forma_pago', 'Contado')
         es_exportacion = bool(data.get('es_exportacion', False))
+        tiene_pedido_frimetals = bool(data.get('tiene_pedido_frimetals', False))
         descuento_global = str(data.get('descuento_global', '0'))
         observaciones = data.get('observaciones', '')
         productos = data.get('productos', [])
@@ -278,6 +284,7 @@ def registrar_pedido():
                 registro_existente.forma_de_pago = forma_pago
                 registro_existente.descuento = descuento_global
                 registro_existente.es_exportacion = es_exportacion
+                registro_existente.tiene_pedido_frimetals = tiene_pedido_frimetals
             else:
                 # INSERT
                 nuevo_registro = Pedido(
@@ -300,7 +307,8 @@ def registrar_pedido():
                     observaciones=observaciones,
                     forma_de_pago=forma_pago,
                     descuento=descuento_global,
-                    es_exportacion=es_exportacion
+                    es_exportacion=es_exportacion,
+                    tiene_pedido_frimetals=tiene_pedido_frimetals
                 )
                 db.session.add(nuevo_registro)
             
@@ -425,6 +433,7 @@ def obtener_detalle_pedido(id_pedido):
             "estado": cab.estado,
             "observaciones": cab.observaciones or "",
             "es_exportacion": bool(getattr(cab, 'es_exportacion', False)),
+            "tiene_pedido_frimetals": bool(getattr(cab, 'tiene_pedido_frimetals', False)),
             "productos": []
         }
         
@@ -737,6 +746,95 @@ def actualizar_alistamiento():
         return api_error(str(e), status_code=500)
 
 
+@pedidos_bp.route('/api/pedidos/marcar-frimetals', methods=['POST'])
+@require_role(ROLES_PEDIDOS_INTERNOS)
+def marcar_pedido_frimetals():
+    """
+    Marca/desmarca a nivel de todo el pedido que el mismo cliente también
+    tiene un pedido pendiente en Frimetals (aviso manual para Almacén, ver
+    PedidosService.marcar_pedido_frimetals). Thin controller: parsea el
+    payload, delega en el service y responde jsonify.
+    """
+    from backend.services.pedidos_service import PedidosService, PedidoNoEncontradoError
+
+    try:
+        data = request.json or {}
+        id_pedido = data.get("id_pedido")
+        tiene_pedido_frimetals = bool(data.get("tiene_pedido_frimetals", False))
+
+        if not id_pedido:
+            return api_error("ID Pedido requerido", status_code=400)
+
+        resultado = PedidosService.marcar_pedido_frimetals(
+            id_pedido=id_pedido,
+            tiene_pedido_frimetals=tiene_pedido_frimetals,
+            db_session=db.session,
+        )
+        db.session.commit()
+
+        try:
+            from backend.app import invalidar_cache_pedidos
+            invalidar_cache_pedidos()
+        except: pass
+
+        return api_success(data=resultado, message="Etiqueta Frimetals actualizada")
+
+    except PedidoNoEncontradoError as e:
+        db.session.rollback()
+        return api_error(str(e), status_code=404)
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"❌ Error marcando etiqueta Frimetals: {e}")
+        return api_error(str(e), status_code=500)
+
+
+@pedidos_bp.route('/api/pedidos/actualizar-envio-frimetals', methods=['POST'])
+@require_role(ROLES_METALS)
+def actualizar_envio_frimetals():
+    """
+    Cierra, a nivel de todo el pedido, el seguimiento manual de envío desde
+    la planta de Frimetals hacia la bodega de FriParts -- exige que cada
+    línea ya se haya marcado por separado como 'ENVIADO_FRIPARTS' desde el
+    checklist de alistamiento (envíos parciales, un producto a la vez; ver
+    PedidosService.actualizar_alistamiento). Thin controller: parsea el
+    payload, delega en el service y responde jsonify.
+    """
+    from backend.services.pedidos_service import PedidosService, PedidoNoEncontradoError
+
+    try:
+        data = request.json or {}
+        id_pedido = data.get("id_pedido")
+        nuevo_estado = data.get("estado")
+
+        if not id_pedido:
+            return api_error("ID Pedido requerido", status_code=400)
+
+        resultado = PedidosService.actualizar_envio_frimetals(
+            id_pedido=id_pedido,
+            nuevo_estado=nuevo_estado,
+            db_session=db.session,
+        )
+        db.session.commit()
+
+        try:
+            from backend.app import invalidar_cache_pedidos
+            invalidar_cache_pedidos()
+        except: pass
+
+        return api_success(data=resultado, message="Estado de envío Frimetals actualizado")
+
+    except PedidoNoEncontradoError as e:
+        db.session.rollback()
+        return api_error(str(e), status_code=404)
+    except ValueError as e:
+        db.session.rollback()
+        return api_error(str(e), status_code=400)
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"❌ Error actualizando envío Frimetals: {e}")
+        return api_error(str(e), status_code=500)
+
+
 @pedidos_bp.route('/api/pedidos/cliente', methods=['GET'])
 def obtener_pedidos_cliente():
     """Historial de pedidos por NIT desde SQL (db_pedidos)."""
@@ -911,6 +1009,8 @@ def listar_pedidos():
                         "estado": r.estado,
                         "total": 0,
                         "items_count": 0,
+                        "tiene_pedido_frimetals": bool(r.tiene_pedido_frimetals),
+                        "estado_envio_frimetals": r.estado_envio_frimetals or None,
                         "productos": []
                     }
                 ped_map[id_p]["items_count"] += 1
@@ -920,7 +1020,9 @@ def listar_pedidos():
                     "descripcion": r.descripcion,
                     "cantidad": float(r.cantidad or 0),
                     "precio_unitario": float(r.precio_unitario or 0),
-                    "total": float(r.total or 0)
+                    "total": float(r.total or 0),
+                    "no_disponible": bool(r.no_disponible),
+                    "estado_envio_frimetals": r.estado_envio_frimetals or None
                 })
             
             return api_success(data={
