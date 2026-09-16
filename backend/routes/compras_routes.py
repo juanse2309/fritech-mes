@@ -366,6 +366,7 @@ def detalle_orden(numero_oc):
                 _ser_linea_orden(d['linea'], extra={
                     'cantidad_recibida_acumulada': d['cantidad_recibida_acumulada'],
                     'pendiente': d['pendiente'],
+                    'dentro_tolerancia_baja': d['dentro_tolerancia_baja'],
                 })
                 for d in detalle['lineas']
             ],

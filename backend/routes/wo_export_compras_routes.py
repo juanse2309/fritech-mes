@@ -108,8 +108,8 @@ def exportar_oc():
 
     if not WoExportComprasService.esta_habilitado():
         return api_error(
-            "La exportación de Compras a World Office está deshabilitada. Se activa "
-            "cuando los valores de la plantilla estén confirmados contra WO.",
+            "La exportación de Compras a World Office está desactivada manualmente. "
+            "Actívala desde la pestaña 'Órdenes de Compra'.",
             status_code=409, code="EXPORTACION_DESHABILITADA"
         )
 

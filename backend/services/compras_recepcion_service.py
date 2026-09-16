@@ -4,10 +4,18 @@ compras_recepcion_service.py
 Módulo de Compras a Proveedores Externos (plan 2026-09-15). Etapa de
 Recepción (Zoe) y sub-flujo de tránsito externo (Granallado/Zincado).
 
-Regla de tolerancia (decisión del usuario 2026-09-15): si el acumulado
-recibido de una línea excede lo pedido en más de 20 unidades, se marca
-`excede_tolerancia` y se avisa a Diego por push -- dentro de la tolerancia
-se registra normal, sin bloquear ni alertar.
+Regla de tolerancia por EXCESO (decisión del usuario 2026-09-15): si el
+acumulado recibido de una línea excede lo pedido en más de 20 unidades, se
+marca `excede_tolerancia` y se avisa a Diego por push -- dentro de la
+tolerancia se registra normal, sin bloquear ni alertar.
+
+Regla de tolerancia por DEFECTO (pedida 2026-09-16, "muchas veces no llega
+completo"): si a una línea le faltan 10 unidades o menos para completar lo
+pedido, se considera resuelta igual -- para que una OC no se quede
+esperando en "Pendientes de recepción" para siempre por un faltante de 2-3
+unidades que el proveedor nunca va a mandar. Es independiente de la de
+exceso: una línea puede estar "cerrada por tolerancia baja" y aun así, si
+por otra recepción posterior llega el resto, sigue sumando normal.
 """
 import logging
 from datetime import datetime, date
@@ -26,6 +34,7 @@ from backend.services.notification_service import NotificationService
 logger = logging.getLogger(__name__)
 
 TOLERANCIA_DEFECTO = 20
+TOLERANCIA_BAJA_DEFECTO = 10
 PROCESOS_VALIDOS = ('GRANALLADO', 'ZINCADO')
 
 
@@ -47,6 +56,16 @@ def _tolerancia_exceso_recepcion():
     return TOLERANCIA_DEFECTO
 
 
+def _tolerancia_baja_recepcion():
+    fila = db.session.get(AppConfig, 'compras.tolerancia_baja_recepcion')
+    if fila and fila.valor not in (None, ''):
+        try:
+            return float(fila.valor)
+        except (TypeError, ValueError):
+            pass
+    return TOLERANCIA_BAJA_DEFECTO
+
+
 class RecepcionOCError(Exception):
     """Error de negocio registrando una recepción de mercancía."""
 
@@ -62,6 +81,7 @@ class RecepcionOCService:
         así una línea 100% rechazada no deja la OC en limbo (ver plan de
         pruebas, caso 5)."""
         lineas = LineaOrdenCompra.query.filter_by(id_oc=orden.id).all()
+        tolerancia_baja = _tolerancia_baja_recepcion()
         todas_resueltas = True
         hubo_recibo_real = False
         hubo_algo = False
@@ -80,7 +100,15 @@ class RecepcionOCService:
                 hubo_recibo_real = True
             if recibido > 0 or rechazado > 0:
                 hubo_algo = True
-            if (recibido + rechazado) < float(linea.cantidad_pedida):
+            # Una línea con faltante <= tolerancia_baja se da por resuelta
+            # igual -- sin esto, una OC se queda en "Pendientes de recepción"
+            # para siempre por 2-3 unidades que el proveedor nunca completa.
+            # OJO: solo aplica si la línea SÍ tuvo algún movimiento -- una
+            # línea nunca tocada (recibido=rechazado=0) no puede darse por
+            # resuelta solo porque pidieron pocas unidades.
+            pendiente = float(linea.cantidad_pedida) - recibido - rechazado
+            tiene_movimiento = recibido > 0 or rechazado > 0
+            if pendiente > 0 and not (tiene_movimiento and pendiente <= tolerancia_baja):
                 todas_resueltas = False
 
         if todas_resueltas and hubo_algo:

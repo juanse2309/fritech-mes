@@ -31,8 +31,11 @@ class WoExportComprasException(Exception):
 
 
 class ExportacionDeshabilitadaException(Exception):
-    """El flag wo_export.compras_habilitado está apagado -- guard deliberado
-    mientras los valores de la plantilla no estén confirmados contra WO."""
+    """El flag wo_export.compras_habilitado está apagado -- kill-switch
+    manual por si algo falla con el importador de WO más adelante. Activo
+    por defecto: los valores de la plantilla ya se confirmaron contra una
+    carga de prueba real (2026-09-15), no hace falta un paso extra para
+    empezar a usarlo."""
 
 
 class WoExportComprasService:
@@ -49,7 +52,7 @@ class WoExportComprasService:
 
     @staticmethod
     def esta_habilitado():
-        return str(WoExportComprasService._config('wo_export.compras_habilitado', 'false')).lower() in ('true', '1', 'si', 'sí')
+        return str(WoExportComprasService._config('wo_export.compras_habilitado', 'true')).lower() in ('true', '1', 'si', 'sí')
 
     @staticmethod
     def fijar_habilitado(activo):

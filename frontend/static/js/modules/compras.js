@@ -230,10 +230,16 @@ const ModuloCompras = {
 
     cargarMisSolicitudes: async function () {
         try {
-            const data = await this._api('/api/compras/solicitudes?propias=true');
+            // Sin ?propias=true a propósito: antes cada quien solo veía lo
+            // que él mismo había pedido, así que si dos personas pedían lo
+            // mismo por separado nadie se daba cuenta (pedido real
+            // 2026-09-16: "en mis solicitudes debería salir la de todos con
+            // quien la pidió"). El botón "Cancelar" solo se muestra en las
+            // propias -- ver renderSolicitudes.
+            const data = await this._api('/api/compras/solicitudes');
             this.renderSolicitudes(data || []);
         } catch (e) {
-            console.error('[Compras] Error cargando mis solicitudes:', e);
+            console.error('[Compras] Error cargando solicitudes:', e);
         }
     },
 
@@ -241,7 +247,7 @@ const ModuloCompras = {
         const cont = document.getElementById('compras-lista-solicitudes');
         if (!cont) return;
         if (!lista.length) {
-            cont.innerHTML = '<div class="text-center py-4 bg-light rounded-4 text-muted">Todavía no has enviado ninguna solicitud.</div>';
+            cont.innerHTML = '<div class="text-center py-4 bg-light rounded-4 text-muted">Todavía no hay ninguna solicitud.</div>';
             return;
         }
         const badgeEstado = {
@@ -250,6 +256,8 @@ const ModuloCompras = {
             RECHAZADA: '<span class="badge bg-danger">Rechazada</span>',
             CANCELADA: '<span class="badge bg-secondary">Cancelada</span>',
         };
+        const usuarioActual = (typeof AuthModule !== 'undefined' && AuthModule.currentUser) ? AuthModule.currentUser.username : null;
+        const esAdmin = (typeof AuthModule !== 'undefined' && AuthModule.currentUser) ? AuthModule.currentUser.rol === 'ADMIN' : false;
         cont.innerHTML = lista.map(s => `
             <div class="card shadow-sm border-0 rounded-4 p-3">
                 <div class="d-flex justify-content-between align-items-start">
@@ -257,10 +265,10 @@ const ModuloCompras = {
                     ${badgeEstado[s.estado] || s.estado}
                 </div>
                 ${s.codigo_producto ? `<div class="small text-muted">Código: ${this._esc(s.codigo_producto)}</div>` : ''}
-                <div class="text-muted small">Urgencia: ${s.urgencia} · ${new Date(s.creado_en).toLocaleDateString()}</div>
+                <div class="text-muted small">Pidió: ${this._esc(s.solicitado_por)} · Urgencia: ${s.urgencia} · ${new Date(s.creado_en).toLocaleDateString()}</div>
                 ${s.estado === 'EN_OC' ? `<div class="text-success small"><i class="fas fa-check-circle"></i> Ya se pidió: ${this._esc(s.id_oc_vinculada || '')}</div>` : ''}
                 ${s.estado === 'RECHAZADA' ? `<div class="text-danger small"><i class="fas fa-times-circle"></i> ${this._esc(s.motivo_rechazo || '')}</div>` : ''}
-                ${s.estado === 'PENDIENTE' ? `<button class="btn btn-sm btn-outline-secondary mt-2" onclick="ModuloCompras.cancelarSolicitud(${s.id})">Cancelar</button>` : ''}
+                ${s.estado === 'PENDIENTE' && (s.solicitado_por === usuarioActual || esAdmin) ? `<button class="btn btn-sm btn-outline-secondary mt-2" onclick="ModuloCompras.cancelarSolicitud(${s.id})">Cancelar</button>` : ''}
             </div>
         `).join('');
     },
@@ -647,7 +655,7 @@ const ModuloCompras = {
             const check = await fetch('/api/wo/compras/exportables');
             const checkData = await check.json();
             if (!checkData?.data?.exportacion_habilitada) {
-                Swal.fire('Exportación deshabilitada', 'La exportación de Compras a World Office todavía no está habilitada (pendiente de confirmar los valores contra WO).', 'info');
+                Swal.fire('Exportación desactivada', 'La exportación a World Office está desactivada manualmente. Actívala desde el botón de arriba, en esta misma pestaña.', 'info');
                 return;
             }
             const data = await this._api('/api/wo/compras/exportar', {
@@ -754,6 +762,7 @@ const ModuloCompras = {
                         <span class="badge bg-light text-dark border">Pedido: ${l.cantidad_pedida}</span>
                         <span class="badge bg-light text-dark border">Recibido: ${l.cantidad_recibida_acumulada}</span>
                         <span class="badge ${l.pendiente > 0 ? 'bg-warning text-dark' : 'bg-success'}">Pendiente: ${l.pendiente}</span>
+                        ${l.dentro_tolerancia_baja ? '<span class="badge bg-info text-dark" title="Faltan pocas unidades, dentro de la tolerancia -- ya no bloquea el cierre">Dentro de tolerancia</span>' : ''}
                     </div>
                 </div>
             `).join('');

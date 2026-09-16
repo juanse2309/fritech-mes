@@ -265,16 +265,30 @@ class OrdenCompraService:
         if not orden:
             return None
 
+        from backend.services.compras_recepcion_service import _tolerancia_baja_recepcion
+        tolerancia_baja = _tolerancia_baja_recepcion()
+
         lineas = LineaOrdenCompra.query.filter_by(id_oc=orden.id).all()
         detalle_lineas = []
         for linea in lineas:
             recibido = db.session.query(
                 db.func.coalesce(db.func.sum(LineaRecepcionOC.cantidad_recibida), 0)
             ).filter(LineaRecepcionOC.id_linea_oc == linea.id).scalar()
+            rechazado = db.session.query(
+                db.func.coalesce(db.func.sum(LineaRecepcionOC.cantidad_rechazada), 0)
+            ).filter(LineaRecepcionOC.id_linea_oc == linea.id).scalar()
+            recibido = float(recibido or 0)
+            rechazado = float(rechazado or 0)
+            pendiente = float(linea.cantidad_pedida) - recibido - rechazado
             detalle_lineas.append({
                 'linea': linea,
-                'cantidad_recibida_acumulada': float(recibido or 0),
-                'pendiente': float(linea.cantidad_pedida) - float(recibido or 0),
+                'cantidad_recibida_acumulada': recibido,
+                'pendiente': pendiente,
+                # Faltante pequeño ya perdonado por la tolerancia baja (ver
+                # RecepcionOCService._recalcular_estado_oc) -- se muestra en
+                # la tarjeta para que no parezca que sobraron unidades sin
+                # explicación cuando la OC ya cerró como RECIBIDA_TOTAL.
+                'dentro_tolerancia_baja': 0 < pendiente <= tolerancia_baja and (recibido > 0 or rechazado > 0),
             })
         return {'orden': orden, 'lineas': detalle_lineas}
 
