@@ -7,6 +7,7 @@ import calendar
 from sqlalchemy import text
 from backend.core.sql_database import db, rollback_seguro
 from backend.utils.numeric_helpers import _num
+from backend.utils.formatters import to_bool_seguro
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,7 @@ class VentasRepository:
                         "progreso": str(r['progreso'] or '0').replace('%', ''),
                         "progreso_despacho": str(r['progreso_despacho'] or '0').replace('%', ''),
                         "saldo_vencido_total": float(r['saldo_vencido_total'] or 0),
-                        "tiene_pedido_frimetals": bool(r['tiene_pedido_frimetals']),
+                        "tiene_pedido_frimetals": to_bool_seguro(r['tiene_pedido_frimetals']),
                         "estado_envio_frimetals": str(r['estado_envio_frimetals'] or '').strip() or None,
                         "productos": []
                     }
@@ -100,7 +101,7 @@ class VentasRepository:
                     "total": _parse_num(r['total']),
                     "cant_alistada": str(r['cant_alistada'] or '0'),
                     "cant_lista": str(r['cant_alistada'] or '0'),
-                    "no_disponible": bool(r['no_disponible']),
+                    "no_disponible": to_bool_seguro(r['no_disponible']),
                     "estado_envio_frimetals": str(r['estado_envio_frimetals'] or '').strip() or None
                 })
 

@@ -7,7 +7,7 @@ from backend.config.constants import FALLBACK_OPERARIO
 from sqlalchemy import text
 from backend.core.tenant import get_tenant_from_request
 from backend.utils.time_utils import get_colombia_time
-from backend.utils.formatters import normalizar_codigo_sin_prefijo, sql_expr_codigo_sin_prefijo_fr, preservar_o_normalizar_prefijo
+from backend.utils.formatters import normalizar_codigo_sin_prefijo, sql_expr_codigo_sin_prefijo_fr, preservar_o_normalizar_prefijo, to_bool_seguro
 from backend.config.settings import Empresa
 from datetime import datetime
 import logging
@@ -433,7 +433,7 @@ def obtener_detalle_pedido(id_pedido):
             "estado": cab.estado,
             "observaciones": cab.observaciones or "",
             "es_exportacion": bool(getattr(cab, 'es_exportacion', False)),
-            "tiene_pedido_frimetals": bool(getattr(cab, 'tiene_pedido_frimetals', False)),
+            "tiene_pedido_frimetals": to_bool_seguro(getattr(cab, 'tiene_pedido_frimetals', False)),
             "productos": []
         }
         
@@ -1009,7 +1009,7 @@ def listar_pedidos():
                         "estado": r.estado,
                         "total": 0,
                         "items_count": 0,
-                        "tiene_pedido_frimetals": bool(r.tiene_pedido_frimetals),
+                        "tiene_pedido_frimetals": to_bool_seguro(r.tiene_pedido_frimetals),
                         "estado_envio_frimetals": r.estado_envio_frimetals or None,
                         "productos": []
                     }
@@ -1021,7 +1021,7 @@ def listar_pedidos():
                     "cantidad": float(r.cantidad or 0),
                     "precio_unitario": float(r.precio_unitario or 0),
                     "total": float(r.total or 0),
-                    "no_disponible": bool(r.no_disponible),
+                    "no_disponible": to_bool_seguro(r.no_disponible),
                     "estado_envio_frimetals": r.estado_envio_frimetals or None
                 })
             

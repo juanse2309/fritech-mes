@@ -170,6 +170,30 @@ def to_int_seguro(valor, default=0):
         return default
 
 
+def to_bool_seguro(valor, default=False):
+    """
+    Convierte un valor a booleano de forma segura. Necesario porque `bool(valor)`
+    es una trampa cuando `valor` puede llegar como string desde SQL/JSON: cualquier
+    string no vacío (incluido literalmente "false" o "0") es truthy en Python, así
+    que `bool("false") == True`. Ver incidente 2026-09-16: db_pedidos.no_disponible
+    quedó como columna TEXT (no BOOLEAN) en producción, y el valor guardado por
+    defecto "false" se leía como True en cada pedido, marcando líneas recién
+    creadas como no disponibles sin que nadie las tocara.
+    """
+    if isinstance(valor, bool):
+        return valor
+    if valor is None:
+        return default
+    if isinstance(valor, (int, float)):
+        return bool(valor)
+    s = str(valor).strip().lower()
+    if s in ('true', 't', '1', 'yes', 'si', 'sí'):
+        return True
+    if s in ('false', 'f', '0', 'no', ''):
+        return False
+    return default
+
+
 def clean_currency(val):
     """Convierte un string de moneda formato colombiano ('$1.500,50') a float."""
     if not val:
