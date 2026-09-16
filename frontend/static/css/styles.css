@@ -209,8 +209,8 @@ body:not(.logged-in) [id^="toggle-sidebar"] {
 .menu-item a {
     display: flex;
     align-items: center;
-    gap: 15px;
-    padding: 15px 20px;
+    gap: 12px;
+    padding: 14px 14px 14px 16px;
     color: rgba(255, 255, 255, 0.8);
     text-decoration: none;
     border-radius: var(--border-radius);
@@ -221,7 +221,7 @@ body:not(.logged-in) [id^="toggle-sidebar"] {
 .menu-item a:hover {
     background: rgba(67, 97, 238, 0.2);
     color: white;
-    transform: translateX(10px);
+    transform: translateX(4px);
 }
 
 .menu-item.active a {
@@ -243,8 +243,8 @@ body:not(.logged-in) [id^="toggle-sidebar"] {
 .menu-group-header {
     display: flex;
     align-items: center;
-    gap: 15px;
-    padding: 15px 20px;
+    gap: 12px;
+    padding: 14px 14px 14px 16px;
     color: rgba(255, 255, 255, 0.8);
     text-decoration: none;
     border-radius: var(--border-radius);
@@ -289,7 +289,7 @@ body:not(.logged-in) [id^="toggle-sidebar"] {
 }
 
 .menu-group-items .menu-item a {
-    padding-left: 40px;
+    padding-left: 22px;
 }
 
 .sidebar-footer {

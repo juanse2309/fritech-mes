@@ -113,6 +113,23 @@ const ModuloCompras = {
         return data ? data.data : null;
     },
 
+    // Líneas (con acumulado/pendiente/tolerancia) de varias OC en UNA sola
+    // petición -- antes cada tarjeta de una lista hacía su propio fetch de
+    // detalle, disparando una petición HTTP por tarjeta cada vez que se
+    // abría la pestaña (lag real reportado 2026-09-16 con varias decenas
+    // de OC). Nunca lanza: si falla, cada card cae de nuevo a "sin líneas".
+    _lineasBatch: async function (numerosOc) {
+        if (!numerosOc.length) return {};
+        try {
+            return await this._api('/api/compras/ordenes/lineas_batch', {
+                method: 'POST', body: JSON.stringify({ numeros_oc: numerosOc }),
+            }) || {};
+        } catch (e) {
+            console.error('[Compras] Error consultando líneas en lote:', e);
+            return {};
+        }
+    },
+
     // ------------------------------------------------------------------
     // Catálogo de productos (compartido con Ensamble/PNC/etc, mismo
     // endpoint y misma caché de window.AppState.sharedData.productos) y
@@ -621,15 +638,13 @@ const ModuloCompras = {
             RECIBIDA_TOTAL: 'border-success', RECHAZADA: 'border-danger', ANULADA: 'border-secondary',
         };
 
-        // Se trae el detalle (líneas) de cada OC -- antes la tarjeta solo
-        // mostraba encabezado y quedaba "genérica", sin decir qué se pidió
-        // ni por cuánto (feedback real 2026-09-16).
-        const tarjetas = await Promise.all(lista.map(async (o) => {
-            let lineas = [];
-            try {
-                const detalle = await this._api(`/api/compras/ordenes/${encodeURIComponent(o.numero_oc)}`);
-                lineas = detalle.lineas || [];
-            } catch (e) { /* si falla el detalle, la tarjeta igual muestra el encabezado */ }
+        // Se trae el detalle (líneas) de todas las OC en UNA sola petición
+        // en lote -- antes la tarjeta pedía su propio detalle por separado
+        // (feedback real 2026-09-16: tarjetas "genéricas" primero, lag por
+        // el N+1 después).
+        const lineasPorOc = await this._lineasBatch(lista.map(o => o.numero_oc));
+        const tarjetas = lista.map((o) => {
+            const lineas = lineasPorOc[o.numero_oc] || [];
 
             const total = lineas.reduce((s, l) => s + (l.cantidad_pedida * (l.valor_unitario || 0)), 0);
             const resumenLineas = lineas.map(l =>
@@ -656,7 +671,7 @@ const ModuloCompras = {
                     </div>
                 </div>
             `;
-        }));
+        });
         cont.innerHTML = tarjetas.join('');
     },
 
@@ -754,18 +769,14 @@ const ModuloCompras = {
             return;
         }
 
-        const tarjetas = await Promise.all(lista.map(async (o) => {
-            let detalle;
-            try {
-                detalle = await this._api(`/api/compras/ordenes/${encodeURIComponent(o.numero_oc)}`);
-            } catch (e) {
-                return '';
-            }
+        const lineasPorOc = await this._lineasBatch(lista.map(o => o.numero_oc));
+        const tarjetas = lista.map((o) => {
+            const lineasOc = lineasPorOc[o.numero_oc] || [];
             // Sin tabla a propósito: una tabla de 4 columnas no cabe en una
             // tarjeta angosta sin scroll horizontal (bug real reportado
             // 2026-09-16). Cada línea es su nombre + 3 badges que envuelven
             // libremente -- nunca se corta ni pide scroll.
-            const filas = detalle.lineas.map(l => `
+            const filas = lineasOc.map(l => `
                 <div class="border-bottom py-2">
                     <div class="small fw-semibold">${this._esc(l.descripcion)}</div>
                     <div class="d-flex gap-1 flex-wrap mt-1">
@@ -797,7 +808,7 @@ const ModuloCompras = {
                     </div>
                 </div>
             `;
-        }));
+        });
         cont.innerHTML = tarjetas.join('');
     },
 
@@ -819,12 +830,9 @@ const ModuloCompras = {
         }
         const badgeEstado = { RECIBIDA_TOTAL: 'bg-success', RECHAZADA: 'bg-danger' };
         const bordeEstado = { RECIBIDA_TOTAL: 'border-success', RECHAZADA: 'border-danger' };
-        const tarjetas = await Promise.all(lista.map(async (o) => {
-            let numLineas = null;
-            try {
-                const detalle = await this._api(`/api/compras/ordenes/${encodeURIComponent(o.numero_oc)}`);
-                numLineas = (detalle.lineas || []).length;
-            } catch (e) { /* la tarjeta igual muestra el encabezado */ }
+        const lineasPorOc = await this._lineasBatch(lista.map(o => o.numero_oc));
+        const tarjetas = lista.map((o) => {
+            const numLineas = (lineasPorOc[o.numero_oc] || []).length;
             return `
                 <div class="card shadow-sm border-0 border-start border-4 ${bordeEstado[o.estado] || 'border-secondary'} rounded-4 p-3">
                     <div class="d-flex justify-content-between align-items-start">
@@ -832,10 +840,10 @@ const ModuloCompras = {
                         <span class="badge ${badgeEstado[o.estado] || 'bg-secondary'}">${o.estado}</span>
                     </div>
                     <div class="fw-semibold small"><i class="fas fa-truck-loading text-muted"></i> ${this._esc(o.proveedor_nombre || o.proveedor_nit)}</div>
-                    <div class="text-muted small"><i class="far fa-calendar"></i> ${o.fecha_oc}${numLineas !== null ? ` · ${numLineas} línea(s)` : ''}</div>
+                    <div class="text-muted small"><i class="far fa-calendar"></i> ${o.fecha_oc} · ${numLineas} línea(s)</div>
                 </div>
             `;
-        }));
+        });
         cont.innerHTML = tarjetas.join('');
     },
 

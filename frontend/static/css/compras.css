@@ -19,3 +19,66 @@
     grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
     gap: 16px;
 }
+
+/* ------------------------------------------------------------------
+   Navegación en dos niveles (pestañas principales por rol + sub-pestañas
+   dentro de cada una). Antes ambos niveles usaban el mismo nav-pills de
+   Bootstrap sin ninguna diferencia visual -- se confundían entre sí
+   (pedido real 2026-09-16: "se pueda ver las separaciones"). Principal =
+   estilo de pestaña con línea inferior (como una tabbar real); sub =
+   chips agrupados dentro de una cápsula con fondo tenue, para que se
+   lean como "dentro de" la principal activa, no como otro nivel igual. */
+.compras-tabs-principal {
+    border-bottom: 2px solid var(--gray-light, #e9ecef);
+    flex-wrap: wrap;
+}
+
+.compras-tabs-principal .nav-link {
+    background: transparent !important;
+    border: none !important;
+    border-bottom: 3px solid transparent !important;
+    border-radius: 0 !important;
+    color: var(--gray, #6c757d);
+    font-weight: 600;
+    font-size: 1.02rem;
+    padding: 10px 6px 12px;
+    margin-bottom: -2px;
+    box-shadow: none !important;
+}
+
+.compras-tabs-principal .nav-link:hover {
+    color: var(--primary, #4361ee);
+}
+
+.compras-tabs-principal .nav-link.active {
+    color: var(--primary, #4361ee);
+    border-bottom-color: var(--primary, #4361ee) !important;
+}
+
+.compras-subtabs-capsula {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    background: var(--light, #f8f9fa);
+    border: 1px solid var(--gray-light, #e9ecef);
+    border-radius: 999px;
+    padding: 4px;
+}
+
+.compras-subtabs-capsula .nav-link {
+    border: none !important;
+    border-radius: 999px !important;
+    padding: 6px 16px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--gray, #6c757d);
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+.compras-subtabs-capsula .nav-link.active {
+    background: #fff !important;
+    color: var(--dark, #212529);
+    font-weight: 600;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12) !important;
+}

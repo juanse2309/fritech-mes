@@ -354,6 +354,32 @@ def listar_ordenes_recibidas():
         return api_error("Error interno listando OC recibidas", status_code=500)
 
 
+@compras_bp.route('/api/compras/ordenes/lineas_batch', methods=['POST'])
+@require_role(ROLES_COMPRAS_ADMIN + ['JEFE AUXILIAR INVENTARIO'])
+def lineas_batch():
+    """Líneas (con acumulado/pendiente/tolerancia) de varias OC en una sola
+    consulta -- reemplaza el N+1 que hacía el frontend antes (una petición
+    de detalle por cada tarjeta de la lista, lag real reportado 2026-09-16)."""
+    data = request.get_json() or {}
+    numeros_oc = data.get('numeros_oc') or []
+    try:
+        por_oc = OrdenCompraService.detalle_lineas_batch(numeros_oc)
+        return api_success(data={
+            numero_oc: [
+                _ser_linea_orden(d['linea'], extra={
+                    'cantidad_recibida_acumulada': d['cantidad_recibida_acumulada'],
+                    'pendiente': d['pendiente'],
+                    'dentro_tolerancia_baja': d['dentro_tolerancia_baja'],
+                })
+                for d in lineas
+            ]
+            for numero_oc, lineas in por_oc.items()
+        })
+    except Exception as e:
+        logger.error(f"❌ Error consultando líneas en lote: {e}")
+        return api_error("Error interno consultando líneas en lote", status_code=500)
+
+
 @compras_bp.route('/api/compras/ordenes/<numero_oc>', methods=['GET'])
 @require_role(ROLES_COMPRAS_ADMIN + ['JEFE AUXILIAR INVENTARIO'])
 def detalle_orden(numero_oc):

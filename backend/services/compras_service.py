@@ -293,6 +293,44 @@ class OrdenCompraService:
         return {'orden': orden, 'lineas': detalle_lineas}
 
     @staticmethod
+    def detalle_lineas_batch(numeros_oc):
+        """Igual que detalle() pero para varias OC a la vez, en dos consultas
+        agregadas en vez de N+1 -- el frontend pedía el detalle de cada OC
+        por separado para armar cada tarjeta (Pendientes de recepción,
+        Órdenes de Compra, Ya recibidas), disparando una petición HTTP por
+        tarjeta cada vez que se abría esa pestaña (lag real reportado
+        2026-09-16 con varias decenas de OC)."""
+        if not numeros_oc:
+            return {}
+
+        from backend.services.compras_recepcion_service import _tolerancia_baja_recepcion
+        tolerancia_baja = _tolerancia_baja_recepcion()
+
+        lineas = LineaOrdenCompra.query.filter(LineaOrdenCompra.numero_oc.in_(numeros_oc)).all()
+        ids_linea = [l.id for l in lineas]
+
+        acumulados = {}
+        if ids_linea:
+            filas = db.session.query(
+                LineaRecepcionOC.id_linea_oc,
+                db.func.coalesce(db.func.sum(LineaRecepcionOC.cantidad_recibida), 0),
+                db.func.coalesce(db.func.sum(LineaRecepcionOC.cantidad_rechazada), 0),
+            ).filter(LineaRecepcionOC.id_linea_oc.in_(ids_linea)).group_by(LineaRecepcionOC.id_linea_oc).all()
+            acumulados = {id_linea: (float(rec or 0), float(rech or 0)) for id_linea, rec, rech in filas}
+
+        resultado = {}
+        for linea in lineas:
+            recibido, rechazado = acumulados.get(linea.id, (0.0, 0.0))
+            pendiente = float(linea.cantidad_pedida) - recibido - rechazado
+            resultado.setdefault(linea.numero_oc, []).append({
+                'linea': linea,
+                'cantidad_recibida_acumulada': recibido,
+                'pendiente': pendiente,
+                'dentro_tolerancia_baja': 0 < pendiente <= tolerancia_baja and (recibido > 0 or rechazado > 0),
+            })
+        return resultado
+
+    @staticmethod
     def anular(numero_oc, motivo, usuario):
         motivo = (motivo or '').strip()
         if not motivo:

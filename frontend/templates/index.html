@@ -4054,7 +4054,7 @@
                 <!-- Pestañas de nivel 1: una por rol. ModuloCompras.aplicarVisibilidadPorRol
                      oculta las que no aplican y activa la primera visible
                      (mismo patrón que #ensamble-tabs / ModuloEnsamble.switchTab). -->
-                <ul class="nav nav-pills mb-4 gap-2" id="compras-tabs">
+                <ul class="nav mb-4 gap-3 compras-tabs-principal" id="compras-tabs">
                     <li class="nav-item" id="compras-tab-btn-solicitud">
                         <button class="nav-link shadow-sm" data-tab="solicitud" onclick="ModuloCompras.switchTab('solicitud')">
                             <i class="fas fa-hand-paper me-2"></i> Solicitar
@@ -4090,7 +4090,7 @@
                      para no apilar la lista de pendientes, el formulario y el
                      listado todo junto -- el formulario se abre en un modal. -->
                 <div id="compras-tab-orden" class="compras-tab-content" style="display:none;">
-                    <ul class="nav nav-pills mb-3 gap-2" id="compras-orden-subtabs">
+                    <ul class="nav mb-3 compras-subtabs-capsula" id="compras-orden-subtabs">
                         <li class="nav-item">
                             <button class="nav-link active shadow-sm" data-subtab="pendientes" onclick="ModuloCompras.switchSubtabOrden('pendientes')">
                                 Solicitudes pendientes <span class="badge bg-warning text-dark" id="badge-solicitudes-pendientes">0</span>
@@ -4122,7 +4122,7 @@
                 <!-- ============================================================
                      Pestaña Recepción (Zoe / rol JEFE AUXILIAR INVENTARIO). -->
                 <div id="compras-tab-recepcion" class="compras-tab-content" style="display:none;">
-                    <ul class="nav nav-pills mb-3 gap-2" id="compras-recepcion-subtabs">
+                    <ul class="nav mb-3 compras-subtabs-capsula" id="compras-recepcion-subtabs">
                         <li class="nav-item">
                             <button class="nav-link active shadow-sm" data-subtab="pendientes" onclick="ModuloCompras.switchSubtabRecepcion('pendientes')">
                                 <i class="fas fa-truck-loading me-1"></i> Pendientes de recepción
