@@ -59,15 +59,24 @@ const ModuloEnsamble = {
         this.usuarioActual = document.getElementById('current_user_fullname')?.value || '';
         this.intentarAutoSeleccionarResponsable(); // Sincronizar UI inmediatamente
 
-        this.configurarTabs();
-        await this.cargarDatos();
-        this.configurarEventos();
+        // inicializar() corre cada vez que se navega a esta página (no solo
+        // la primera vez), pero configurarTabs/configurarEventos/initAutocomplete
+        // solo deben ligar sus addEventListener UNA vez -- si no, cada visita
+        // apila un listener nuevo sobre los mismos botones (ej. btn-reportar-avance)
+        // y un click termina disparando reportarAvance() varias veces: doble
+        // confirmación y doble registro en el backend.
+        if (!this._initDone) {
+            this._initDone = true;
+            this.configurarTabs();
+            this.configurarEventos();
 
-        // Autocompletes
-        this.initAutocomplete('prog-producto', 'prog-producto-suggestions', true);
-        this.initAutocomplete('reporte-producto-manual', 'reporte-producto-manual-suggestions', true);
-        // Mismo buscador con imágenes dentro del modal de edición de metas.
-        this.initAutocomplete('editar-meta-producto', 'editar-meta-producto-suggestions', true);
+            // Autocompletes
+            this.initAutocomplete('prog-producto', 'prog-producto-suggestions', true);
+            this.initAutocomplete('reporte-producto-manual', 'reporte-producto-manual-suggestions', true);
+            // Mismo buscador con imágenes dentro del modal de edición de metas.
+            this.initAutocomplete('editar-meta-producto', 'editar-meta-producto-suggestions', true);
+        }
+        await this.cargarDatos();
 
         this.listarProgramacion();
         this.listarTareasPendientes();

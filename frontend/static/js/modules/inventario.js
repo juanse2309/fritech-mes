@@ -580,22 +580,31 @@ function actualizarEstadisticasInventario(productos) {
 /**
  * Inicializar módulo de inventario
  */
+let _inventarioListenersListos = false;
 function inicializarInventario() {
     console.log('🔧 Inicializando módulo de Inventario...');
-    configurarEventosInventario();
-    cargarProductos();
+    // inicializarInventario() corre cada vez que se navega a esta página, no
+    // solo la primera vez -- configurarEventosInventario() y el listener de
+    // resize solo deben ligarse UNA vez, si no cada visita apila otro
+    // addEventListener sobre los mismos botones/formularios (ej. el submit
+    // de Conteo dispara registrarConteo() N veces por click).
+    if (!_inventarioListenersListos) {
+        _inventarioListenersListos = true;
+        configurarEventosInventario();
 
-    // Re-renderizar al redimensionar (Debounce)
-    let resizeTimer;
-    window.addEventListener('resize', () => {
-        clearTimeout(resizeTimer);
-        resizeTimer = setTimeout(() => {
-            if (window.AppState.productosData) {
-                const prods = window.AppState.productosFiltrados || window.AppState.productosData;
-                renderizarTablaProductos(prods, false);
-            }
-        }, 200);
-    });
+        // Re-renderizar al redimensionar (Debounce)
+        let resizeTimer;
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(() => {
+                if (window.AppState.productosData) {
+                    const prods = window.AppState.productosFiltrados || window.AppState.productosData;
+                    renderizarTablaProductos(prods, false);
+                }
+            }, 200);
+        });
+    }
+    cargarProductos();
 
     console.log('✅ Módulo de Inventario inicializado');
 }

@@ -14,7 +14,16 @@ window.ModuloEmpaque = {
     inicializar: async function () {
         console.log('📦 [Empaque] Inicializando módulo...');
         await Promise.all([this.cargarProductos(), this.cargarResponsables()]);
-        this.configurarEventos();
+        // inicializar() se llama cada vez que se navega a esta página (ver
+        // inicializarModulo en app.js), no solo la primera vez -- sin este
+        // guard, configurarEventos() volvía a hacer addEventListener sobre
+        // los mismos botones cada visita, así que "Reportar" terminaba
+        // disparando reportar() N veces (N = visitas a la página) por cada
+        // click: doble confirmación y doble registro en el backend.
+        if (!this._initDone) {
+            this._initDone = true;
+            this.configurarEventos();
+        }
         await this.cargarListado();
     },
 

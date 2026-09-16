@@ -332,6 +332,15 @@ const ModuloMetals = {
         const suggestionsDiv = document.getElementById('metals-sugerencias');
         if (!input || !suggestionsDiv) return;
 
+        // abrirFormulario() reconstruye #form-metals (y por tanto este input)
+        // cada vez que se abre/limpia el formulario, así que el listener de
+        // 'input' de aquí abajo queda automáticamente huérfano y reemplazado
+        // -- sin fugas. Pero el listener de click en `document` de más abajo
+        // NO se recrea junto con el form: si se liga aquí dentro, cada
+        // apertura del formulario (cada visita a la página o cada "Limpiar")
+        // apila un listener global más sobre `document`, permanente por el
+        // resto de la sesión. Se liga UNA sola vez y busca los elementos
+        // vigentes por id en cada click, no por closure.
         input.addEventListener('input', () => {
             const query = input.value.trim().toLowerCase();
             if (query.length < 2) {
@@ -373,11 +382,17 @@ const ModuloMetals = {
             suggestionsDiv.classList.add('active');
         });
 
-        document.addEventListener('click', (e) => {
-            if (!input.contains(e.target) && !suggestionsDiv.contains(e.target)) {
-                suggestionsDiv.classList.remove('active');
-            }
-        });
+        if (!this._outsideClickBound) {
+            this._outsideClickBound = true;
+            document.addEventListener('click', (e) => {
+                const inputActual = document.getElementById('metals-producto');
+                const sugerenciasActual = document.getElementById('metals-sugerencias');
+                if (inputActual && sugerenciasActual &&
+                    !inputActual.contains(e.target) && !sugerenciasActual.contains(e.target)) {
+                    sugerenciasActual.classList.remove('active');
+                }
+            });
+        }
     },
 
     // ----------------------------------------------------------------

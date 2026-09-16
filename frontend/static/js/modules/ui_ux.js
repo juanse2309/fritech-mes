@@ -276,6 +276,17 @@ const ModuloUX = (() => {
                 const input = document.getElementById(id);
                 if (!input) return;
 
+                // setupSmartEnter() se llama desde inicializar() de varios
+                // módulos (pnc, inventario, mes_control...), y esas funciones
+                // vuelven a correr cada vez que se navega a la página, no
+                // solo la primera vez. Sin este guard, cada visita apilaba
+                // otro par de listeners keydown/input sobre el mismo campo
+                // -- y el de Enter hace `btn.click()` en el botón de acción,
+                // así que un solo Enter real terminaba disparando N clicks
+                // programáticos (doble/triple confirmación al guardar).
+                if (input.dataset.smartEnterBound) return;
+                input.dataset.smartEnterBound = 'true';
+
                 let selectedIndex = -1;
 
                 // Resetear selección cuando el usuario escribe

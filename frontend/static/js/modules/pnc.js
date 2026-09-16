@@ -188,7 +188,15 @@ const ModuloPNC = {
     inicializar: function () {
         console.log('🔧 [PNC] Inicializando...');
         this.cargarDatos();
-        this.initAutocompleteProducto();
+        // initAutocompleteProducto liga addEventListener sobre el input y
+        // sobre `document` -- inicializar() corre en cada visita a la
+        // página, así que sin este guard cada visita apila otro listener
+        // (cada tecla dispara N búsquedas y cada click en la app corre N
+        // checks de "cerrar sugerencias").
+        if (!this._autocompleteListo) {
+            this._autocompleteListo = true;
+            this.initAutocompleteProducto();
+        }
 
         const form = document.getElementById('form-manual-pnc');
         if (form) {

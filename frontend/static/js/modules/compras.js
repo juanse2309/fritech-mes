@@ -156,6 +156,32 @@ const ModuloCompras = {
     // igual estando en la página o dentro de un modal Swal ya abierto).
     // Cualquier edición manual del texto borra la selección previa -- no
     // se puede dejar pasar texto libre sin elegir de la lista.
+    // Registro de pares input/suggestionsDiv activos, para el listener
+    // delegado de "cerrar al hacer click afuera" -- ver _bindOutsideClickOnce.
+    _autocompleteRegistrados: [],
+
+    // initAutocompleteProducto() se llama cada vez que se abre un modal
+    // (Solicitud, Orden de Compra...), con elementos nuevos del DOM de Swal
+    // cada vez. Antes ligaba un document.addEventListener('click', ...) por
+    // llamada -- cada modal abierto en el turno dejaba un listener global
+    // más, permanente, apuntando a nodos que ya ni existen. Ahora se liga
+    // UNA sola vez y se revisa una lista de pares activos.
+    _bindOutsideClickOnce: function () {
+        if (this._outsideClickBound) return;
+        this._outsideClickBound = true;
+        document.addEventListener('click', (e) => {
+            // Purga pares cuyo suggestionsDiv ya no está en el DOM (modal cerrado)
+            this._autocompleteRegistrados = this._autocompleteRegistrados.filter(
+                ({ suggestionsDiv }) => document.body.contains(suggestionsDiv)
+            );
+            this._autocompleteRegistrados.forEach(({ input, suggestionsDiv }) => {
+                if (!input.contains(e.target) && !suggestionsDiv.contains(e.target)) {
+                    suggestionsDiv.classList.remove('active');
+                }
+            });
+        });
+    },
+
     initAutocompleteProducto: function (input, suggestionsDiv, hiddenInput, onSelectExtra) {
         if (!input || !suggestionsDiv) return;
         input.addEventListener('input', (e) => {
@@ -176,11 +202,8 @@ const ModuloCompras = {
                 if (onSelectExtra) onSelectExtra(item);
             });
         });
-        document.addEventListener('click', (e) => {
-            if (!input.contains(e.target) && !suggestionsDiv.contains(e.target)) {
-                suggestionsDiv.classList.remove('active');
-            }
-        });
+        this._autocompleteRegistrados.push({ input, suggestionsDiv });
+        this._bindOutsideClickOnce();
     },
 
     // ==================================================================

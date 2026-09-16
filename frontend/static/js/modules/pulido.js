@@ -74,9 +74,40 @@ const ModuloPulido = {
 
     inicializar: async function () {
         console.log('🔧 [Pulido] Inicializando módulo DUAL FINAL...');
+        // inicializar() corre cada vez que se navega a esta página (varias
+        // veces por turno, es la más usada de la planta), no solo la
+        // primera -- configurarUI()/initAutocompletes() SÍ deben seguir
+        // corriendo cada visita (resetean la fecha, revalidan el botón de
+        // inicio, repintan la cola), pero solo deben LIGAR sus
+        // addEventListener una vez; el guard vive adentro de cada una (ver
+        // _eventosUIConfigurados/_autocompletesConfigurados), mismo patrón
+        // que ya usan pintura.js/rayada.js/hornos.js con _eventosConfigurados.
         this.configurarUI();
-        await this.cargarDatosMaestros();
         this.initAutocompletes();
+
+        // El listener de 'user-ready' y el keep-alive sí son de una sola
+        // vez de verdad (no repintan nada por visita) -- sin este guard,
+        // cada visita apilaba otro listener sin límite y
+        // iniciarPingServidor() arrancaba OTRO setInterval de 5 min que
+        // nunca se limpiaba: con varias visitas por turno terminaban
+        // corriendo varios timers/pings en paralelo de verdad (no es solo
+        // sensación: literalmente hay más de un proceso en segundo plano).
+        if (!this._initDone) {
+            this._initDone = true;
+
+            const onUserReady = () => {
+                if (this.timerInterval) clearInterval(this.timerInterval);
+                this.timerInterval = null;
+                this.cargarCacheUI();
+                this.verificarTrabajoActivo().then(() => this.cargarEstadoLocal());
+                this._actualizarVisibilidadPanelSupervision();
+                this._actualizarVisibilidadPanelProgramacion();
+            };
+            document.addEventListener('user-ready', onUserReady);
+
+            this.iniciarPingServidor();
+        }
+        await this.cargarDatosMaestros();
         this.limpiarLegacyStorageKeys();
         
         // --- LIMPIEZA POR CAMBIO DE VERSIÓN (v4.5 - Fix orden_produccion) ---
@@ -102,25 +133,10 @@ const ModuloPulido = {
         // Cargar el último registro guardado (banner satélite)
         this.actualizarBannerUltimoRegistro();
 
-        // Keep-Alive: Ping al servidor cada 5 min para evitar que Render se duerma
-        this.iniciarPingServidor();
-
         // Modo por defecto: PRO (mismo default que tenía el switch legacy,
         // checked=true). Si ya hay una sesión activa restaurada de SQL,
         // igual se muestra el panel PRO -- es el único con cronómetro.
         this.cambiarModo('pro');
-
-        // Si cambia el usuario en el mismo navegador (tablet compartida),
-        // cortar intervalos y cargar estado del nuevo operario.
-        const onUserReady = () => {
-            if (this.timerInterval) clearInterval(this.timerInterval);
-            this.timerInterval = null;
-            this.cargarCacheUI();
-            this.verificarTrabajoActivo().then(() => this.cargarEstadoLocal());
-            this._actualizarVisibilidadPanelSupervision();
-            this._actualizarVisibilidadPanelProgramacion();
-        };
-        document.addEventListener('user-ready', onUserReady);
     },
 
     iniciarPingServidor: function() {
@@ -318,42 +334,52 @@ const ModuloPulido = {
         // Reset manual display
         this.actualizarCalculoManual();
 
-        // Sincronizar encabezado "Trabajando en" en tiempo real
-        const actualizarHeader = () => {
-            const prodRaw = document.getElementById('buscador-productos')?.value || '---';
-            const prod = this.normalizarCodigo(prodRaw) || '---';
-            const lote = document.getElementById('lote-pulido')?.value || '---';
-            const display = document.getElementById('current-pulido-job');
-            if (display && this.sesionActiva) {
-                display.innerText = `${prod} | Lote: ${lote}`;
-            }
-        };
+        // configurarUI() corre en cada visita a la página (para resetear la
+        // fecha, revalidar el botón y repintar la cola con datos frescos),
+        // pero ligar los addEventListener de abajo solo debe pasar una vez
+        // -- si no, cada visita apila otro listener sobre los mismos campos
+        // y actualizarHeader()/validarBotonInicioPro() corren N veces por
+        // cada tecla. Mismo patrón que _eventosConfigurados en pintura.js.
+        if (!this._eventosUIConfigurados) {
+            this._eventosUIConfigurados = true;
 
-        ['responsable-pulido-input', 'buscador-productos', 'lote-pulido'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) {
-                el.addEventListener('input', () => {
-                    actualizarHeader();
-                    this.validarBotonInicioPro();
-                });
-                el.addEventListener('change', () => {
-                    actualizarHeader();
-                    this.validarBotonInicioPro();
-                });
-            }
-        });
+            // Sincronizar encabezado "Trabajando en" en tiempo real
+            const actualizarHeader = () => {
+                const prodRaw = document.getElementById('buscador-productos')?.value || '---';
+                const prod = this.normalizarCodigo(prodRaw) || '---';
+                const lote = document.getElementById('lote-pulido')?.value || '---';
+                const display = document.getElementById('current-pulido-job');
+                if (display && this.sesionActiva) {
+                    display.innerText = `${prod} | Lote: ${lote}`;
+                }
+            };
 
-        // Tablet compartida (hallazgo 2026-08-31): si una operaria escribe su
-        // nombre en Responsable sin pasar por un logout/login completo de la
-        // app, nada volvía a preguntarle al servidor "¿esta persona tiene una
-        // sesión activa?" -- la UI se quedaba mostrando lo último que había
-        // en pantalla (posiblemente el cronómetro/trabajo de quien usó la
-        // tablet antes). verificarTrabajoActivo()/cargarEstadoLocal() ya
-        // traían el blindaje correcto por operario, solo faltaba dispararlos
-        // en este momento.
-        const respInputCompartida = document.getElementById('responsable-pulido-input');
-        if (respInputCompartida) {
-            respInputCompartida.addEventListener('change', () => this.revisarCambioDeOperario());
+            ['responsable-pulido-input', 'buscador-productos', 'lote-pulido'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.addEventListener('input', () => {
+                        actualizarHeader();
+                        this.validarBotonInicioPro();
+                    });
+                    el.addEventListener('change', () => {
+                        actualizarHeader();
+                        this.validarBotonInicioPro();
+                    });
+                }
+            });
+
+            // Tablet compartida (hallazgo 2026-08-31): si una operaria escribe su
+            // nombre en Responsable sin pasar por un logout/login completo de la
+            // app, nada volvía a preguntarle al servidor "¿esta persona tiene una
+            // sesión activa?" -- la UI se quedaba mostrando lo último que había
+            // en pantalla (posiblemente el cronómetro/trabajo de quien usó la
+            // tablet antes). verificarTrabajoActivo()/cargarEstadoLocal() ya
+            // traían el blindaje correcto por operario, solo faltaba dispararlos
+            // en este momento.
+            const respInputCompartida = document.getElementById('responsable-pulido-input');
+            if (respInputCompartida) {
+                respInputCompartida.addEventListener('change', () => this.revisarCambioDeOperario());
+            }
         }
 
         this.validarBotonInicioPro();
@@ -2238,6 +2264,13 @@ const ModuloPulido = {
     },
 
     initAutocompletes: function () {
+        // Igual que configurarUI(): initAutocompletes() se sigue llamando en
+        // cada visita (no hace daño releer los mismos ids), pero ligar los
+        // addEventListener de aquí abajo debe pasar una sola vez, o cada
+        // visita apila otro listener sobre los mismos campos de búsqueda.
+        if (this._autocompletesConfigurados) return;
+        this._autocompletesConfigurados = true;
+
         const inputResp = document.getElementById('responsable-pulido-input');
         const suggestionsResp = document.getElementById('pulido-responsable-suggestions');
         

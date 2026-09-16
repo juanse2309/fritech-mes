@@ -72,9 +72,16 @@ window.ModuloMes = {
             window.FormHelpers.registrarPersistencia('form-mes-programar');
         }
 
+        // init() se llama cada vez que se navega a esta página (vía
+        // inicializar(), no solo la primera). configurarEventos() termina en
+        // actualizarVisibilidadAgregar() (repinta el "+"/lista de montaje
+        // según Molde/Cavidades), que sí debe correr cada visita -- por eso
+        // se llama sin condición; el guard contra addEventListener duplicado
+        // vive ADENTRO de configurarEventos()/initAutocomplete() (evita que
+        // el submit de "Programar" dispare crearProgramacion() N veces).
         this.configurarEventos();
-        await this.cargarDatos();
         this.initAutocomplete();
+        await this.cargarDatos();
         this.cargarMoldesDisponibles();
 
         // Inicializar fecha de programación (visual)
@@ -837,6 +844,17 @@ window.ModuloMes = {
     },
 
     configurarEventos: function () {
+        // configurarEventos() se llama en cada visita (termina en
+        // actualizarVisibilidadAgregar(), que debe repintarse siempre), pero
+        // ligar los addEventListener de aquí abajo debe pasar una sola vez.
+        if (!this._eventosConfigurados) {
+            this._eventosConfigurados = true;
+            this._ligarEventos();
+        }
+        this.actualizarVisibilidadAgregar();
+    },
+
+    _ligarEventos: function () {
         // Tab Events - Refresh data on tab change
         const tabs = document.querySelectorAll('#mes-tabs button');
         tabs.forEach(tab => {
@@ -947,7 +965,6 @@ window.ModuloMes = {
         const cavInputListener = document.getElementById('mes-prog-cavidades');
         if (moldeInput) moldeInput.addEventListener('input', () => this.actualizarVisibilidadAgregar());
         if (cavInputListener) cavInputListener.addEventListener('input', () => this.actualizarVisibilidadAgregar());
-        this.actualizarVisibilidadAgregar();
     },
 
     actualizarVisibilidadAgregar: function () {
