@@ -4,9 +4,16 @@ FROM python:3.14-slim
 # precompilado para esta versión de Python y pip cae a compilar desde fuente
 # (psycopg2-binary normalmente no lo necesita, pero es la red de seguridad
 # estándar para no romper el build por un solo paquete sin wheel).
+# postgresql-client agrega pg_dump -- lo usa backend/scripts/backup_db_drive.py
+# (Tarea Programada de Coolify) para el backup diario a Drive. libpq-dev/
+# build-essential quedan solo por si algún paquete no trae wheel precompilado
+# para esta versión de Python y pip cae a compilar desde fuente
+# (psycopg2-binary normalmente no lo necesita, pero es la red de seguridad
+# estándar para no romper el build por un solo paquete sin wheel).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         libpq-dev \
+        postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
