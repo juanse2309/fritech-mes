@@ -257,15 +257,20 @@ const ModuloCompras = {
             CANCELADA: '<span class="badge bg-secondary">Cancelada</span>',
         };
         const usuarioActual = (typeof AuthModule !== 'undefined' && AuthModule.currentUser) ? AuthModule.currentUser.username : null;
-        const esAdmin = (typeof AuthModule !== 'undefined' && AuthModule.currentUser) ? AuthModule.currentUser.rol === 'ADMIN' : false;
+        const esAdmin = this._esAdmin(this._rolNormalizado());
+        const borde = { PENDIENTE: 'border-start border-4 border-warning', EN_OC: 'border-start border-4 border-success', RECHAZADA: 'border-start border-4 border-danger', CANCELADA: 'border-start border-4 border-secondary' };
         cont.innerHTML = lista.map(s => `
-            <div class="card shadow-sm border-0 rounded-4 p-3">
+            <div class="card shadow-sm border-0 ${borde[s.estado] || ''} rounded-4 p-3">
                 <div class="d-flex justify-content-between align-items-start">
                     <strong>${this._esc(s.item_descripcion)}</strong>
                     ${badgeEstado[s.estado] || s.estado}
                 </div>
                 ${s.codigo_producto ? `<div class="small text-muted">Código: ${this._esc(s.codigo_producto)}</div>` : ''}
-                <div class="text-muted small">Pidió: ${this._esc(s.solicitado_por)} · Urgencia: ${s.urgencia} · ${new Date(s.creado_en).toLocaleDateString()}</div>
+                <div class="mt-1">
+                    ${s.urgencia === 'URGENTE' ? '<span class="badge bg-danger me-1"><i class="fas fa-bolt"></i> Urgente</span>' : '<span class="badge bg-light text-dark border me-1">Normal</span>'}
+                    <span class="small text-muted"><i class="fas fa-user"></i> ${this._esc(s.solicitado_por)}</span>
+                </div>
+                <div class="text-muted small mt-1"><i class="far fa-clock"></i> ${this._diasDesde(s.creado_en)} · ${new Date(s.creado_en).toLocaleDateString()}</div>
                 ${s.estado === 'EN_OC' ? `<div class="text-success small"><i class="fas fa-check-circle"></i> Ya se pidió: ${this._esc(s.id_oc_vinculada || '')}</div>` : ''}
                 ${s.estado === 'RECHAZADA' ? `<div class="text-danger small"><i class="fas fa-times-circle"></i> ${this._esc(s.motivo_rechazo || '')}</div>` : ''}
                 ${s.estado === 'PENDIENTE' && (s.solicitado_por === usuarioActual || esAdmin) ? `<button class="btn btn-sm btn-outline-secondary mt-2" onclick="ModuloCompras.cancelarSolicitud(${s.id})">Cancelar</button>` : ''}
@@ -320,7 +325,7 @@ const ModuloCompras = {
             return;
         }
         cont.innerHTML = lista.map(s => `
-            <div class="card shadow-sm border-0 rounded-4 p-3">
+            <div class="card shadow-sm border-0 ${s.urgencia === 'URGENTE' ? 'border-start border-4 border-danger' : ''} rounded-4 p-3">
                 <div class="form-check">
                     <input class="form-check-input" type="checkbox" id="chk-sol-${s.id}"
                         ${this.solicitudesSeleccionadas.has(s.id) ? 'checked' : ''}
@@ -328,10 +333,10 @@ const ModuloCompras = {
                     <label class="form-check-label" for="chk-sol-${s.id}">
                         <strong>${this._esc(s.item_descripcion)}</strong>
                         ${s.codigo_producto ? `<span class="badge bg-light text-dark ms-1">${this._esc(s.codigo_producto)}</span>` : ''}
-                        ${s.urgencia === 'URGENTE' ? '<span class="badge bg-danger ms-1">Urgente</span>' : ''}
+                        ${s.urgencia === 'URGENTE' ? '<span class="badge bg-danger ms-1"><i class="fas fa-bolt"></i> Urgente</span>' : ''}
                     </label>
                 </div>
-                <div class="text-muted small">Pidió: ${this._esc(s.solicitado_por)} · ${new Date(s.creado_en).toLocaleDateString()}</div>
+                <div class="text-muted small"><i class="fas fa-user"></i> ${this._esc(s.solicitado_por)} · <i class="far fa-clock"></i> ${this._diasDesde(s.creado_en)}</div>
                 <button class="btn btn-sm btn-outline-danger mt-1" onclick="ModuloCompras.rechazarSolicitud(${s.id})">Rechazar</button>
             </div>
         `).join('');
@@ -611,6 +616,10 @@ const ModuloCompras = {
             ABIERTA: 'bg-warning text-dark', PARCIALMENTE_RECIBIDA: 'bg-info',
             RECIBIDA_TOTAL: 'bg-success', RECHAZADA: 'bg-danger', ANULADA: 'bg-secondary',
         };
+        const bordeEstado = {
+            ABIERTA: 'border-warning', PARCIALMENTE_RECIBIDA: 'border-info',
+            RECIBIDA_TOTAL: 'border-success', RECHAZADA: 'border-danger', ANULADA: 'border-secondary',
+        };
 
         // Se trae el detalle (líneas) de cada OC -- antes la tarjeta solo
         // mostraba encabezado y quedaba "genérica", sin decir qué se pidió
@@ -628,13 +637,14 @@ const ModuloCompras = {
             ).join('');
 
             return `
-                <div class="card shadow-sm border-0 rounded-4 p-3">
+                <div class="card shadow-sm border-0 border-start border-4 ${bordeEstado[o.estado] || 'border-secondary'} rounded-4 p-3">
                     <div class="d-flex justify-content-between align-items-start">
                         <strong>${this._esc(o.numero_oc)}</strong>
                         <span class="badge ${badgeEstado[o.estado] || 'bg-secondary'}">${o.estado}</span>
                     </div>
-                    <div class="text-muted small">${this._esc(o.proveedor_nombre || o.proveedor_nit)} · ${o.fecha_oc}</div>
-                    <div class="small fw-semibold mt-2">${lineas.length} línea(s)${total > 0 ? ' · $' + total.toLocaleString('es-CO') : ''}</div>
+                    <div class="fw-semibold small"><i class="fas fa-truck-loading text-muted"></i> ${this._esc(o.proveedor_nombre || o.proveedor_nit)}</div>
+                    <div class="text-muted small"><i class="far fa-calendar"></i> ${o.fecha_oc} · <i class="fas fa-user"></i> ${this._esc(o.creado_por || '')} · ${this._diasDesde(o.creado_en)}</div>
+                    <div class="small fw-semibold mt-2">${lineas.length} línea(s)${total > 0 ? ' · <span class="text-success">$' + total.toLocaleString('es-CO') + '</span>' : ''}</div>
                     <div class="mt-1">${resumenLineas}</div>
                     <div class="mt-2 d-flex gap-1 flex-wrap">
                         <button class="btn btn-sm btn-outline-primary" onclick="ModuloCompras.abrirCargarFactura('${this._esc(o.numero_oc)}')">
@@ -766,13 +776,16 @@ const ModuloCompras = {
                     </div>
                 </div>
             `).join('');
+            const bordeEstado = o.estado === 'PARCIALMENTE_RECIBIDA' ? 'border-info' : 'border-warning';
+            const badgeEstadoColor = o.estado === 'PARCIALMENTE_RECIBIDA' ? 'bg-info' : 'bg-warning text-dark';
             return `
-                <div class="card shadow-sm border-0 rounded-4 p-3">
+                <div class="card shadow-sm border-0 border-start border-4 ${bordeEstado} rounded-4 p-3">
                     <div class="d-flex justify-content-between align-items-start">
                         <strong>${this._esc(o.numero_oc)}</strong>
-                        <span class="badge bg-warning text-dark">${o.estado}</span>
+                        <span class="badge ${badgeEstadoColor}">${o.estado}</span>
                     </div>
-                    <div class="text-muted small">${this._esc(o.proveedor_nombre || o.proveedor_nit)} · ${o.fecha_oc}</div>
+                    <div class="fw-semibold small"><i class="fas fa-truck-loading text-muted"></i> ${this._esc(o.proveedor_nombre || o.proveedor_nit)}</div>
+                    <div class="text-muted small"><i class="far fa-calendar"></i> ${o.fecha_oc} · <i class="far fa-clock"></i> pedida ${this._diasDesde(o.creado_en)}</div>
                     <div class="mt-2">${filas}</div>
                     <div class="d-flex gap-1 flex-wrap mt-2">
                         <button class="btn btn-sm btn-primary" onclick="ModuloCompras.abrirRegistrarRecepcion('${this._esc(o.numero_oc)}')">
@@ -791,13 +804,13 @@ const ModuloCompras = {
     cargarRecibidas: async function () {
         try {
             const data = await this._api('/api/compras/ordenes/recibidas');
-            this.renderRecibidas(data || []);
+            await this.renderRecibidas(data || []);
         } catch (e) {
             console.error('[Compras] Error cargando OC recibidas:', e);
         }
     },
 
-    renderRecibidas: function (lista) {
+    renderRecibidas: async function (lista) {
         const cont = document.getElementById('compras-lista-recibidas');
         if (!cont) return;
         if (!lista.length) {
@@ -805,15 +818,25 @@ const ModuloCompras = {
             return;
         }
         const badgeEstado = { RECIBIDA_TOTAL: 'bg-success', RECHAZADA: 'bg-danger' };
-        cont.innerHTML = lista.map(o => `
-            <div class="card shadow-sm border-0 rounded-4 p-3">
-                <div class="d-flex justify-content-between align-items-start">
-                    <strong>${this._esc(o.numero_oc)}</strong>
-                    <span class="badge ${badgeEstado[o.estado] || 'bg-secondary'}">${o.estado}</span>
+        const bordeEstado = { RECIBIDA_TOTAL: 'border-success', RECHAZADA: 'border-danger' };
+        const tarjetas = await Promise.all(lista.map(async (o) => {
+            let numLineas = null;
+            try {
+                const detalle = await this._api(`/api/compras/ordenes/${encodeURIComponent(o.numero_oc)}`);
+                numLineas = (detalle.lineas || []).length;
+            } catch (e) { /* la tarjeta igual muestra el encabezado */ }
+            return `
+                <div class="card shadow-sm border-0 border-start border-4 ${bordeEstado[o.estado] || 'border-secondary'} rounded-4 p-3">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <strong>${this._esc(o.numero_oc)}</strong>
+                        <span class="badge ${badgeEstado[o.estado] || 'bg-secondary'}">${o.estado}</span>
+                    </div>
+                    <div class="fw-semibold small"><i class="fas fa-truck-loading text-muted"></i> ${this._esc(o.proveedor_nombre || o.proveedor_nit)}</div>
+                    <div class="text-muted small"><i class="far fa-calendar"></i> ${o.fecha_oc}${numLineas !== null ? ` · ${numLineas} línea(s)` : ''}</div>
                 </div>
-                <div class="text-muted small">${this._esc(o.proveedor_nombre || o.proveedor_nit)} · ${o.fecha_oc}</div>
-            </div>
-        `).join('');
+            `;
+        }));
+        cont.innerHTML = tarjetas.join('');
     },
 
     abrirRegistrarRecepcion: async function (numero_oc) {
@@ -1086,6 +1109,16 @@ const ModuloCompras = {
         const div = document.createElement('div');
         div.textContent = str == null ? '' : String(str);
         return div.innerHTML;
+    },
+
+    // "Hace X días" para que se note de un vistazo qué lleva más tiempo
+    // esperando -- pedido real 2026-09-16 (tarjetas "muy muertas").
+    _diasDesde: function (fechaIso) {
+        if (!fechaIso) return null;
+        const dias = Math.floor((Date.now() - new Date(fechaIso).getTime()) / 86400000);
+        if (dias <= 0) return 'hoy';
+        if (dias === 1) return 'hace 1 día';
+        return `hace ${dias} días`;
     },
 };
 
