@@ -136,10 +136,11 @@ class RecepcionOCService:
             if orden.estado in ('ANULADA',):
                 raise RecepcionOCError(f"No se puede recibir contra una OC {orden.estado}")
 
+            fecha_evento = _parse_fecha(fecha_recepcion, get_colombia_time().date())
             recepcion = RecepcionOC(
                 id_oc=orden.id,
                 numero_oc=numero_oc,
-                fecha_recepcion=_parse_fecha(fecha_recepcion, get_colombia_time().date()),
+                fecha_recepcion=fecha_evento,
                 estado_recepcion=estado_recepcion,
                 recibido_por=recibido_por,
                 observaciones=(observaciones or '').strip() or None,
@@ -167,6 +168,12 @@ class RecepcionOCService:
                 exceso = acumulado - float(linea_oc.cantidad_pedida)
                 excede_tolerancia = exceso > tolerancia
 
+                # Fecha real de llegada de ESTA línea -- si Zoe no la cambió
+                # puntualmente, cae en la fecha del evento (mismo día para
+                # todo, como antes). Nunca None: sin esto no se podría saber
+                # cuándo llegó cada producto en un evento con fechas mixtas.
+                fecha_linea = _parse_fecha(linea_payload.get('fecha_recepcion'), fecha_evento)
+
                 linea_recepcion = LineaRecepcionOC(
                     id_recepcion=recepcion.id,
                     id_linea_oc=id_linea_oc,
@@ -174,6 +181,7 @@ class RecepcionOCService:
                     cantidad_rechazada=cantidad_rechazada,
                     motivo_rechazo=(linea_payload.get('motivo_rechazo') or '').strip() or None,
                     excede_tolerancia=excede_tolerancia,
+                    fecha_recepcion=fecha_linea,
                 )
                 db.session.add(linea_recepcion)
                 lineas_creadas.append(linea_recepcion)

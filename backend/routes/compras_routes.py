@@ -136,6 +136,7 @@ def _ser_linea_recepcion(l):
         'cantidad_rechazada': float(l.cantidad_rechazada or 0),
         'motivo_rechazo': l.motivo_rechazo,
         'excede_tolerancia': l.excede_tolerancia,
+        'fecha_recepcion': l.fecha_recepcion.isoformat() if l.fecha_recepcion else None,
     }
 
 

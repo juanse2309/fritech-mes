@@ -1411,7 +1411,13 @@ class LineaRecepcionOC(db.Model):
     """Cuánto llegó de cada línea de OC en un evento de recepción dado.
     excede_tolerancia se calcula en el servicio (tolerancia de 20
     unidades sobre lo pedido, decisión del usuario 2026-09-15) y dispara
-    el aviso a Diego."""
+    el aviso a Diego.
+
+    fecha_recepcion es la fecha REAL de llegada de ESTE producto --
+    distinta de RecepcionOC.fecha_recepcion (la del evento/formulario en
+    general) porque los productos de una misma OC no siempre llegan
+    juntos (pedido real 2026-09-16). Nullable: si Zoe no la cambia,
+    coincide con la del evento -- ver RecepcionOCService.registrar_recepcion."""
     __tablename__ = 'db_lineas_recepcion_oc'
     __table_args__ = {'extend_existing': True}
 
@@ -1422,6 +1428,7 @@ class LineaRecepcionOC(db.Model):
     cantidad_rechazada    = db.Column(db.Numeric(18, 2), default=0)
     motivo_rechazo        = db.Column(db.Text, nullable=True)
     excede_tolerancia     = db.Column(db.Boolean, default=False)
+    fecha_recepcion       = db.Column(db.Date, nullable=True)
 
 
 class TransitoExternoOC(db.Model):

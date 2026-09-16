@@ -212,6 +212,18 @@ with app.app_context():
     except Exception as e_db_frimetals:
         db.session.rollback()
         logger.error(f"❌ Error agregando columnas Frimetals a db_pedidos: {e_db_frimetals}")
+
+    # fecha_recepcion por línea (no solo por evento) -- productos de una
+    # misma OC no siempre llegan juntos (pedido real 2026-09-16). Ver
+    # LineaRecepcionOC.fecha_recepcion en sql_models.py. Bloque propio, mismo
+    # motivo que el de Frimetals arriba: no depender de que el bloque de
+    # arriba (db_ventas_staging, etc.) haya corrido sin abortar.
+    try:
+        db.session.execute(text("ALTER TABLE db_lineas_recepcion_oc ADD COLUMN IF NOT EXISTS fecha_recepcion DATE;"))
+        db.session.commit()
+    except Exception as e_db_fecha_recepcion:
+        db.session.rollback()
+        logger.error(f"❌ Error agregando fecha_recepcion a db_lineas_recepcion_oc: {e_db_fecha_recepcion}")
 # ---------------------------------------------
 
 # Login Blueprints
@@ -359,7 +371,7 @@ def serve_manifest():
 # (cache-busting de CSS/JS en index.html, footer, loader). Distinta de
 # _APP_VERSION de abajo, que es el hash del deploy activo para detectar
 # frontend desactualizado -- no confundir ambas.
-RELEASE_VERSION = "1.8.68"
+RELEASE_VERSION = "1.8.69"
 
 # --- VERSION DEL DEPLOY ACTIVO ---
 # RENDER_GIT_COMMIT la puebla Render automaticamente en cada deploy (no hay

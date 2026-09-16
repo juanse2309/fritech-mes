@@ -819,14 +819,22 @@ const ModuloCompras = {
     abrirRegistrarRecepcion: async function (numero_oc) {
         try {
             const detalle = await this._api(`/api/compras/ordenes/${encodeURIComponent(numero_oc)}`);
+            const hoy = new Date().toISOString().split('T')[0];
+            // Fecha por línea -- los productos de una misma OC no siempre
+            // llegan el mismo día (pedido real 2026-09-16). Cada input
+            // arranca en "hoy" (mismo default que la fecha general) y Zoe
+            // solo la cambia en la línea puntual que llegó otro día.
             const filasHtml = detalle.lineas.map(l => `
                 <div class="row g-2 mb-2 align-items-end">
                     <div class="col-12"><label class="form-label small mb-1">${this._esc(l.descripcion)} <span class="text-muted">(pendiente: ${l.pendiente})</span></label></div>
-                    <div class="col-6">
+                    <div class="col-5">
                         <input type="number" step="0.01" class="form-control form-control-sm rec-linea-recibida" data-id-linea="${l.id}" placeholder="Cantidad recibida">
                     </div>
-                    <div class="col-6">
+                    <div class="col-4">
                         <input type="number" step="0.01" class="form-control form-control-sm rec-linea-rechazada" data-id-linea="${l.id}" placeholder="Cantidad rechazada">
+                    </div>
+                    <div class="col-3">
+                        <input type="date" class="form-control form-control-sm rec-linea-fecha" data-id-linea="${l.id}" value="${hoy}" title="Fecha en que llegó este producto">
                     </div>
                 </div>
             `).join('');
@@ -837,8 +845,8 @@ const ModuloCompras = {
                     <div class="text-start">
                         <div class="row g-2 mb-3">
                             <div class="col-6">
-                                <label class="form-label small fw-bold">Fecha</label>
-                                <input id="rec-fecha" type="date" class="form-control" value="${new Date().toISOString().split('T')[0]}">
+                                <label class="form-label small fw-bold">Fecha general</label>
+                                <input id="rec-fecha" type="date" class="form-control" value="${hoy}">
                             </div>
                             <div class="col-6">
                                 <label class="form-label small fw-bold">Estado</label>
@@ -849,12 +857,13 @@ const ModuloCompras = {
                                 </select>
                             </div>
                         </div>
+                        <div class="text-muted small mb-2">Si algún producto llegó otro día, cambia su fecha en la casilla junto a la cantidad.</div>
                         ${filasHtml}
                     </div>
                 `,
                 focusConfirm: false,
                 showCancelButton: true,
-                width: 600,
+                width: 650,
                 preConfirm: () => {
                     if (!document.getElementById('rec-fecha').value) {
                         Swal.showValidationMessage('Falta la fecha de recepción');
@@ -864,10 +873,12 @@ const ModuloCompras = {
                         .map(i => {
                             const idLinea = i.dataset.idLinea;
                             const rechazada = document.querySelector(`.rec-linea-rechazada[data-id-linea="${idLinea}"]`);
+                            const fecha = document.querySelector(`.rec-linea-fecha[data-id-linea="${idLinea}"]`);
                             return {
                                 id_linea_oc: parseInt(idLinea),
                                 cantidad_recibida: parseFloat(i.value || 0),
                                 cantidad_rechazada: parseFloat((rechazada && rechazada.value) || 0),
+                                fecha_recepcion: (fecha && fecha.value) || null,
                             };
                         })
                         .filter(l => l.cantidad_recibida > 0 || l.cantidad_rechazada > 0);
@@ -927,7 +938,7 @@ const ModuloCompras = {
     verRecepcionesParaTransito: async function (numero_oc) {
         try {
             const recepciones = await this._api(`/api/compras/ordenes/${encodeURIComponent(numero_oc)}/recepciones`);
-            const lineas = (recepciones || []).flatMap(r => r.lineas.map(l => ({ ...l, fecha: r.recepcion.fecha_recepcion })))
+            const lineas = (recepciones || []).flatMap(r => r.lineas.map(l => ({ ...l, fecha: l.fecha_recepcion || r.recepcion.fecha_recepcion })))
                 .filter(l => l.cantidad_recibida > 0);
 
             if (!lineas.length) {
