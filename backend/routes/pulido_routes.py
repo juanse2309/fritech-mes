@@ -492,27 +492,10 @@ def swap_pulido_task():
         if not responsable or not id_nuevo or id_nuevo == "None":
             return api_error("Datos incompletos o ID nulo", status_code=400)
 
-        # 1. Pausar TODO lo que esté TRABAJANDO para este operario
-        # Usamos la hora de Colombia para asegurar consistencia en el registro de pausa
-        now = get_colombia_time()
-        trabajos_activos = ProduccionPulido.query.filter(
-            ProduccionPulido.responsable == responsable,
-            ProduccionPulido.estado == 'TRABAJANDO'
-        ).all()
-        
-        for t in trabajos_activos:
-            t.estado = 'PAUSADO_COLA'
-            t.hora_pausa = now
-            db.session.add(t)
-            
-        # 2. Activar la nueva tarea
-        nueva_tarea = ProduccionPulido.query.filter_by(id_pulido=id_nuevo).first()
-        if nueva_tarea:
-            nueva_tarea.estado = 'TRABAJANDO'
-            nueva_tarea.hora_pausa = None # Limpiar pausa para reanudación
-            db.session.add(nueva_tarea)
-            
-        db.session.commit()
+        nueva_tarea = PulidoService.intercambiar_tarea(responsable, id_nuevo)
+        if not nueva_tarea:
+            return api_error("La tarea a retomar no existe", status_code=404)
+
         return api_success(message="Intercambio realizado con éxito")
     except Exception as e:
         db.session.rollback()

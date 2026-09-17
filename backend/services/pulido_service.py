@@ -1101,10 +1101,13 @@ class PulidoService:
     # ---------------------------------------------------------------
 
     @staticmethod
-    def pausar(id_pulido, hora_pausa=None):
+    def pausar(id_pulido, hora_pausa=None, estado_destino='PAUSADO'):
         """
         Registra el inicio de la pausa en el servidor. Retorna el registro
         actualizado, o None si id_pulido no existe (la ruta traduce eso a 404).
+
+        estado_destino: 'PAUSADO' (pausa manual normal) o 'PAUSADO_COLA'
+        (usado por intercambiar_tarea al bajar de TRABAJANDO a la cola).
         """
         registro = ProduccionPulido.query.filter_by(id_pulido=id_pulido).first()
         if not registro:
@@ -1120,12 +1123,12 @@ class PulidoService:
                     ahora = ahora.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
                 except: pass
 
-            registro.estado = 'PAUSADO'
+            registro.estado = estado_destino
             registro.hora_pausa = ahora.replace(tzinfo=None) # Guardar como naive Bogota
             db.session.add(registro)
             db.session.commit()
 
-            logger.debug(f" [PAUSA] Actividad {id_pulido} pausada a las {registro.hora_pausa}")
+            logger.debug(f" [PAUSA] Actividad {id_pulido} pausada ({estado_destino}) a las {registro.hora_pausa}")
             return registro
         except Exception:
             db.session.rollback()
@@ -1165,6 +1168,30 @@ class PulidoService:
         except Exception:
             db.session.rollback()
             raise
+
+    @staticmethod
+    def intercambiar_tarea(responsable, id_pulido_nuevo):
+        """
+        Swap atómico de tarea activa para multitarea/urgencia ("Cambiar
+        Referencia/Urgencia" o "Retomar" desde Trabajos en cola): pausa a
+        PAUSADO_COLA todo lo que esté TRABAJANDO para este responsable y
+        reactiva la tarea elegida. Retorna el registro reactivado, o None si
+        id_pulido_nuevo no existe (la ruta traduce eso a 404).
+
+        Reutiliza pausar()/reanudar() -- antes esto vivía como SQL directo en
+        la ruta (swap_task) y nunca acumulaba tiempo_pausa_acumulado al
+        reactivar, dejando el tiempo que la tarea pasó en cola contando como
+        tiempo trabajado en el reporte final (hallazgo 2026-09-17, incidente
+        Laura Lizeth Vargas R. con la tarea 9672).
+        """
+        trabajos_activos = ProduccionPulido.query.filter(
+            ProduccionPulido.responsable == responsable,
+            ProduccionPulido.estado == 'TRABAJANDO'
+        ).all()
+        for t in trabajos_activos:
+            PulidoService.pausar(t.id_pulido, estado_destino='PAUSADO_COLA')
+
+        return PulidoService.reanudar(id_pulido_nuevo)
 
     @staticmethod
     def _es_prueba(orden_produccion, id_pulido):
@@ -1279,6 +1306,19 @@ class PulidoService:
                 raise
             overrides_aplicados.append(('CANTIDAD', str(exc_cant)))
 
+        # Si el ciclo se está cerrando de verdad (estado sale de
+        # ESTADOS_PULIDO_EN_PROGRESO) y quedó una pausa abierta sin cerrar
+        # (ej. "Terminar y Reportar" presionado directo desde PAUSADO, sin
+        # pasar por /api/pulido/reanudar antes), cerrarla aquí sumando lo que
+        # faltaba a tiempo_pausa_acumulado -- así el descuento de abajo
+        # siempre refleja el tiempo real en pausa/cola, sin importar el
+        # camino por el que se llegó a finalizar (hallazgo 2026-09-17).
+        if registro.estado not in ESTADOS_PULIDO_EN_PROGRESO and registro.hora_pausa:
+            segundos_pausa_abierta = int((ahora.replace(tzinfo=None) - registro.hora_pausa).total_seconds())
+            if segundos_pausa_abierta > 0:
+                registro.tiempo_pausa_acumulado = (registro.tiempo_pausa_acumulado or 0) + segundos_pausa_abierta
+            registro.hora_pausa = None
+
         # Manejo de Horas y Cálculos de Tiempo
         if data.get('hora_inicio'):
             h_h, h_m = data['hora_inicio'].split(':')
@@ -1308,6 +1348,15 @@ class PulidoService:
 
             tiempo_acumulado_ms = float(data.get('tiempo_acumulado_ms') or 0)
             segundos_totales = segundos_segmento + int(tiempo_acumulado_ms / 1000)
+
+            # Restar el tiempo que el registro pasó en PAUSADO/PAUSADO_COLA en
+            # toda su vida (pausas manuales + tiempo "en cola" por swap_task/
+            # intercambiar_tarea) -- antes tiempo_pausa_acumulado solo se usaba
+            # para congelar el cronómetro EN PANTALLA, nunca se restaba del
+            # total que quedaba guardado, así que ese tiempo contaba como
+            # trabajado en el reporte final (hallazgo 2026-09-17, incidente
+            # Laura Lizeth Vargas R. con la tarea 9672).
+            segundos_totales = max(0, segundos_totales - int(registro.tiempo_pausa_acumulado or 0))
 
             # Autoridad matemática del descuento por pausas programadas: PausasService.
             # El frontend solo aporta hora_inicio/hora_fin crudas (Zero Trust) — el
