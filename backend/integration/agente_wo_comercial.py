@@ -118,7 +118,7 @@ def extraer_ordenes_produccion(cursor, mapping):
     """
     logger.info(">> Extrayendo Ordenes de Produccion (Tipo_de_Documento='OP')...")
 
-    sql_op = """
+    sql_op = f"""
     SELECT
         E.prefijo,
         E.Numero_de_Documento AS numero_documento,
@@ -128,8 +128,8 @@ def extraer_ordenes_produccion(cursor, mapping):
         D.Producto AS producto_id,
         CAST(D.Cantidad AS FLOAT) AS cantidad,
         D.Bodega AS bodega
-    FROM [FRIPARTS2021].[dbo].[Vista_Tabla_Encabezados] E
-    INNER JOIN [FRIPARTS2021].[dbo].[Vista_Tabla_Movimientos_Inventario] D
+    FROM [{DB_DATABASE}].[dbo].[Vista_Tabla_Encabezados] E
+    INNER JOIN [{DB_DATABASE}].[dbo].[Vista_Tabla_Movimientos_Inventario] D
         ON E.Autonumerico = D.Pertenece_A
     WHERE E.Tipo_de_Documento = 'OP'
       AND YEAR(E.Fecha) >= 2024
@@ -195,11 +195,11 @@ def _adjuntar_ept(cursor, mapping, registros):
     """
     logger.info(">> Extrayendo EPT (Entrada de Producto Terminado) para cruzar contra las OP...")
 
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT E.Nota AS nota, E.prefijo AS prefijo, E.Numero_de_Documento AS numero_documento,
                D.Producto AS producto_id, CAST(D.Cantidad AS FLOAT) AS cantidad
-        FROM [FRIPARTS2021].[dbo].[Vista_Tabla_Encabezados] E
-        INNER JOIN [FRIPARTS2021].[dbo].[Vista_Tabla_Movimientos_Inventario] D
+        FROM [{DB_DATABASE}].[dbo].[Vista_Tabla_Encabezados] E
+        INNER JOIN [{DB_DATABASE}].[dbo].[Vista_Tabla_Movimientos_Inventario] D
             ON E.Autonumerico = D.Pertenece_A
         WHERE E.Tipo_de_Documento = 'EPT'
           AND YEAR(E.Fecha) >= 2024
@@ -263,7 +263,7 @@ def extraer_ordenes_compra(cursor, col_nit):
         E.Anulado AS anulado,
         E.Verificado AS verificado,
         {select_nit} AS proveedor_nit
-    FROM [FRIPARTS2021].[dbo].[Vista_Tabla_Encabezados] E
+    FROM [{DB_DATABASE}].[dbo].[Vista_Tabla_Encabezados] E
     WHERE E.Tipo_de_Documento = 'OC'
     """
     cursor.execute(sql_oc)
@@ -384,7 +384,7 @@ def ejecutar_extraccion():
         # confirmar su nombre exacto sin conexión directa a WO. Si no se
         # detecta, la descripción viaja vacía en vez de romper la extracción.
         logger.info(">> Cargando catálogo maestro de inventarios en memoria...")
-        cursor.execute("SELECT TOP 1 * FROM [FRIPARTS2021].[dbo].[Vista_Tabla_Inventarios]")
+        cursor.execute(f"SELECT TOP 1 * FROM [{DB_DATABASE}].[dbo].[Vista_Tabla_Inventarios]")
         cols_inventarios = [col[0] for col in cursor.description]
         cursor.fetchall()
 
@@ -413,7 +413,7 @@ def ejecutar_extraccion():
         select_desc_inv = f", [{col_descripcion_inv}]" if col_descripcion_inv else ""
         cursor.execute(
             f"SELECT Autonumerico, Codigo_Producto{select_desc_inv} "
-            f"FROM [FRIPARTS2021].[dbo].[Vista_Tabla_Inventarios]"
+            f"FROM [{DB_DATABASE}].[dbo].[Vista_Tabla_Inventarios]"
         )
         mapping = {}
         descripciones = {}
@@ -437,7 +437,7 @@ def ejecutar_extraccion():
         # 1.b Auto-detectar columna de IVA en el detalle y de identificación/NIT
         # del tercero externo en el encabezado. Mismo motivo: no hay forma de
         # confirmar estos nombres sin acceso directo a la vista de WO.
-        cursor.execute("SELECT TOP 1 * FROM [FRIPARTS2021].[dbo].[Vista_Tabla_Movimientos_Inventario]")
+        cursor.execute(f"SELECT TOP 1 * FROM [{DB_DATABASE}].[dbo].[Vista_Tabla_Movimientos_Inventario]")
         cols_movimientos = [col[0] for col in cursor.description]
         cursor.fetchall()
         col_iva = None
@@ -447,7 +447,7 @@ def ejecutar_extraccion():
                 col_iva = c
         logger.info(f"[AUDITORIA] Columna de IVA detectada en Vista_Tabla_Movimientos_Inventario: '{col_iva}'")
 
-        cursor.execute("SELECT TOP 1 * FROM [FRIPARTS2021].[dbo].[Vista_Tabla_Encabezados]")
+        cursor.execute(f"SELECT TOP 1 * FROM [{DB_DATABASE}].[dbo].[Vista_Tabla_Encabezados]")
         cols_encabezados = [col[0] for col in cursor.description]
         cursor.fetchall()
         # Confirmado contra WO real (2026-08-12): la columna correcta es
@@ -510,8 +510,8 @@ def ejecutar_extraccion():
             {select_iva} AS iva,
             {select_nit} AS nit_cliente,
             E.Tipo_de_Documento AS tipo_doc
-        FROM [FRIPARTS2021].[dbo].[Vista_Tabla_Encabezados] E
-        INNER JOIN [FRIPARTS2021].[dbo].[Vista_Tabla_Movimientos_Inventario] D
+        FROM [{DB_DATABASE}].[dbo].[Vista_Tabla_Encabezados] E
+        INNER JOIN [{DB_DATABASE}].[dbo].[Vista_Tabla_Movimientos_Inventario] D
             ON E.Autonumerico = D.Pertenece_A
         WHERE YEAR(E.Fecha) >= 2024
           AND E.Tipo_de_Documento IN ('FV', 'PED', 'COT', 'NC', 'NCV', 'NCCL', 'DMC')

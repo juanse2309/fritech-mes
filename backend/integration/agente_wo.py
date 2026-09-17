@@ -121,7 +121,7 @@ def probar_y_sincronizar_productos():
         registros = []
 
         logger.info("Inspeccionando columnas de Vista_Tabla_Inventarios para detectar el SKU...")
-        cursor.execute("SELECT TOP 1 * FROM [FRIPARTS2021].[dbo].[Vista_Tabla_Inventarios]")
+        cursor.execute(f"SELECT TOP 1 * FROM [{DB_DATABASE}].[dbo].[Vista_Tabla_Inventarios]")
         cols_inv = [col[0] for col in cursor.description]
         cursor.fetchall()
         logger.info(f"[AUDITORIA] Columnas de Vista_Tabla_Inventarios: {cols_inv}")
@@ -179,8 +179,8 @@ def probar_y_sincronizar_productos():
                     SUM(e.[Existencia]) AS stock_wo,
                     MAX({select_desc}) AS descripcion,
                     MAX({select_precio}) AS precio_venta
-                FROM [FRIPARTS2021].[dbo].[Vista_Existencias] e
-                INNER JOIN [FRIPARTS2021].[dbo].[Vista_Tabla_Inventarios] i
+                FROM [{DB_DATABASE}].[dbo].[Vista_Existencias] e
+                INNER JOIN [{DB_DATABASE}].[dbo].[Vista_Tabla_Inventarios] i
                     ON e.[IdInventario] = i.[{col_id_inv}]
                 WHERE e.[Existencia] IS NOT NULL
                 {filtro_clasif}
@@ -221,9 +221,9 @@ def probar_y_sincronizar_productos():
         if not registros:
             logger.warning("FALLBACK: usando IdInventario directamente (sin SKU real). "
                            "Revisa el log [AUDITORIA] para ajustar col_id_inv y col_sku.")
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT [IdInventario] AS codigo_producto, SUM([Existencia]) AS stock_wo
-                FROM [FRIPARTS2021].[dbo].[Vista_Existencias]
+                FROM [{DB_DATABASE}].[dbo].[Vista_Existencias]
                 WHERE [IdInventario] IS NOT NULL
                 GROUP BY [IdInventario]
             """)

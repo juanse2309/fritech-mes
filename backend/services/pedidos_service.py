@@ -139,14 +139,14 @@ def reiniciar_pedido_wo(id_pedido_numero, db_session):
         cursor = conn.cursor()
         
         # Obtener mapeo
-        cursor.execute("SELECT Autonumerico, Codigo_Producto FROM [FRIPARTS2021].[dbo].[Vista_Tabla_Inventarios]")
+        cursor.execute(f"SELECT Autonumerico, Codigo_Producto FROM [{DB_DATABASE}].[dbo].[Vista_Tabla_Inventarios]")
         mapping = {}
         for row in cursor.fetchall():
             mapping[str(row[0])] = row[1]
-            
+
         # Extraer pedido con todos los metadatos comerciales
-        sql = """
-            SELECT 
+        sql = f"""
+            SELECT
                 E.Fecha AS fecha,
                 (E.prefijo + '-' + CAST(E.Numero_de_Documento AS VARCHAR)) AS documento,
                 E.Nombre_tercero_externo AS nombres,
@@ -160,8 +160,8 @@ def reiniciar_pedido_wo(id_pedido_numero, db_session):
                 D.Producto AS productos,
                 CAST(D.Cantidad AS FLOAT) AS cantidad,
                 CAST(D.Valor_Unitario AS FLOAT) AS precio_unitario
-            FROM [FRIPARTS2021].[dbo].[Vista_Tabla_Encabezados] E
-            INNER JOIN [FRIPARTS2021].[dbo].[Vista_Tabla_Movimientos_Inventario] D 
+            FROM [{DB_DATABASE}].[dbo].[Vista_Tabla_Encabezados] E
+            INNER JOIN [{DB_DATABASE}].[dbo].[Vista_Tabla_Movimientos_Inventario] D
                 ON E.Autonumerico = D.Pertenece_A
             WHERE E.Numero_de_Documento = ?
               AND E.Tipo_de_Documento = 'PED'

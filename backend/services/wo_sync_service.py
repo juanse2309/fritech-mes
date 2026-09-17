@@ -513,10 +513,10 @@ class WoSyncService:
             cursor = conn.cursor()
 
             # Catálogo maestro en memoria (Autonumerico -> Codigo_Producto)
-            cursor.execute("SELECT Autonumerico, Codigo_Producto FROM [FRIPARTS2021].[dbo].[Vista_Tabla_Inventarios]")
+            cursor.execute(f"SELECT Autonumerico, Codigo_Producto FROM [{db_database}].[dbo].[Vista_Tabla_Inventarios]")
             mapping = {str(row[0]): row[1] for row in cursor.fetchall()}
 
-            sql = """
+            sql = f"""
             SELECT
                 E.Fecha AS fecha,
                 (E.prefijo + '-' + CAST(E.Numero_de_Documento AS VARCHAR)) AS documento,
@@ -528,8 +528,8 @@ class WoSyncService:
                 CAST((D.Cantidad * D.Valor_Unitario * (1 - (D.Descuento/100.0))) AS FLOAT) AS total_ingresos,
                 CAST(D.Valor_Unitario AS FLOAT) AS precio_promedio,
                 E.Tipo_de_Documento AS tipo_doc
-            FROM [FRIPARTS2021].[dbo].[Vista_Tabla_Encabezados] E
-            INNER JOIN [FRIPARTS2021].[dbo].[Vista_Tabla_Movimientos_Inventario] D
+            FROM [{db_database}].[dbo].[Vista_Tabla_Encabezados] E
+            INNER JOIN [{db_database}].[dbo].[Vista_Tabla_Movimientos_Inventario] D
                 ON E.Autonumerico = D.Pertenece_A
             WHERE YEAR(E.Fecha) >= YEAR(GETDATE()) - 1
               AND E.Tipo_de_Documento IN ('FV', 'PED', 'COT', 'NC', 'NCV', 'NCCL', 'DMC')
