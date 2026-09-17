@@ -543,65 +543,6 @@ const ModuloPulido = {
         }
     },
 
-    renderCola: async function() {
-        const container = document.getElementById('pulido-queue-container');
-        const list = document.getElementById('pulido-queue-list');
-        const responsable = document.getElementById('responsable-pulido-input')?.value;
-
-        if (!responsable) {
-            if (container) container.style.display = 'none';
-            return;
-        }
-
-        try {
-            const res = await fetch(`/api/pulido/tareas_pendientes?responsable=${encodeURIComponent(responsable)}`);
-            const data = await res.json();
-
-            if (data.success && data.data?.tareas.length > 0) {
-                container.style.display = 'block';
-
-                // FILTRAR: Excluir la que ya está trabajando
-                const tareasFiltradas = data.data.tareas.filter(t => t.id_pulido !== this.sessionId);
-                
-                if (tareasFiltradas.length === 0) {
-                    container.style.display = 'none';
-                    return;
-                }
-
-                // Estilo compacto con scroll (Restaurado)
-                list.style.maxHeight = '250px';
-                list.style.overflowY = 'auto';
-                list.style.paddingRight = '5px';
-
-                list.innerHTML = tareasFiltradas.map(t => {
-                    const isPausada = t.estado === 'PAUSADO_COLA';
-                    return `
-                        <div class="card mb-2 border-start border-4 ${isPausada ? 'border-warning shadow-sm' : 'border-secondary'}" 
-                             style="background: #f8f9fa;">
-                            <div class="card-body p-2 d-flex justify-content-between align-items-center">
-                                <div style="flex: 1;">
-                                    <span class="fw-bold d-block text-dark" style="font-size: 0.8rem;">${t.codigo}</span>
-                                    <small class="text-muted" style="font-size: 0.65rem;">
-                                        OP: ${t.orden_produccion || 'N/A'} | ${isPausada ? '<b class="text-warning">PAUSADA</b>' : 'PENDIENTE'}
-                                    </small>
-                                </div>
-                                <button class="btn btn-sm ${isPausada ? 'btn-warning' : 'btn-outline-primary'} py-1 px-2" 
-                                        style="font-size: 0.7rem;"
-                                        onclick="ModuloPulido.seleccionarTareaRecuperada('${t.id_pulido}')">
-                                    <i class="fas ${isPausada ? 'fa-play' : 'fa-hand-pointer'}"></i> Retomar
-                                </button>
-                            </div>
-                        </div>
-                    `;
-                }).join('');
-            } else {
-                if (container) container.style.display = 'none';
-            }
-        } catch (e) {
-            console.error("[Pulido] Error al cargar cola:", e);
-        }
-    },
-
     seleccionarTareaRecuperada: async function(idPulido) {
         const responsable = document.getElementById('responsable-pulido-input')?.value;
         
@@ -1081,9 +1022,24 @@ const ModuloPulido = {
             const data = await res.json();
 
             if (data.success && data.data?.tareas.length > 0) {
+                // Excluir la tarea ya cargada como activa en pantalla -- si no,
+                // se duplica a sí misma en su propia lista de "cola" (pasa
+                // cuando session_active carga como actual una tarea que está
+                // en PAUSADO/PAUSADO_COLA en vez de TRABAJANDO).
+                const tareasFiltradas = data.data.tareas.filter(t => t.id_pulido !== this.sessionId);
+
+                if (tareasFiltradas.length === 0) {
+                    if (container) container.style.display = 'none';
+                    return;
+                }
+
                 container.style.display = 'block';
-                list.innerHTML = data.data.tareas.map(t => {
-                    const isPausada = t.estado === 'PAUSADO_COLA';
+                list.innerHTML = tareasFiltradas.map(t => {
+                    // PAUSADO simple (botón "Pausar" genérico) cuenta como
+                    // pausada igual que PAUSADO_COLA (swap) -- antes solo se
+                    // resaltaba PAUSADO_COLA, dejando las PAUSADO simples con
+                    // etiqueta "PENDIENTE" (incidente Laura 2026-09-17).
+                    const isPausada = t.estado === 'PAUSADO' || t.estado === 'PAUSADO_COLA';
                     return `
                         <div class="card mb-2 border-start border-4 ${isPausada ? 'border-warning shadow-sm' : 'border-secondary'}">
                             <div class="card-body p-2 d-flex justify-content-between align-items-center">
@@ -1093,8 +1049,8 @@ const ModuloPulido = {
                                         OP: ${t.orden_produccion || 'N/A'} | ${isPausada ? '<b class="text-warning">PAUSADA</b>' : 'PENDIENTE'}
                                     </small>
                                 </div>
-                                <button class="btn btn-sm ${isPausada ? 'btn-warning' : 'btn-outline-primary'}" 
-                                        onclick="ModuloPulido.seleccionarTareaRecuperada(${JSON.stringify(t).replace(/"/g, '&quot;')})">
+                                <button class="btn btn-sm ${isPausada ? 'btn-warning' : 'btn-outline-primary'}"
+                                        onclick="ModuloPulido.seleccionarTareaRecuperada('${t.id_pulido}')">
                                     <i class="fas ${isPausada ? 'fa-play' : 'fa-hand-pointer'}"></i> Retomar
                                 </button>
                             </div>

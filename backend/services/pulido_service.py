@@ -111,6 +111,14 @@ PULIDO_SESSION_TTL_HOURS = 14
 
 ESTADOS_SESION_ACTIVA_GC = ['TRABAJANDO', 'EN_PROCESO', 'PAUSADO']
 
+# Estados que una operaria debe poder ver y retomar ella misma desde su propia
+# tablet en "Trabajos en cola" -- antes solo incluía PENDIENTE/PAUSADO_COLA,
+# dejando invisibles (solo visibles/reanudables desde el panel de admin) las
+# tareas que quedaron en PAUSADO simple por el botón genérico "Pausar" en vez
+# del flujo de swap/cola. Ver incidente Laura Lizeth Vargas R. 2026-09-17:
+# el 9672 quedó en PAUSADO y no aparecía en su cola, solo en supervisión.
+ESTADOS_TAREA_RECUPERABLE_OPERARIA = ['PENDIENTE', 'PAUSADO', 'PAUSADO_COLA']
+
 
 def _num(v, cast=float):
     """Convierte un valor numérico de forma segura."""
@@ -367,6 +375,33 @@ class PulidoService:
                 'almacen_destino': s.almacen_destino or 'P. TERMINADO',
             })
         return resultado
+
+    @staticmethod
+    def listar_tareas_pendientes(responsable):
+        """
+        Tareas de UNA operaria que puede ver y retomar desde su propia tablet
+        en el widget "Trabajos en cola" (PENDIENTE/PAUSADO/PAUSADO_COLA --
+        ver ESTADOS_TAREA_RECUPERABLE_OPERARIA). Antes excluía PAUSADO simple,
+        lo que dejaba tareas pausadas con el botón genérico "Pausar" invisibles
+        para la propia operaria (solo el panel de admin las mostraba).
+        """
+        try:
+            tareas = ProduccionPulido.query.filter(
+                ProduccionPulido.responsable == responsable,
+                ProduccionPulido.estado.in_(ESTADOS_TAREA_RECUPERABLE_OPERARIA)
+            ).order_by(ProduccionPulido.id.desc()).all()
+
+            return [{
+                "id_pulido": t.id_pulido,
+                "codigo": t.codigo,
+                "lote": t.lote,
+                "orden_produccion": t.orden_produccion,
+                "estado": t.estado
+            } for t in tareas]
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"❌ Error en PulidoService.listar_tareas_pendientes: {e}")
+            raise
 
     @staticmethod
     def _es_responsable_ignorado(nombre: str) -> bool:

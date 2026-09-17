@@ -436,20 +436,8 @@ def get_pulido_tareas_pendientes():
         if not responsable:
             return api_error("Falta responsable", status_code=400)
 
-        tareas = ProduccionPulido.query.filter(
-            ProduccionPulido.responsable == responsable,
-            ProduccionPulido.estado.in_(['PENDIENTE', 'PAUSADO_COLA'])
-        ).order_by(ProduccionPulido.id.desc()).all()
-
-        return api_success(data={
-            "tareas": [{
-                "id_pulido": t.id_pulido,
-                "codigo": t.codigo,
-                "lote": t.lote,
-                "orden_produccion": t.orden_produccion,
-                "estado": t.estado
-            } for t in tareas]
-        })
+        tareas = PulidoService.listar_tareas_pendientes(responsable)
+        return api_success(data={"tareas": tareas})
     except Exception as e:
         return api_error(str(e), status_code=500)
 
