@@ -6,7 +6,8 @@
 // applySidebarVisibility/applyPermissions.
 const FRIMETALS_ADMIN_PAGES = [
     'inventario', 'almacen', 'historial', 'metals-pedidos',
-    'pedidos', 'asistencia', 'metals-dashboard', 'metals-produccion', 'facturacion'
+    'pedidos', 'asistencia', 'metals-dashboard', 'metals-produccion', 'facturacion',
+    'cartera'
 ];
 
 const AuthModule = {
