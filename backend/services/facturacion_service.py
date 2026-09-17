@@ -8,6 +8,7 @@ from datetime import datetime
 import pandas as pd
 from sqlalchemy import or_, text
 from backend.core.sql_database import db
+from backend.config.settings import Empresa
 from backend.models.sql_models import Producto, Pedido, AppConfig
 from backend.utils.formatters import normalizar_codigo, limpiar_identificacion_tercero
 from backend.services.pedidos_service import ESTADOS_INMUTABLES_PEDIDO, ESTADOS_SENSIBLES_PEDIDO
@@ -384,7 +385,7 @@ class FacturacionService:
 
             # Resolución Dinámica del Vendedor — consulta directa a db_usuarios
             vendedor_db = str(item.vendedor or '').strip()
-            v_id = '900315300'  # Fallback: NIT Friparts (sólo último recurso)
+            v_id = Empresa.NIT_WO_DEFECTO  # Fallback: NIT de esta empresa en WO (sólo último recurso)
             if vendedor_db:
                 try:
                     row_user = db.session.execute(
@@ -408,7 +409,7 @@ class FacturacionService:
 
             row = {col: "" for col in columnas_wo}
             row.update({
-                'Encab: Empresa': 'FRIPARTS SAS', 'Encab: Tipo Documento': 'PED', 'Encab: Prefijo': 'PED',
+                'Encab: Empresa': Empresa.RAZON_SOCIAL_WO, 'Encab: Tipo Documento': 'PED', 'Encab: Prefijo': 'PED',
                 'Encab: Documento Número': doc_nro,
                 'Encab: Fecha': item.fecha.strftime('%d/%m/%Y') if item.fecha else datetime.now().strftime('%d/%m/%Y'),
                 'Encab: Tercero Interno': v_id, 'Encab: Tercero Externo': nit_limpio,
@@ -532,7 +533,7 @@ class FacturacionService:
             nit_limpio = limpiar_identificacion_tercero(nit_raw)
 
             vendedor_db = str(item.vendedor or '').strip()
-            v_id = '900315300'  # Fallback: NIT Friparts, mismo criterio que procesar_datos_wo
+            v_id = Empresa.NIT_WO_DEFECTO  # Fallback: NIT de esta empresa en WO, mismo criterio que procesar_datos_wo
             if vendedor_db:
                 try:
                     row_user = db.session.execute(
@@ -550,7 +551,7 @@ class FacturacionService:
 
             row = {col: "" for col in COLUMNAS_WO_EXPORTACION}
             row.update({
-                'Encab: Empresa': 'FRIPARTS SAS', 'Encab: Tipo Documento': 'PED', 'Encab: Prefijo': 'PED',
+                'Encab: Empresa': Empresa.RAZON_SOCIAL_WO, 'Encab: Tipo Documento': 'PED', 'Encab: Prefijo': 'PED',
                 'Encab: Documento Número': doc_nro,
                 'Encab: Fecha': fecha_str,
                 'Encab: Tercero Interno': v_id, 'Encab: Tercero Externo': nit_limpio,

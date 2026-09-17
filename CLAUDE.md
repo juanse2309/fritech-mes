@@ -64,6 +64,19 @@ los clientes" — son dos pasos distintos en este proyecto.
    datos borde (caracteres especiales, nulos, duplicados) antes de darlo
    por listo para producción — no basta con que compile o con un caso feliz
    único.
+5. **No confiar en el tipo de columna que dice el modelo de SQLAlchemy.**
+   Cuando un cambio empieza a persistir de verdad un campo que antes era un
+   no-op silencioso (el backend lo aceptaba del payload pero nunca lo
+   guardaba), verificar el tipo real de esa columna en producción
+   (`information_schema.columns`) antes de asumir que coincide con
+   `db.Column(...)`. `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` no valida
+   tipo si la columna ya existe — si alguna vez se creó mal (incluso por
+   fuera de este repo, a mano), la migración se queda callada y el ORM
+   sigue leyendo/escribiendo como si todo estuviera bien. Ver incidente
+   2026-09-16: `db_pedidos.no_disponible` era `TEXT` en vez de `BOOLEAN` en
+   FriParts; `bool("false")` da `True` en Python (cualquier string no vacío
+   es truthy), así que cada pedido nuevo se leía con sus líneas marcadas
+   "no disponible" sin que nadie las tocara.
 
 ## Postura esperada: nada de complacencia
 

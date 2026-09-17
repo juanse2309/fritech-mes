@@ -95,6 +95,22 @@ class Empresa:
     # estándar en vez de buscar una tabla metals_productos que no existe ahí.
     CATALOGO_METALS_LEGACY = os.getenv('EMPRESA_CATALOGO_METALS_LEGACY', 'true').lower() == 'true'
 
+    # Nombre EXACTO del tercero de esta empresa tal como está registrado en
+    # su World Office ("Encab: Empresa" en los archivos planos de
+    # exportación de Facturación -- ver FacturacionService.procesar_datos_wo
+    # / generar_dataframe_exportacion). WO es estricto con el string exacto:
+    # 'FRIPARTS S.A.S' (con puntos) fue rechazado por el migrador real de WO,
+    # solo pasó 'FRIPARTS SAS' (prueba 2026-08-26, ver wo_templates.py) --
+    # nunca inventar este valor para un cliente nuevo, confirmarlo contra su
+    # WO real antes de desplegar.
+    RAZON_SOCIAL_WO = os.getenv('EMPRESA_RAZON_SOCIAL_WO', 'FRIPARTS SAS')
+    # NIT de esta empresa usado como tercero (interno/externo) por defecto
+    # en esos mismos archivos, cuando no se puede resolver el vendedor/
+    # cliente real de la fila. Igual que arriba, es el NIT tal como está
+    # registrado en el World Office de cada cliente -- confirmar antes de
+    # desplegar, no asumir.
+    NIT_WO_DEFECTO = os.getenv('EMPRESA_NIT_WO_DEFECTO', '900315300')
+
 
 class Almacenes:
     """Nombres de almacenes estandarizados."""
