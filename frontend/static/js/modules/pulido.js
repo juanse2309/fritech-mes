@@ -679,6 +679,24 @@ const ModuloPulido = {
         if (this.timerInterval) clearInterval(this.timerInterval);
         this.timerInterval = null;
 
+        // Blindaje tablet compartida (hallazgo 2026-09-17): limpiar el estado
+        // de sesión EN MEMORIA de la operaria anterior antes de preguntarle
+        // al servidor por la nueva -- si el fetch de verificarTrabajoActivo()
+        // fallara por completo (tablet sin señal justo en el momento del
+        // cambio), este.sesionActiva ya no queda pegado en `true` de la
+        // persona anterior. Sin este reset, cargarEstadoLocal() (que ahora
+        // solo corre como fallback cuando sesionActiva sigue en false, ver
+        // ese método) se saltaría por error y la nueva operaria vería en
+        // pantalla la sesión de la anterior en vez de la suya propia o de
+        // una pantalla en blanco.
+        this.sesionActiva = false;
+        this.enPausa = false;
+        this.pausaTime = null;
+        this.startTime = null;
+        this.sessionId = null;
+        this.totalPausaMs = 0;
+        this.tiempoAcumuladoMs = 0;
+
         this.cargarCacheUI();
         await this.verificarTrabajoActivo();
         this.cargarEstadoLocal();
