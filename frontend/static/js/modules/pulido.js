@@ -239,6 +239,18 @@ const ModuloPulido = {
     },
 
     cargarEstadoLocal: function() {
+        // Fallback SOLO si verificarTrabajoActivo() (la fuente de verdad,
+        // SQL) no encontró ya una sesión activa -- si la encontró, ESA es
+        // la verdad y no debe pisarse con una foto vieja de localStorage.
+        // hallazgo 2026-09-17: se llamaba siempre después de
+        // verificarTrabajoActivo() sin este guard, así que cualquier
+        // corrección real que el servidor acabara de traer (p.ej. una
+        // pausa/reanudación hecha desde el panel de admin, o una que se
+        // perdió en la respuesta pero sí llegó al servidor) quedaba
+        // deshecha un instante después por el estado local desactualizado
+        // de ESTA tablet.
+        if (this.sesionActiva) return;
+
         const raw = localStorage.getItem(this.getStateKey());
         if (!raw) return;
         try {
@@ -306,6 +318,8 @@ const ModuloPulido = {
                     document.getElementById('pulido-pausa-msg').style.display = 'block';
                 }
                 this.timerInterval = setInterval(() => this.actualizarTimer(), 1000);
+                // Pintar de inmediato (ver mismo fix en continuarUIActiva).
+                this.actualizarTimer();
             }
             if (estado.sesionesEnPausa && estado.sesionesEnPausa.length > 0) {
                 this.sesionesEnPausa = estado.sesionesEnPausa;
@@ -472,6 +486,10 @@ const ModuloPulido = {
                 // Convertir acumulado de segundos a ms para el timer local
                 this.totalPausaMs = (session.tiempo_pausa_acumulado || 0) * 1000;
                 this.enPausa = (session.estado === 'PAUSADO');
+                // Ancla para congelar el timer en pantalla mientras dura la
+                // pausa (ver actualizarTimer) -- el backend ya la manda en
+                // session_active, solo faltaba leerla aquí.
+                this.pausaTime = (this.enPausa && session.hora_pausa) ? new Date(session.hora_pausa) : null;
 
                 // Poblar UI
                 const rInput = document.getElementById('responsable-pulido-input');
@@ -703,6 +721,11 @@ const ModuloPulido = {
 
         if (this.timerInterval) clearInterval(this.timerInterval);
         this.timerInterval = setInterval(() => this.actualizarTimer(), 1000);
+        // Pintar de inmediato en vez de esperar el primer tick del
+        // intervalo (1s) -- importante justo al recuperar una sesión
+        // pausada, para que el tiempo correcto se vea desde el primer
+        // instante y no parezca que "se borró".
+        this.actualizarTimer();
         this.guardarEstadoLocal();
         this.mostrarFotoProducto();
     },
@@ -810,15 +833,27 @@ const ModuloPulido = {
     },
 
     actualizarTimer: function () {
-        if (this.enPausa) return;
-
         // BLINDAJE: Si startTime es nulo/inválido, mostrar 00:00:00 estático
         if (!this.startTime || isNaN(this.startTime.getTime())) {
             document.getElementById('pulido-main-timer').innerText = '00:00:00';
             return;
         }
-        
-        const now = new Date();
+
+        // Mientras está en pausa, el tiempo transcurrido se congela en el
+        // instante en que empezó ESTA pausa (this.pausaTime) -- si
+        // usáramos la hora actual, el reloj seguiría avanzando en pantalla
+        // aunque el servidor todavía no sume esta pausa a totalPausaMs
+        // (eso solo pasa al reanudar). hallazgo 2026-09-17: antes esta
+        // función hacía "if (this.enPausa) return" ANTES de pintar nada,
+        // así que al recuperar una sesión ya pausada (recarga de página,
+        // reingresar al módulo, tablet que recupera sesión) el timer
+        // nunca llegaba a pintarse ni una sola vez -- se quedaba en el
+        // "00:00:00" de fábrica del HTML aunque el dato real (visible en
+        // el panel de supervisión, que lee directo de SQL) fuera correcto.
+        // Solo al reanudar (enPausa pasa a false) el siguiente tick volvía
+        // a calcular y aparecía el tiempo real, dando la sensación de que
+        // "se había borrado".
+        const now = (this.enPausa && this.pausaTime) ? this.pausaTime : new Date();
         const diffMs = (now - this.startTime - (this.totalPausaMs || 0)) + (this.tiempoAcumuladoMs || 0);
         
         // Protección contra valores negativos (por drift de reloj)
@@ -859,9 +894,20 @@ const ModuloPulido = {
         throw ultimoError;
     },
 
-    pausarCiclo: async function () {
+    // opts.silencioso: usado por prepararReporteFinal() para la pausa
+    // automática previa al reporte -- esa pausa es puramente cosmética
+    // (congelar el cronómetro para el cálculo del tiempo), guardarReportePro()
+    // no depende en absoluto de que haya tenido éxito. Antes, si fallaba
+    // (wifi de planta), este mismo catch mostraba el Swal de error ENCIMA
+    // del modal de reporte recién abierto, bloqueándolo con su backdrop y
+    // dando la falsa impresión de que "no dejó reportar" (hallazgo
+    // 2026-09-17). En modo silencioso se sigue resincronizando con el
+    // servidor igual, solo se omite el aviso que asusta/interrumpe.
+    pausarCiclo: async function (opts = {}) {
+        const silencioso = !!opts.silencioso;
         const btn = document.getElementById('btn-pausar-pulido');
-        const horaPausa = new Date().toLocaleTimeString('es-CO', {
+        const momentoPausa = new Date();
+        const horaPausa = momentoPausa.toLocaleTimeString('es-CO', {
             timeZone: 'America/Bogota',
             hour12: false,
             hour: '2-digit',
@@ -870,12 +916,13 @@ const ModuloPulido = {
         const estabaEnPausa = this.enPausa;
         const idSesion = this.sessionId;
 
-        mostrarLoading(true, estabaEnPausa ? 'Reanudando...' : 'Pausando...');
+        if (!silencioso) mostrarLoading(true, estabaEnPausa ? 'Reanudando...' : 'Pausando...');
         try {
             if (!this.enPausa) {
                 console.log(`⏸️ [Pulido] Pausando a las ${horaPausa}...`);
                 await this._fetchConReintentos('/api/pulido/pausar', { id_pulido: idSesion, hora_pausa: horaPausa });
                 this.enPausa = true;
+                this.pausaTime = momentoPausa; // Ancla para congelar el timer (ver actualizarTimer)
                 btn.innerHTML = '<i class="fas fa-play me-2"></i> Reanudar';
                 btn.className = 'btn btn-info btn-lg p-3 shadow';
                 document.getElementById('pulido-pausa-msg').style.display = 'block';
@@ -883,11 +930,13 @@ const ModuloPulido = {
                 console.log(`▶️ [Pulido] Reanudando a las ${horaPausa}...`);
                 const data = await this._fetchConReintentos('/api/pulido/reanudar', { id_pulido: idSesion, hora_reanudar: horaPausa });
                 this.enPausa = false;
+                this.pausaTime = null;
                 this.totalPausaMs = (data.data?.acumulado || 0) * 1000;
                 btn.innerHTML = '<i class="fas fa-pause me-2"></i> Pausar';
                 btn.className = 'btn btn-warning btn-lg p-3 shadow';
                 document.getElementById('pulido-pausa-msg').style.display = 'none';
             }
+            this.actualizarTimer();
             this.guardarEstadoLocal();
         } catch (error) {
             console.error('❌ [Pulido] Error en pausarCiclo:', error);
@@ -898,13 +947,17 @@ const ModuloPulido = {
             // vuelve a preguntar al servidor cuál es la verdad y se refleja
             // eso, no lo que el botón mostraba antes del intento.
             await this.verificarTrabajoActivo(idSesion);
-            Swal.fire({
-                icon: 'warning',
-                title: 'No se pudo confirmar el cambio',
-                text: 'La conexión falló varias veces. Ya se revisó con el servidor cuál es el estado real y la pantalla se actualizó a eso -- revisa el botón antes de volver a intentar.'
-            });
+            if (!silencioso) {
+                Swal.fire({
+                    icon: 'warning',
+                    title: 'No se pudo confirmar el cambio',
+                    text: 'La conexión falló varias veces. Ya se revisó con el servidor cuál es el estado real y la pantalla se actualizó a eso -- revisa el botón antes de volver a intentar.'
+                });
+            } else {
+                console.warn('[Pulido] Auto-pausa previa al reporte falló tras varios intentos; se sincronizó el estado real con el servidor en silencio -- esto NO impide guardar el reporte.');
+            }
         } finally {
-            mostrarLoading(false);
+            if (!silencioso) mostrarLoading(false);
         }
     },
 
@@ -1077,6 +1130,7 @@ const ModuloPulido = {
         this.totalPausaMs = 0;
         this.tiempoAcumuladoMs = 0;
         this.enPausa = false;
+        this.pausaTime = null;
 
         document.getElementById('pulido-idle-msg').style.display = 'block';
         document.getElementById('pulido-active-msg').style.display = 'none';
@@ -1122,7 +1176,7 @@ const ModuloPulido = {
         // DETENER CRONÓMETRO INMEDIATAMENTE PARA EXACTITUD (Bug Fix)
         if (this.sesionActiva && !this.enPausa) {
             console.log("⏱️ [Pulido] Deteniendo cronómetro para reporte final...");
-            this.pausarCiclo();
+            this.pausarCiclo({ silencioso: true });
         }
 
         const now = new Date();
@@ -2170,6 +2224,7 @@ const ModuloPulido = {
         this.totalPausaMs = 0;
         this.tiempoAcumuladoMs = 0;
         this.enPausa = false;
+        this.pausaTime = null;
 
         document.getElementById('pulido-active-msg').style.display = 'none';
         document.getElementById('pulido-idle-msg').style.display = 'block';
