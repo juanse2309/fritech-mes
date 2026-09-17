@@ -481,6 +481,119 @@ class FacturacionService:
         return df, items_con_exito, ids_omitidos
 
     @staticmethod
+    def reimprimir_pedidos_exportados(ids_filter):
+        """
+        Regenera el archivo WO (plantilla nacional, 57 columnas) para
+        pedidos que YA están en EXPORTADO_WO -- recuperación cuando el
+        archivo original se perdió o nunca se subió a World Office
+        (confirmado caso a caso por el usuario, 2026-09-17: PED-1005/
+        PED-1009 en Frimetals nunca llegaron a WO).
+
+        SOLO LECTURA, a propósito -- no muta el pedido:
+        - NO reasigna wo_consecutivo/id_pedido (reutiliza el que el pedido
+          YA tiene grabado desde su exportación original).
+        - NO vuelve a aplicar el Auto-Sanado de precios de
+          procesar_datos_wo (el pedido ya está cerrado para efectos de WO;
+          corregir el precio ahora no tendría a quién avisarle).
+        - NO cambia `estado` ni hace commit.
+
+        Exige exactamente lo contrario que procesar_datos_wo: aquí el
+        pedido DEBE estar en EXPORTADO_WO, porque el propósito es
+        reimprimir un documento ya generado, no crear uno nuevo. Nunca usar
+        esto para exportar un pedido por primera vez.
+
+        :param ids_filter: lista de id_pedido a reimprimir (obligatorio,
+            no soporta "todos los pendientes" -- eso es procesar_datos_wo).
+        :return: (df, ids_omitidos) -- ids_omitidos son los pedidos
+            solicitados que no están en EXPORTADO_WO (o no existen).
+        """
+        if not ids_filter:
+            raise ValueError("Se requiere al menos un id_pedido para reimprimir")
+
+        query = db.session.query(Pedido, Producto.precio).select_from(Pedido).outerjoin(
+            Producto,
+            or_(
+                Pedido.id_codigo == Producto.id_codigo,
+                Pedido.id_codigo == Producto.codigo_sistema
+            )
+        ).filter(
+            Pedido.id_pedido.in_(ids_filter),
+            Pedido.estado == 'EXPORTADO_WO',
+            Pedido.es_exportacion.isnot(True),
+        )
+        results = query.order_by(Pedido.id_pedido.asc()).all()
+
+        ids_encontrados = {str(r[0].id_pedido) for r in results}
+        ids_omitidos = sorted({str(i) for i in ids_filter} - ids_encontrados)
+
+        if not results:
+            return pd.DataFrame(), ids_omitidos
+
+        try:
+            res_clientes = db.session.execute(text(
+                "SELECT nombre, identificacion FROM db_clientes "
+                "ORDER BY (id_direccion_wo IS NOT NULL), id"
+            )).mappings().all()
+            mapa_clientes = {str(c['nombre']).strip().upper(): str(c['identificacion']).strip() for c in res_clientes}
+        except Exception:
+            mapa_clientes = {}
+
+        columnas_wo = COLUMNAS_WO_NACIONAL
+        rows_finales = []
+
+        for item, _precio_maestro in results:
+            doc_nro = item.wo_consecutivo or item.id_pedido
+
+            nit_raw = mapa_clientes.get(str(item.cliente or '').upper(), item.nit or '')
+            nit_limpio = limpiar_identificacion_tercero(nit_raw)
+
+            f_pag = str(item.forma_de_pago or 'Contado').replace('é', 'e').replace('á', 'a').replace('í', 'i').replace('ó', 'o')
+
+            vendedor_db = str(item.vendedor or '').strip()
+            v_id = Empresa.NIT_WO_DEFECTO
+            if vendedor_db:
+                try:
+                    row_user = db.session.execute(
+                        text("SELECT cedula FROM db_usuarios "
+                             "WHERE UPPER(TRIM(nombre_completo)) = UPPER(TRIM(:nombre))"),
+                        {"nombre": vendedor_db}
+                    ).first()
+                    if row_user and row_user[0]:
+                        v_id = str(row_user[0]).strip()
+                except Exception as ue:
+                    logger.warning(f"[WO-REIMPRIMIR] No se pudo resolver cédula para '{vendedor_db}': {ue}")
+
+            try:
+                d_val = str(item.descuento or '0').replace('%', '').strip()
+                desc = float(d_val) / 100.0 if d_val else 0.0
+            except Exception:
+                desc = 0.0
+
+            fecha_str = item.fecha.strftime('%d/%m/%Y') if item.fecha else ''
+            cant = float(item.cantidad or 0)
+            precio = float(item.precio_unitario or 0)
+
+            row = {col: "" for col in columnas_wo}
+            row.update({
+                'Encab: Empresa': Empresa.RAZON_SOCIAL_WO, 'Encab: Tipo Documento': 'PED',
+                'Encab: Prefijo': Empresa.PREFIJO_DOCUMENTO_WO_PEDIDO,
+                'Encab: Documento Número': doc_nro,
+                'Encab: Fecha': fecha_str,
+                'Encab: Tercero Interno': v_id, 'Encab: Tercero Externo': nit_limpio,
+                'Encab: Nota': 'PEDIDO', 'Encab: FormaPago': f_pag,
+                'Encab: Fecha Entrega': fecha_str,
+                'Detalle: Producto': item.id_codigo, 'Detalle: Bodega': 'Principal', 'Detalle: UnidadDeMedida': 'Und.',
+                'Detalle: Cantidad': cant, 'Detalle: IVA': 0.19,
+                'Detalle: Valor Unitario': precio,
+                'Detalle: Descuento': desc,
+                'Detalle: Vencimiento': fecha_str,
+            })
+            rows_finales.append(row)
+
+        df = pd.DataFrame(rows_finales, columns=columnas_wo)
+        return df, ids_omitidos
+
+    @staticmethod
     def _forma_pago_exportacion_defecto():
         fila = db.session.get(AppConfig, 'wo_export.pedidos_formapago_defecto')
         if fila and fila.valor not in (None, ''):

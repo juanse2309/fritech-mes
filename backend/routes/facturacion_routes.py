@@ -142,6 +142,52 @@ def preview_world_office():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@facturacion_bp.route('/api/exportar/world-office/reimprimir', methods=['POST'])
+@require_role(ROL_ADMINS + ['JEFE ALMACEN', 'JEFE ALISTAMIENTO'])
+def reimprimir_pedidos_wo():
+    """
+    Regenera el archivo WO para pedidos que YA están en EXPORTADO_WO --
+    recuperación cuando el archivo original se perdió o nunca se subió a
+    World Office. Solo lectura (ver FacturacionService.reimprimir_pedidos_exportados):
+    no reasigna consecutivo ni cambia estado, así que no hay riesgo de
+    duplicar el documento en WO aunque se use varias veces sobre el mismo
+    pedido. Síncrono (no usa task_runner): es para 1-2 pedidos puntuales,
+    no para lotes grandes como el flujo normal de exportación.
+    """
+    data = request.get_json(silent=True) or {}
+    ids_filter = data.get('ids') or []
+
+    try:
+        df, ids_omitidos = FacturacionService.reimprimir_pedidos_exportados(ids_filter)
+
+        if df.empty:
+            db.session.rollback()
+            return jsonify({
+                'success': False,
+                'error': f'Ningún pedido en estado EXPORTADO_WO encontrado para: {", ".join(ids_filter)}'
+            }), 404
+
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='ImportarWO')
+        output.seek(0)
+
+        db.session.rollback()  # Defensivo: esta ruta es solo lectura, no debe dejar nada pendiente de commit
+
+        filename = f'PEDIDOS_WO_REIMPRESION_{datetime.now().strftime("%Y%m%d")}.xlsx'
+        from flask import send_file
+        return send_file(
+            output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True, download_name=filename
+        )
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error en reimprimir_pedidos_wo: {e}")
+        return jsonify({'success': False, 'error': 'Error interno regenerando el archivo.'}), 500
+
+
 # ====================================================================
 # PEDIDOS DE EXPORTACIÓN (plantilla WO "Otra Moneda TRM", distinta de la
 # nacional de arriba) — flujo separado a propósito para no arriesgar el de
