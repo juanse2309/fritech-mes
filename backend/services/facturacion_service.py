@@ -233,6 +233,49 @@ class FacturacionService:
         return {'mensaje': mensaje}
 
     @staticmethod
+    def listar_pedidos_exportables(es_exportacion=False):
+        """
+        Pedidos candidatos para exportar a WO -- cualquier estado que
+        procesar_datos_wo/generar_dataframe_exportacion aceptarían si se
+        seleccionan explícitamente (ver su docstring: con ids_filter solo
+        se bloquean ESTADOS_INMUTABLES_PEDIDO | ESTADOS_SENSIBLES_PEDIDO,
+        no se exige 'PENDIENTE').
+
+        Antes esta lista solo mostraba estado=='PENDIENTE' -- más estricto
+        que lo que el motor de exportación real permite. Un pedido ya en
+        'LISTO PARA DESPACHO' o 'EN ALISTAMIENTO' que seguía sin llegar a
+        WO quedaba invisible aquí (caso real 2026-09-17, Frimetals: PED-1004
+        listo para despacho el mismo día, solo se pudo exportar llamando
+        /api/exportar/world-office directo con ids_filter, a mano).
+
+        :return: lista de dicts agrupados por pedido (id/fecha/cliente/
+            vendedor/estado/items_count/total/items), orden fecha desc.
+        """
+        try:
+            estados_bloqueados = ESTADOS_INMUTABLES_PEDIDO | ESTADOS_SENSIBLES_PEDIDO
+            query = Pedido.query.filter(~Pedido.estado.in_(estados_bloqueados))
+            query = query.filter(Pedido.es_exportacion.is_(True) if es_exportacion else Pedido.es_exportacion.isnot(True))
+
+            agrupados = {}
+            for r in query.all():
+                id_ped = r.id_pedido
+                if id_ped not in agrupados:
+                    agrupados[id_ped] = {
+                        'id': id_ped, 'fecha': str(r.fecha), 'cliente': r.cliente,
+                        'vendedor': r.vendedor, 'estado': r.estado, 'items_count': 0, 'total': 0, 'items': []
+                    }
+                cant = float(r.cantidad or 0)
+                prec = float(r.precio_unitario or 0)
+                agrupados[id_ped]['items_count'] += 1
+                agrupados[id_ped]['total'] += (cant * prec)
+                agrupados[id_ped]['items'].append({'cod': r.id_codigo, 'cant': cant})
+
+            return sorted(agrupados.values(), key=lambda x: x['fecha'], reverse=True)
+        except Exception:
+            db.session.rollback()
+            raise
+
+    @staticmethod
     def procesar_datos_wo(ids_filter=None, consecutivo_inicial=None, incluir_auditoria=False):
         """
         Lógica centralizada: Genera Excel y Actualiza SQL simultáneamente con
@@ -409,7 +452,8 @@ class FacturacionService:
 
             row = {col: "" for col in columnas_wo}
             row.update({
-                'Encab: Empresa': Empresa.RAZON_SOCIAL_WO, 'Encab: Tipo Documento': 'PED', 'Encab: Prefijo': 'PED',
+                'Encab: Empresa': Empresa.RAZON_SOCIAL_WO, 'Encab: Tipo Documento': 'PED',
+                'Encab: Prefijo': Empresa.PREFIJO_DOCUMENTO_WO_PEDIDO,
                 'Encab: Documento Número': doc_nro,
                 'Encab: Fecha': item.fecha.strftime('%d/%m/%Y') if item.fecha else datetime.now().strftime('%d/%m/%Y'),
                 'Encab: Tercero Interno': v_id, 'Encab: Tercero Externo': nit_limpio,
@@ -551,7 +595,8 @@ class FacturacionService:
 
             row = {col: "" for col in COLUMNAS_WO_EXPORTACION}
             row.update({
-                'Encab: Empresa': Empresa.RAZON_SOCIAL_WO, 'Encab: Tipo Documento': 'PED', 'Encab: Prefijo': 'PED',
+                'Encab: Empresa': Empresa.RAZON_SOCIAL_WO, 'Encab: Tipo Documento': 'PED',
+                'Encab: Prefijo': Empresa.PREFIJO_DOCUMENTO_WO_PEDIDO,
                 'Encab: Documento Número': doc_nro,
                 'Encab: Fecha': fecha_str,
                 'Encab: Tercero Interno': v_id, 'Encab: Tercero Externo': nit_limpio,

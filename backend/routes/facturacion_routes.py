@@ -11,7 +11,6 @@ import tempfile
 from datetime import datetime
 import logging
 from backend.core.sql_database import db
-from backend.models.sql_models import Pedido, DbCostos
 
 facturacion_bp = Blueprint('facturacion_bp', __name__)
 logger = logging.getLogger(__name__)
@@ -20,25 +19,12 @@ logger = logging.getLogger(__name__)
 @facturacion_bp.route('/api/facturacion/pedidos-pendientes', methods=['GET'])
 @require_role(ROL_ADMINS + ['JEFE ALMACEN', 'JEFE ALISTAMIENTO'])
 def obtener_pedidos_pendientes():
-    """Obtiene pedidos PENDIENTES desde SQL."""
+    """Pedidos exportables a WO -- ver FacturacionService.listar_pedidos_exportables."""
     try:
-        pendientes = Pedido.query.filter(Pedido.estado == 'PENDIENTE').all()
-        agrupados = {}
-        for r in pendientes:
-            id_ped = r.id_pedido
-            if id_ped not in agrupados:
-                agrupados[id_ped] = {
-                    'id': id_ped, 'fecha': str(r.fecha), 'cliente': r.cliente,
-                    'vendedor': r.vendedor, 'items_count': 0, 'total': 0, 'items': []
-                }
-            cant = float(r.cantidad or 0); prec = float(r.precio_unitario or 0)
-            agrupados[id_ped]['items_count'] += 1
-            agrupados[id_ped]['total'] += (cant * prec)
-            agrupados[id_ped]['items'].append({'cod': r.id_codigo, 'cant': cant})
-            
-        resultado = sorted(agrupados.values(), key=lambda x: x['fecha'], reverse=True)
+        resultado = FacturacionService.listar_pedidos_exportables(es_exportacion=False)
         return jsonify({'success': True, 'pedidos': resultado})
     except Exception as e:
+        db.session.rollback()
         logger.error(f"Error en obtener_pedidos_pendientes SQL: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -169,25 +155,9 @@ def preview_world_office():
 @facturacion_bp.route('/api/facturacion/pedidos-pendientes-exportacion', methods=['GET'])
 @require_role(ROL_ADMINS + ['JEFE ALMACEN', 'JEFE ALISTAMIENTO'])
 def obtener_pedidos_pendientes_exportacion():
-    """Pedidos PENDIENTES marcados como exportación (misma agrupación que /pedidos-pendientes)."""
+    """Pedidos exportables marcados como exportación -- ver FacturacionService.listar_pedidos_exportables."""
     try:
-        pendientes = Pedido.query.filter(
-            Pedido.estado == 'PENDIENTE', Pedido.es_exportacion.is_(True)
-        ).all()
-        agrupados = {}
-        for r in pendientes:
-            id_ped = r.id_pedido
-            if id_ped not in agrupados:
-                agrupados[id_ped] = {
-                    'id': id_ped, 'fecha': str(r.fecha), 'cliente': r.cliente,
-                    'vendedor': r.vendedor, 'items_count': 0, 'total': 0, 'items': []
-                }
-            cant = float(r.cantidad or 0); prec = float(r.precio_unitario or 0)
-            agrupados[id_ped]['items_count'] += 1
-            agrupados[id_ped]['total'] += (cant * prec)
-            agrupados[id_ped]['items'].append({'cod': r.id_codigo, 'cant': cant})
-
-        resultado = sorted(agrupados.values(), key=lambda x: x['fecha'], reverse=True)
+        resultado = FacturacionService.listar_pedidos_exportables(es_exportacion=True)
         return jsonify({'success': True, 'pedidos': resultado})
     except Exception as e:
         logger.error(f"Error en obtener_pedidos_pendientes_exportacion: {e}")

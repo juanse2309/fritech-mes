@@ -111,6 +111,18 @@ class Empresa:
     # desplegar, no asumir.
     NIT_WO_DEFECTO = os.getenv('EMPRESA_NIT_WO_DEFECTO', '900315300')
 
+    # Prefijo de documento ('Encab: Prefijo') en los mismos archivos de
+    # exportación de pedidos a WO. World Office valida esto contra su propio
+    # catálogo de prefijos configurados POR EMPRESA -- si el prefijo 'PED'
+    # nunca se creó ahí para una empresa nueva (confirmado 2026-09-17: no
+    # existe para FRIMETALS SAS), la grilla de importación de WO lo muestra
+    # en blanco aunque el archivo sí lo traiga. Default = lo que ya usa
+    # FriParts (donde 'PED' sí está configurado en su WO); una instancia
+    # nueva sin ese prefijo creado en su WO define
+    # EMPRESA_PREFIJO_DOCUMENTO_WO_PEDIDO="" (vacío) hasta que lo cree, o al
+    # valor real que le corresponda si usa otro.
+    PREFIJO_DOCUMENTO_WO_PEDIDO = os.getenv('EMPRESA_PREFIJO_DOCUMENTO_WO_PEDIDO', 'PED')
+
 
 class Almacenes:
     """Nombres de almacenes estandarizados."""
