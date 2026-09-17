@@ -5,15 +5,24 @@ Capa de servicio exclusiva para analítica de Pulido.
 Toda la lógica de negocio (volumen físico, eficiencia, deduplicación, normalización)
 reside aquí. Las rutas solo invocan métodos y retornan JSON.
 """
+import json
 import logging
 import os
 import tempfile
+import uuid
 from datetime import date, datetime, timedelta
 from backend.core.sql_database import db
-from backend.models.sql_models import ProduccionPulido, AppConfig
-from backend.utils.formatters import sql_normalizar_codigo_fr
+from backend.models.sql_models import (
+    ProduccionPulido, AppConfig, PncInyeccion, PncPulido, PncEnsamble,
+    BujeRevuelto, Producto, PulidoOverride
+)
+from backend.utils.formatters import (
+    sql_normalizar_codigo_fr, preservar_o_normalizar_prefijo,
+    normalizar_codigo, normalizar_codigo_sin_prefijo
+)
 from backend.utils.time_utils import get_colombia_time
 from backend.services.audit_service import TurnoInvalidoException
+from backend.services.pausas_service import PausasService
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
@@ -490,7 +499,7 @@ class PulidoService:
         siembra el estado) ni si el líder se mantiene igual.
 
         Se llama después de cada guardado de un reporte (ver
-        pulido_routes._ejecutar_persistencia_pulido y reporte_masivo);
+        PulidoService.ejecutar_persistencia_pulido y reporte_masivo);
         el llamador debe envolverla en try/except -- un fallo acá nunca
         debe tumbar el guardado real del reporte.
         """
@@ -1048,6 +1057,518 @@ class PulidoService:
         except Exception as e:
             db.session.rollback()
             logger.error(f"[PulidoService.validar_saldo_op] {e}")
+
+    # ---------------------------------------------------------------
+    # PAUSAR / REANUDAR e persistencia del reporte -- movidos desde
+    # pulido_routes.py (violaban la separación de capas: lógica de negocio
+    # y SQL directo no deben vivir en un archivo de rutas). Relocalización
+    # pura, sin cambios de comportamiento -- ver plan de refactor 2026-09-17.
+    # ---------------------------------------------------------------
+
+    @staticmethod
+    def pausar(id_pulido, hora_pausa=None):
+        """
+        Registra el inicio de la pausa en el servidor. Retorna el registro
+        actualizado, o None si id_pulido no existe (la ruta traduce eso a 404).
+        """
+        registro = ProduccionPulido.query.filter_by(id_pulido=id_pulido).first()
+        if not registro:
+            return None
+        try:
+            # Blindaje: Forzar timestamp de Colombia (Bogotá)
+            ahora = get_colombia_time()
+
+            # Si el frontend envía una hora específica, intentar usarla para la parte de tiempo
+            if hora_pausa and ':' in hora_pausa:
+                try:
+                    h, m = hora_pausa.split(':')
+                    ahora = ahora.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
+                except: pass
+
+            registro.estado = 'PAUSADO'
+            registro.hora_pausa = ahora.replace(tzinfo=None) # Guardar como naive Bogota
+            db.session.add(registro)
+            db.session.commit()
+
+            logger.debug(f" [PAUSA] Actividad {id_pulido} pausada a las {registro.hora_pausa}")
+            return registro
+        except Exception:
+            db.session.rollback()
+            raise
+
+    @staticmethod
+    def reanudar(id_pulido, hora_reanudar=None):
+        """
+        Calcula el tiempo de la pausa y lo suma al acumulador. Retorna el
+        registro actualizado, o None si id_pulido no existe (la ruta traduce eso a 404).
+        """
+        registro = ProduccionPulido.query.filter_by(id_pulido=id_pulido).first()
+        if not registro:
+            return None
+        try:
+            if registro.hora_pausa:
+                ahora = get_colombia_time()
+
+                # Si el frontend envía una hora específica de reanudación
+                if hora_reanudar and ':' in hora_reanudar:
+                    try:
+                        h, m = hora_reanudar.split(':')
+                        ahora = ahora.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
+                    except: pass
+
+                ahora_naive = ahora.replace(tzinfo=None)
+                diferencia = ahora_naive - registro.hora_pausa
+                segundos_pausa = int(diferencia.total_seconds())
+                if segundos_pausa < 0: segundos_pausa = 0 # Evitar pausas negativas por drift
+
+                registro.tiempo_pausa_acumulado = (registro.tiempo_pausa_acumulado or 0) + segundos_pausa
+
+            registro.estado = 'TRABAJANDO'
+            registro.hora_pausa = None
+            db.session.commit()
+            return registro
+        except Exception:
+            db.session.rollback()
+            raise
+
+    @staticmethod
+    def _es_prueba(orden_produccion, id_pulido):
+        """Sandbox de pruebas (9999/PRUEBA) -- factorizado para poder evaluarlo
+        también contra el estado ANTERIOR de un registro al revertir su efecto
+        en inventario (ver ejecutar_persistencia_pulido)."""
+        return (
+            '9999' in str(orden_produccion or '').upper() or 'PRUEBA' in str(orden_produccion or '').upper()
+            or '9999' in str(id_pulido or '').upper() or 'PRUEBA' in str(id_pulido or '').upper()
+        )
+
+    @staticmethod
+    def ejecutar_persistencia_pulido(registro, data, responsable, ahora,
+                                      forzar_bloqueo=False, motivo_forzado=None, autorizado_por=None):
+        """
+        Encapsula la persistencia y la lógica de negocio compleja del guardado
+        de un reporte de Pulido. Llamada por pulido_routes.registrar_pulido()
+        y pulido_routes.autorizar_pendiente_pulido().
+
+        forzar_bloqueo/motivo_forzado/autorizado_por: bypass de los bloqueos duros
+        de fecha y cantidad (plan 2026-08-28) -- el guard de que solo un ADMIN
+        puede forzar vive en la ruta (registrar_pulido), no aquí. Cuando se
+        fuerza y algún bloqueo SÍ se habría disparado, queda una fila en
+        PulidoOverride (el "reporte para restar puntos" que pidió la jefa).
+        """
+        id_pulido = data.get('id_pulido')
+
+        # Snapshot del efecto en inventario YA APLICADO por este registro, ANTES
+        # de sobreescribir sus campos -- necesario para revertirlo abajo. Sin
+        # esto, editar un reporte ya guardado (o que la tablet lo reenvíe por un
+        # reintento de red) vuelve a descontar por_pulir y a sumar p_terminado
+        # una segunda vez para la MISMA producción física (hallazgo 2026-08-27,
+        # el "flujo directo" no era idempotente: solo Inyección tenía el guard
+        # `estado == 'CERRADO'`, Pulido nunca lo tuvo).
+        efecto_anterior = None
+        if registro:
+            rev_anterior = sum(
+                float(r.cantidad or 0) for r in
+                db.session.query(BujeRevuelto).filter_by(id_pulido=registro.id_pulido).all()
+            )
+            efecto_anterior = {
+                'codigo': registro.codigo,
+                'buenas': float(registro.cantidad_real or 0),
+                'total': (
+                    float(registro.cantidad_real or 0) + float(registro.pnc_inyeccion or 0)
+                    + float(registro.pnc_pulido or 0) + rev_anterior
+                ),
+                'es_prueba': PulidoService._es_prueba(registro.orden_produccion, registro.id_pulido),
+            }
+
+        if not registro:
+            # Si no existe (o fue borrado de la DB), crear uno nuevo para evitar Error 500
+            if id_pulido:
+                logger.warning(f" [RECOVERY] id_pulido {id_pulido} no encontrado en DB. Creando nuevo registro.")
+            registro = ProduccionPulido(id_pulido=id_pulido or f"PUL-{ahora.strftime('%Y%m%d%H%M%S')}", fecha_registro=ahora)
+            db.session.add(registro)
+
+        if not getattr(registro, 'fecha_registro', None):
+            registro.fecha_registro = ahora
+
+        # Mapeo y Estandarización
+        registro.fecha = datetime.strptime(data.get('fecha_inicio', ahora.strftime('%Y-%m-%d')), '%Y-%m-%d').date()
+        # ── Blindaje: se preserva el prefijo que traiga (MT-, CAR-, FR-) y los
+        #    números puros quedan intactos; nunca se les antepone una división ──
+        registro.codigo = preservar_o_normalizar_prefijo(data.get('codigo_producto'))
+        registro.responsable = responsable
+        registro.cantidad_real = float(data.get('cantidad_real') or 0)
+        registro.pnc_inyeccion = int(data.get('pnc_inyeccion') or 0)
+        registro.pnc_pulido = int(data.get('pnc_pulido') or 0)
+        registro.criterio_pnc_inyeccion = data.get('criterio_pnc_inyeccion')
+        registro.criterio_pnc_pulido = data.get('criterio_pnc_pulido')
+        registro.orden_produccion = data.get('orden_produccion') or 'SIN OP'
+        registro.observaciones = data.get('observaciones', '')
+        registro.estado = data.get('estado', 'FINALIZADO')
+        registro.departamento = 'Pulido'  # Estandarización exigida
+        registro.lote = data.get('lote') or 'SIN LOTE'
+        registro.cantidad_recibida = float(data.get('cantidad_recibida') or 0)
+        registro.almacen_destino = data.get('almacen_destino', 'P. TERMINADO')
+
+        # Bloqueo duro: cantidad_real=0 solo es válido en un checkpoint
+        # intermedio (pausa/cola, sesión recién iniciada) -- ver
+        # ESTADOS_PULIDO_EN_PROGRESO. Cualquier cierre de ciclo con 0 piezas
+        # buenas se rechaza antes de tocar inventario/consistencia.
+        PulidoService.validar_cantidad_real(registro.cantidad_real, registro.estado)
+
+        # Validación de consistencia (Bujes Buenos + PNC <= Total)
+        total_reportado = registro.cantidad_real + registro.pnc_inyeccion + registro.pnc_pulido
+        if registro.cantidad_recibida < total_reportado:
+            logger.warning(f" [VALIDATION] Inconsistencia en {registro.id_pulido}: Total {registro.cantidad_recibida} < Suma {total_reportado}")
+
+        # ── Bloqueos duros (plan 2026-08-28): fecha same-day + cantidad <= inyectado ──
+        # Se evalúan SIN forzar primero para saber si el forzado realmente saltó
+        # algo (y así no dejar filas de override "fantasma" cuando forzar_bloqueo
+        # viene en true pero nada se habría bloqueado). Si no se fuerza, la
+        # excepción sube tal cual y ejecutar_persistencia_pulido no persiste nada
+        # (todavía no hubo commit).
+        overrides_aplicados = []
+        try:
+            PulidoService.validar_bloqueo_fecha(registro.fecha, forzado=False)
+        except FechaPulidoInvalidaException as exc_fecha:
+            if not forzar_bloqueo:
+                raise
+            overrides_aplicados.append(('FECHA', str(exc_fecha)))
+
+        try:
+            PulidoService.validar_saldo_op(
+                registro.orden_produccion, registro.codigo, total_reportado,
+                id_pulido_actual=registro.id_pulido, forzado=False
+            )
+        except CantidadExcedeInyectadoException as exc_cant:
+            if not forzar_bloqueo:
+                raise
+            overrides_aplicados.append(('CANTIDAD', str(exc_cant)))
+
+        # Manejo de Horas y Cálculos de Tiempo
+        if data.get('hora_inicio'):
+            h_h, h_m = data['hora_inicio'].split(':')
+            dt_ini = ahora.replace(hour=int(h_h), minute=int(h_m), second=0, microsecond=0)
+            registro.hora_inicio = dt_ini.replace(tzinfo=None)
+
+        if data.get('hora_fin'):
+            h_h, h_m = data['hora_fin'].split(':')
+            dt_fin = ahora.replace(hour=int(h_h), minute=int(h_m), second=0, microsecond=0)
+            registro.hora_fin = dt_fin.replace(tzinfo=None)
+
+        # Cálculo de Métricas
+        if data.get('hora_inicio') and data.get('hora_fin'):
+            hi_h, hi_m = data['hora_inicio'].split(':')
+            hf_h, hf_m = data['hora_fin'].split(':')
+
+            t_ini = ahora.replace(hour=int(hi_h), minute=int(hi_m), second=0, microsecond=0)
+            t_fin = ahora.replace(hour=int(hf_h), minute=int(hf_m), second=0, microsecond=0)
+
+            diff = t_fin - t_ini
+            segundos_segmento = int(diff.total_seconds())
+            if segundos_segmento < 0: segundos_segmento += 86400
+
+            # Barrera arquitectónica: rechaza duraciones imposibles (típico error de
+            # digitar 3:20 en vez de 13:20) antes de persistir nada.
+            PulidoService.validar_duracion_turno(segundos_segmento)
+
+            tiempo_acumulado_ms = float(data.get('tiempo_acumulado_ms') or 0)
+            segundos_totales = segundos_segmento + int(tiempo_acumulado_ms / 1000)
+
+            # Autoridad matemática del descuento por pausas programadas: PausasService.
+            # El frontend solo aporta hora_inicio/hora_fin crudas (Zero Trust) — el
+            # cálculo de intersección de intervalos vive exclusivamente en la capa de servicio.
+            descuento_info = PausasService.calcular_descuento_pausas_programadas(t_ini, t_fin)
+            segundos_descuento = descuento_info['segundos_descuento']
+            if segundos_descuento > 0:
+                segundos_totales = max(0, segundos_totales - segundos_descuento)
+
+            registro.duracion_segundos = segundos_totales
+            registro.tiempo_total_minutos = float(round(segundos_totales / 60.0, 2))
+
+            cant = float(registro.cantidad_real or 0)
+            if cant > 0:
+                registro.segundos_por_unidad = float(round(segundos_totales / cant, 2))
+            else:
+                registro.segundos_por_unidad = 0.0
+
+            if descuento_info['detalle']:
+                payload = {
+                    "descuento_programado_min": round(segundos_descuento / 60.0, 2),
+                    "detalle": descuento_info['detalle']
+                }
+                tag = f"[AUTO_BREAK]{json.dumps(payload, ensure_ascii=False)}[/AUTO_BREAK]"
+                obs = (registro.observaciones or "")
+                if "[AUTO_BREAK]" in obs and "[/AUTO_BREAK]" in obs:
+                    pre = obs.split("[AUTO_BREAK]")[0]
+                    post = obs.split("[/AUTO_BREAK]")[-1]
+                    registro.observaciones = (pre + tag + post).strip()
+                else:
+                    registro.observaciones = (obs + "\n" + tag).strip() if obs else tag
+
+            logger.debug(f" [TIME-DEBUG] {registro.id_pulido} -> Seg: {segundos_segmento}s, Acum: {tiempo_acumulado_ms}ms, DescProgramado: {segundos_descuento}s, Total: {segundos_totales}s")
+        else:
+            registro.duracion_segundos = 0
+            registro.tiempo_total_minutos = 0.0
+            registro.segundos_por_unidad = 0.0
+
+        db.session.flush()
+
+        # Sincronización de PNC Detallado
+        # registro.codigo puede llegar con o sin prefijo 'FR-' (según lo reportó la
+        # planta), pero las tablas de PNC se indexan sin prefijo para no fragmentar
+        # 'FR-1005' / '1005' en filas distintas — se sanitiza aquí explícitamente
+        # antes de tocar el ORM. Los prefijos de otras divisiones (MT-, CAR-) se
+        # conservan: normalizar_codigo_sin_prefijo() solo quita 'FR-'.
+        codigo_pnc = normalizar_codigo_sin_prefijo(registro.codigo)
+        # Operaria a la que se atribuye toda merma de pulido de este turno. Se
+        # resuelve una sola vez: si no hay persona identificable, el reporte no
+        # debe persistirse con la merma huérfana.
+        operaria_responsable = PulidoService.resolver_operaria_responsable(registro)
+        # Dueño de la merma de INYECCIÓN detectada en pulido: el operario que fabricó
+        # las piezas, rastreado por el lote/OP de origen. Puede ser None si el lote
+        # padre no es rastreable — en ese caso la fila queda sin atribuir a propósito.
+        operario_inyeccion_origen = PulidoService.resolver_operario_inyeccion_origen(registro)
+        pnc_detail = data.get('pnc_detail', [])
+        db.session.query(PncInyeccion).filter_by(id_inyeccion=registro.id_pulido).delete()
+        db.session.query(PncPulido).filter_by(id_pulido=registro.id_pulido).delete()
+        db.session.query(PncEnsamble).filter_by(id_ensamble=registro.id_pulido).delete()
+
+        if pnc_detail:
+            for pnc_item in pnc_detail:
+                proc = pnc_item.get('proceso', '').upper()
+                cant = float(pnc_item.get('cantidad') or 0)
+                crit = pnc_item.get('criterio', '')
+                if cant <= 0: continue
+
+                if proc == 'INYECCION':
+                    db.session.add(PncInyeccion(
+                        id_pnc_inyeccion=uuid.uuid4().hex[:8],
+                        id_inyeccion=registro.id_pulido,
+                        id_codigo=codigo_pnc,
+                        cantidad=cant,
+                        criterio=crit,
+                        responsable=operario_inyeccion_origen
+                    ))
+                elif proc == 'PULIDO':
+                    db.session.add(PncPulido(
+                        id_pnc_pulido=uuid.uuid4().hex[:8],
+                        id_pulido=registro.id_pulido,
+                        codigo=codigo_pnc,
+                        cantidad=cant,
+                        criterio=crit,
+                        responsable=operaria_responsable
+                    ))
+                elif proc == 'ENSAMBLE':
+                    db.session.add(PncEnsamble(
+                        id_pnc_ensamble=uuid.uuid4().hex[:8],
+                        id_ensamble=registro.id_pulido,
+                        id_codigo=codigo_pnc,
+                        cantidad=cant,
+                        criterio=crit
+                    ))
+        else:
+            # Fix de Sincronización: si el payload trae el agregado (pnc_pulido/
+            # pnc_inyeccion) SIN el desglose itemizado, la tabla hija no puede
+            # quedar huérfana de la maestra — o el Dashboard (que lee de
+            # db_pnc_pulido/db_pnc_inyeccion) subcuenta este PNC en silencio.
+            # Se reutiliza el criterio de texto libre del header si vino, y si
+            # no, se cae a un genérico explícito para no perder trazabilidad.
+            if registro.pnc_pulido and registro.pnc_pulido > 0:
+                db.session.add(PncPulido(
+                    id_pnc_pulido=uuid.uuid4().hex[:8],
+                    id_pulido=registro.id_pulido,
+                    codigo=codigo_pnc,
+                    cantidad=registro.pnc_pulido,
+                    criterio=registro.criterio_pnc_pulido or 'Diferencia/Sobrante (Sin Desglose)',
+                    responsable=operaria_responsable
+                ))
+            if registro.pnc_inyeccion and registro.pnc_inyeccion > 0:
+                db.session.add(PncInyeccion(
+                    id_pnc_inyeccion=uuid.uuid4().hex[:8],
+                    id_inyeccion=registro.id_pulido,
+                    id_codigo=codigo_pnc,
+                    cantidad=registro.pnc_inyeccion,
+                    criterio=registro.criterio_pnc_inyeccion or 'Diferencia/Sobrante (Sin Desglose)',
+                    responsable=operario_inyeccion_origen
+                ))
+
+        db.session.flush()
+
+        # Manejo de Bujes Revueltos
+        revueltos_list = data.get('revueltos', [])
+        logger.debug(f" [REVUELTOS-DEBUG] Payload recibido: {revueltos_list}")
+
+        db.session.query(BujeRevuelto).filter_by(id_pulido=registro.id_pulido).delete()
+
+        for rev_item in revueltos_list:
+            cod_rev = preservar_o_normalizar_prefijo(rev_item.get('id_codigo'))
+            cant_rev = float(rev_item.get('cantidad') or 0)
+
+            if cant_rev <= 0 or not cod_rev:
+                continue
+
+            db.session.add(BujeRevuelto(
+                id_bujes_revueltos=uuid.uuid4().hex[:8],
+                id_pulido=registro.id_pulido,
+                id_codigo=cod_rev,
+                cantidad=cant_rev,
+                codigo_ensamble=cod_rev,
+                responsable=registro.responsable
+            ))
+
+        # Distribución FIFO OP/Pedidos
+        op_actual = registro.orden_produccion
+        if op_actual and str(op_actual).strip() != 'SIN OP':
+            from backend.models.sql_models import DistribucionOpPedidos
+            op_limpia = str(registro.orden_produccion or '').strip()
+            codigo_limpio = normalizar_codigo(registro.codigo)
+
+            cubetas = db.session.query(DistribucionOpPedidos).filter(
+                DistribucionOpPedidos.op_world_office == op_limpia,
+                DistribucionOpPedidos.codigo_producto == codigo_limpio
+            ).order_by(DistribucionOpPedidos.id_distribucion.asc()).all()
+
+            piezas_por_repartir = float(registro.cantidad_real or 0)
+
+            if not cubetas and piezas_por_repartir > 0:
+                pedido_asoc = db.session.query(DistribucionOpPedidos.id_pedido).filter(
+                    DistribucionOpPedidos.op_world_office == op_limpia
+                ).first()
+                id_pedido_final = pedido_asoc[0] if (pedido_asoc and pedido_asoc[0]) else f"PED-IMPREVISTO-{op_limpia}"
+
+                nueva_cubeta = DistribucionOpPedidos(
+                    op_world_office=op_limpia,
+                    id_pedido=id_pedido_final,
+                    codigo_producto=codigo_limpio,
+                    cant_requerida=piezas_por_repartir,
+                    cant_inyectada=piezas_por_repartir,
+                    cant_pulida=piezas_por_repartir,
+                    cant_ensamblada=0,
+                    cant_alistada=0
+                )
+                db.session.add(nueva_cubeta)
+                db.session.flush()
+                cubetas = [nueva_cubeta]
+                piezas_por_repartir = 0.0
+
+            for cubeta in cubetas:
+                if piezas_por_repartir <= 0:
+                    break
+                falta = max(0, (cubeta.cant_requerida or 0) - (cubeta.cant_pulida or 0))
+                if falta > 0:
+                    if piezas_por_repartir >= falta:
+                        cubeta.cant_pulida = (cubeta.cant_pulida or 0) + falta
+                        piezas_por_repartir -= falta
+                    else:
+                        cubeta.cant_pulida = (cubeta.cant_pulida or 0) + piezas_por_repartir
+                        piezas_por_repartir = 0
+
+        # Flujo directo: Actualizar inventario final en db_productos sin usar TrazabilidadLote
+        try:
+            buenas = float(registro.cantidad_real or 0)
+            pnc_total = float(registro.pnc_inyeccion or 0) + float(registro.pnc_pulido or 0)
+            rev_total = sum(float(r.get('cantidad', 0)) for r in revueltos_list)
+            total_descuento_por_pulir = buenas + pnc_total + rev_total
+
+            es_prueba = PulidoService._es_prueba(registro.orden_produccion, registro.id_pulido)
+
+            # Revertir el efecto que este MISMO registro ya haya aplicado antes
+            # de aplicar el nuevo -- así una edición o un reenvío queda neto en
+            # el delta real, en vez de descontar por_pulir dos veces (ver
+            # snapshot al inicio de la función). Si el código cambió entre
+            # ediciones, esto también corrige el producto correcto: revierte
+            # sobre el código viejo y aplica sobre el nuevo.
+            if efecto_anterior and not efecto_anterior['es_prueba']:
+                codigo_ant = preservar_o_normalizar_prefijo(efecto_anterior['codigo'])
+                # Match por codigo_sistema O id_codigo (no solo codigo_sistema):
+                # el frontend de Pulido (normalizarCodigo) le quita el prefijo
+                # 'FR-' antes de enviar -- preservar_o_normalizar_prefijo NO se
+                # lo vuelve a poner a propósito (no debe inventar división), así
+                # que un código FR- puro llega aquí como '9308', no 'FR-9308'.
+                # db_productos.codigo_sistema SIEMPRE lleva el prefijo real, pero
+                # id_codigo guarda la referencia tal cual -- sin este OR, CADA
+                # reporte de Pulido de una referencia FR- (la división por
+                # defecto, la mayoría del catálogo) no encontraba el producto y
+                # el descuento de inventario se saltaba en silencio (hallazgo
+                # 2026-08-31, probado en vivo en ambos modos Satélite y PRO).
+                prod_anterior = db.session.query(Producto).filter(
+                    (Producto.codigo_sistema == codigo_ant) | (Producto.id_codigo == codigo_ant)
+                ).first()
+                if prod_anterior:
+                    prod_anterior.por_pulir = float(prod_anterior.por_pulir or 0) + efecto_anterior['total']
+                    p_terminado_revertido = float(prod_anterior.p_terminado or 0) - efecto_anterior['buenas']
+                    if p_terminado_revertido < 0:
+                        logger.warning(
+                            f"⚠️ [PULIDO-INVENTARIO] Al editar {registro.id_pulido}, revertir P.Terminado de "
+                            f"{efecto_anterior['codigo']} lo manda a negativo ({p_terminado_revertido}) -- "
+                            f"probablemente ya se consumió aguas abajo (empaque/despacho). Se deja en 0."
+                        )
+                    prod_anterior.p_terminado = max(0, p_terminado_revertido)
+
+            if not es_prueba and total_descuento_por_pulir > 0:
+                codigo_actual = preservar_o_normalizar_prefijo(registro.codigo)
+                prod_wip = db.session.query(Producto).filter(
+                    (Producto.codigo_sistema == codigo_actual) | (Producto.id_codigo == codigo_actual)
+                ).first()
+                if prod_wip:
+                    # Restar de por_pulir, evitando negativos de forma preventiva
+                    prod_wip.por_pulir = max(0, float(prod_wip.por_pulir or 0) - total_descuento_por_pulir)
+                    # Sumar las buenas a p_terminado
+                    prod_wip.p_terminado = float(prod_wip.p_terminado or 0) + buenas
+            else:
+                logger.debug(f"🧪 [SANDBOX] Lote de prueba {registro.id_pulido}. Se ignoró impacto en inventario.")
+        except Exception as err:
+            logger.error(f"Error actualizando inventario directo en pulido: {err}")
+
+        # ── Sincronización con la Programación de Pulido (plan 2026-09-02) ──
+        # Silenciosa a propósito: un fallo acá jamás debe tumbar el guardado
+        # real del reporte, solo dejar la tarjeta programada desincronizada
+        # (se puede corregir a mano desde el panel de Programación).
+        # Import local (no arriba del archivo): programacion_pulido_service.py
+        # importa PulidoService a nivel de módulo, así que un import en
+        # sentido contrario arriba crearía un ciclo de imports.
+        try:
+            from backend.services.programacion_pulido_service import ProgramacionPulidoService
+            id_programacion_pulido = data.get('id_programacion_pulido')
+            if id_programacion_pulido:
+                ProgramacionPulidoService.vincular_inicio(id_programacion_pulido, registro.id_pulido)
+            ProgramacionPulidoService.marcar_finalizada_si_corresponde(registro.id_pulido, registro.estado)
+        except Exception as err_prog:
+            logger.warning(
+                f"⚠️ [PROGRAMACION-PULIDO] No se pudo sincronizar la tarjeta programada de {registro.id_pulido}: {err_prog}"
+            )
+
+        for tipo_bloqueo, detalle_bloqueo in overrides_aplicados:
+            db.session.add(PulidoOverride(
+                id_pulido=registro.id_pulido,
+                tipo=tipo_bloqueo,
+                operaria=responsable,
+                autorizado_por=autorizado_por,
+                motivo=motivo_forzado,
+                detalle=detalle_bloqueo,
+            ))
+            logger.warning(
+                f"⚠️ [PULIDO-OVERRIDE] Bloqueo {tipo_bloqueo} de {registro.id_pulido} "
+                f"forzado por {autorizado_por!r} (operaria {responsable!r}). Motivo: {motivo_forzado!r}."
+            )
+
+        db.session.commit()
+
+        # ── Notificación de cambio de líder en Mix de Producción (Pulido) ──
+        # Silenciosa a propósito, igual que la sync de Programación arriba: un
+        # fallo acá no debe tumbar el guardado real del reporte.
+        try:
+            PulidoService.detectar_y_notificar_cambio_lider()
+        except Exception as err_lider:
+            logger.warning(f"⚠️ [PULIDO-LIDER] No se pudo evaluar cambio de líder: {err_lider}")
+
+        return {
+            "success": True,
+            "message": "Registro de pulido sincronizado (Flujo directo)",
+            "id_pulido": registro.id_pulido,
+            "upsert": "UPDATE" if id_pulido and registro.id else "INSERT",
+            "overrides_aplicados": [t for t, _ in overrides_aplicados],
+        }
 
     # ---------------------------------------------------------------
     # HELPERS

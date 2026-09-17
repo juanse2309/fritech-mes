@@ -448,7 +448,7 @@ class ProgramacionPulidoService:
 
     # ------------------------------------------------------------------
     # ENGANCHE CON LA EJECUCIÓN REAL (llamado desde
-    # pulido_routes._ejecutar_persistencia_pulido) -- es la ejecución la
+    # PulidoService.ejecutar_persistencia_pulido) -- es la ejecución la
     # que le avisa a la programación que arrancó/terminó, nunca al revés.
     # Ambos métodos son deliberadamente silenciosos ante datos raros (item
     # ya cerrado, id inválido, etc.): un fallo de sincronización de la
