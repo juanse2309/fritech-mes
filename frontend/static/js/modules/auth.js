@@ -6,7 +6,7 @@
 // applySidebarVisibility/applyPermissions.
 const FRIMETALS_ADMIN_PAGES = [
     'inventario', 'almacen', 'historial', 'metals-pedidos',
-    'pedidos', 'asistencia', 'metals-dashboard', 'metals-produccion'
+    'pedidos', 'asistencia', 'metals-dashboard', 'metals-produccion', 'facturacion'
 ];
 
 const AuthModule = {
@@ -791,7 +791,7 @@ const AuthModule = {
             } else {
                 let forbiddenInMetals = [
                     'dashboard', 'inyeccion', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc',
-                    'facturacion', 'mezcla', 'reportes', 'auditoria-op',
+                    'mezcla', 'reportes', 'auditoria-op',
                     'admin-clientes', 'portal-cliente'
                 ];
                 allowedPages = allowedPages.filter(p => !forbiddenInMetals.includes(p));
@@ -925,7 +925,7 @@ const AuthModule = {
                 // pedidos y almacen son COMPARTIDOS (los usan STAFF/COMERCIAL FRIMETALS)
                 let forbiddenInMetals = [
                     'dashboard', 'inyeccion', 'pulido', 'ensamble', 'empaque', 'exportacion-wo', 'pnc',
-                    'facturacion', 'mezcla', 'reportes', 'auditoria-op',
+                    'mezcla', 'reportes', 'auditoria-op',
                     'admin-clientes', 'portal-cliente'
                 ];
 
