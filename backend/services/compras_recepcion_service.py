@@ -380,6 +380,17 @@ class TransitoExternoService:
         return query.order_by(TransitoExternoOC.fecha_envio.desc()).all()
 
     @staticmethod
+    def por_lineas_recepcion(ids_linea_recepcion):
+        """Tránsito(s) que cuelgan de un conjunto de líneas de recepción --
+        usado por OrdenCompraService.timeline() para armar el paso de
+        Tránsito externo del panel de trazabilidad de una OC."""
+        if not ids_linea_recepcion:
+            return []
+        return TransitoExternoOC.query.filter(
+            TransitoExternoOC.id_linea_recepcion_oc.in_(ids_linea_recepcion)
+        ).order_by(TransitoExternoOC.fecha_envio.asc()).all()
+
+    @staticmethod
     def historial(id_transito):
         return HistorialTransitoExternoOC.query.filter_by(
             id_transito=id_transito

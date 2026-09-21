@@ -4702,6 +4702,103 @@ body:not(.logged-in) [id^="toggle-sidebar"] {
 }
 
 /* ============================================
+   PANEL DE TRAZABILIDAD -- Compras a Proveedores
+   Drawer lateral, distinto de .modal-overlay (centrado, angosto): esto
+   necesita más espacio vertical para una línea de tiempo con varios
+   pasos, cada uno expandible con su propio formulario inline.
+   ============================================ */
+.compras-tz-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 10500;
+    display: flex;
+    justify-content: flex-end;
+    animation: fadeIn 0.2s ease;
+}
+
+.compras-tz-panel {
+    width: 100%;
+    max-width: 520px;
+    height: 100%;
+    background: #fff;
+    box-shadow: -8px 0 30px rgba(0, 0, 0, 0.15);
+    display: flex;
+    flex-direction: column;
+    animation: comprasTzSlideIn 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes comprasTzSlideIn {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+}
+
+.compras-tz-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 18px 20px;
+    border-bottom: 1px solid #eee;
+    flex-shrink: 0;
+}
+
+.compras-tz-body {
+    padding: 18px 20px;
+    overflow-y: auto;
+    flex: 1 1 auto;
+}
+
+.compras-tz-step {
+    display: flex;
+    gap: 12px;
+}
+
+.compras-tz-step-rail {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex-shrink: 0;
+    width: 20px;
+}
+
+.compras-tz-step-rail i {
+    font-size: 18px;
+}
+
+.compras-tz-step-line {
+    width: 1px;
+    flex: 1;
+    background: #e0e0e0;
+    min-height: 20px;
+}
+
+.compras-tz-step-body {
+    flex: 1;
+    padding-bottom: 18px;
+    cursor: pointer;
+}
+
+.compras-tz-step-body.compras-tz-noclick {
+    cursor: default;
+}
+
+.compras-tz-step-detalle {
+    background: #f8f9fa;
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-top: 8px;
+}
+
+.compras-tz-step-detalle .form-control,
+.compras-tz-step-detalle .form-select {
+    font-size: 0.85rem;
+}
+
+/* ============================================
    ESTILOS MÓDULO FRIMETALS
    ============================================ */
 

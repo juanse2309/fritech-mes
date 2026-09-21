@@ -331,6 +331,64 @@ class OrdenCompraService:
         return resultado
 
     @staticmethod
+    def timeline(numero_oc):
+        """Todo el recorrido de una OC en una sola llamada: solicitud(es)
+        de origen -> OC -> recepciones -> tránsito externo -> factura.
+        Pensado para el panel de trazabilidad del frontend (plan
+        2026-09-21) -- sin esto el frontend tendría que armar la misma
+        historia pegándole a 4-5 endpoints sueltos."""
+        orden = OrdenCompraService.obtener_por_numero(numero_oc)
+        if not orden:
+            return None
+
+        from backend.services.compras_recepcion_service import (
+            RecepcionOCService, TransitoExternoService, _tolerancia_baja_recepcion,
+        )
+
+        tolerancia_baja = _tolerancia_baja_recepcion()
+        lineas = LineaOrdenCompra.query.filter_by(id_oc=orden.id).all()
+
+        ids_solicitudes = {l.id_solicitud for l in lineas if l.id_solicitud}
+        solicitudes_origen = (
+            SolicitudCompra.query.filter(SolicitudCompra.id.in_(ids_solicitudes)).all()
+            if ids_solicitudes else []
+        )
+
+        detalle_lineas = []
+        for linea in lineas:
+            recibido = db.session.query(
+                db.func.coalesce(db.func.sum(LineaRecepcionOC.cantidad_recibida), 0)
+            ).filter(LineaRecepcionOC.id_linea_oc == linea.id).scalar()
+            rechazado = db.session.query(
+                db.func.coalesce(db.func.sum(LineaRecepcionOC.cantidad_rechazada), 0)
+            ).filter(LineaRecepcionOC.id_linea_oc == linea.id).scalar()
+            recibido = float(recibido or 0)
+            rechazado = float(rechazado or 0)
+            pendiente = float(linea.cantidad_pedida) - recibido - rechazado
+            detalle_lineas.append({
+                'linea': linea,
+                'cantidad_recibida_acumulada': recibido,
+                'pendiente': pendiente,
+                'dentro_tolerancia_baja': 0 < pendiente <= tolerancia_baja and (recibido > 0 or rechazado > 0),
+            })
+
+        recepciones = RecepcionOCService.listar_recepciones(numero_oc)
+        ids_lineas_recepcion = [lr.id for _, lineas_r in recepciones for lr in lineas_r]
+        transitos_raw = TransitoExternoService.por_lineas_recepcion(ids_lineas_recepcion)
+        transitos = [(t, TransitoExternoService.historial(t.id)) for t in transitos_raw]
+
+        factura = FacturaCompraService.obtener(numero_oc)
+
+        return {
+            'orden': orden,
+            'solicitudes_origen': solicitudes_origen,
+            'lineas': detalle_lineas,
+            'recepciones': recepciones,
+            'transitos': transitos,
+            'factura': factura,
+        }
+
+    @staticmethod
     def anular(numero_oc, motivo, usuario):
         motivo = (motivo or '').strip()
         if not motivo:

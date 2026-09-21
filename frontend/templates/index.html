@@ -4074,9 +4074,14 @@
                 <div id="compras-tab-solicitud" class="compras-tab-content" style="display:none;">
                     <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
                         <h3 class="mb-0"><i class="fas fa-hand-paper"></i> Solicitudes</h3>
-                        <button type="button" class="btn btn-primary" onclick="ModuloCompras.abrirFormularioSolicitud()">
-                            <i class="fas fa-plus"></i> Señalar qué hace falta
-                        </button>
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="ModuloCompras.cargarMisSolicitudes()" title="Actualizar">
+                                <i class="fas fa-sync-alt"></i> Actualizar
+                            </button>
+                            <button type="button" class="btn btn-primary" onclick="ModuloCompras.abrirFormularioSolicitud()">
+                                <i class="fas fa-plus"></i> Señalar qué hace falta
+                            </button>
+                        </div>
                     </div>
                     <div id="compras-lista-solicitudes" class="cards-grid"><!-- JS: ModuloCompras.renderSolicitudes --></div>
                 </div>
@@ -4102,14 +4107,24 @@
                     <div id="compras-orden-sub-pendientes" class="compras-subtab-content">
                         <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
                             <span class="text-muted small">Marca las que vas a incluir en la orden (opcional) y crea la orden cuando quieras.</span>
-                            <button type="button" class="btn btn-primary" onclick="ModuloCompras.abrirFormularioOC()">
-                                <i class="fas fa-plus-circle"></i> Crear Orden de Compra
-                            </button>
+                            <div class="d-flex gap-2">
+                                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="ModuloCompras.cargarSolicitudesPendientes()" title="Actualizar">
+                                    <i class="fas fa-sync-alt"></i> Actualizar
+                                </button>
+                                <button type="button" class="btn btn-primary" onclick="ModuloCompras.abrirFormularioOC()">
+                                    <i class="fas fa-plus-circle"></i> Crear Orden de Compra
+                                </button>
+                            </div>
                         </div>
                         <div id="compras-lista-solicitudes-pendientes" class="cards-grid"><!-- JS --></div>
                     </div>
 
                     <div id="compras-orden-sub-listado" class="compras-subtab-content" style="display:none;">
+                        <div class="d-flex justify-content-end mb-2">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="ModuloCompras.cargarOrdenes()" title="Actualizar">
+                                <i class="fas fa-sync-alt"></i> Actualizar
+                            </button>
+                        </div>
                         <div id="compras-wo-export-estado" class="mb-2"><!-- JS: ModuloCompras.renderEstadoExportWO --></div>
                         <div id="compras-lista-ordenes" class="cards-grid-wide"><!-- JS: ModuloCompras.renderOrdenes --></div>
                     </div>
@@ -4137,15 +4152,50 @@
                     </ul>
 
                     <div id="compras-recepcion-sub-pendientes" class="compras-subtab-content">
+                        <div class="d-flex justify-content-end mb-2">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="ModuloCompras.cargarPendientesRecepcion()" title="Actualizar">
+                                <i class="fas fa-sync-alt"></i> Actualizar
+                            </button>
+                        </div>
                         <div id="compras-lista-recepcion" class="cards-grid-wide"><!-- JS: ModuloCompras.renderPendientesRecepcion --></div>
                     </div>
                     <div id="compras-recepcion-sub-transito" class="compras-subtab-content" style="display:none;">
+                        <div class="d-flex justify-content-end mb-2">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="ModuloCompras.cargarTransito()" title="Actualizar">
+                                <i class="fas fa-sync-alt"></i> Actualizar
+                            </button>
+                        </div>
                         <div id="compras-lista-transito" class="cards-grid"><!-- JS: ModuloCompras.renderTransito --></div>
                     </div>
                     <div id="compras-recepcion-sub-recibidas" class="compras-subtab-content" style="display:none;">
-                        <div class="text-muted small mb-2">Últimas OC que ya se recibieron por completo o se rechazaron -- salen de "Pendientes" pero quedan aquí para no perderles el rastro.</div>
+                        <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+                            <span class="text-muted small">Últimas OC que ya se recibieron por completo o se rechazaron -- salen de "Pendientes" pero quedan aquí para no perderles el rastro.</span>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="ModuloCompras.cargarRecibidas()" title="Actualizar">
+                                <i class="fas fa-sync-alt"></i> Actualizar
+                            </button>
+                        </div>
                         <div id="compras-lista-recibidas" class="cards-grid-wide"><!-- JS: ModuloCompras.renderRecibidas --></div>
                     </div>
+                </div>
+            </div>
+
+            <!-- ============================================================
+                 Panel de trazabilidad (plan 2026-09-21): línea de tiempo de
+                 una compra de punta a punta (Solicitud -> OC -> Recepción ->
+                 Tránsito -> Factura), sin importar desde cuál de las 3
+                 pestañas de arriba se abrió. Reemplaza los modales sueltos
+                 de Registrar recepción / Enviar a maquila / Cargar factura --
+                 esas acciones ahora viven inline dentro de cada paso. JS:
+                 ModuloCompras.abrirTrazabilidad / abrirTrazabilidadDesdeSolicitud. -->
+            <div id="compras-tz-overlay" class="compras-tz-overlay" style="display:none;" onclick="if(event.target===this) ModuloCompras.cerrarTrazabilidad()">
+                <div class="compras-tz-panel">
+                    <div class="compras-tz-header">
+                        <div id="compras-tz-titulo"><!-- JS --></div>
+                        <button type="button" class="btn-icon" onclick="ModuloCompras.cerrarTrazabilidad()" aria-label="Cerrar">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    <div id="compras-tz-body" class="compras-tz-body"><!-- JS: ModuloCompras.renderTrazabilidad --></div>
                 </div>
             </div>
         </div>

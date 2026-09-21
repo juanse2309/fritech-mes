@@ -403,6 +403,48 @@ def detalle_orden(numero_oc):
         return api_error("Error interno consultando la OC", status_code=500)
 
 
+@compras_bp.route('/api/compras/ordenes/<numero_oc>/timeline', methods=['GET'])
+@require_role(ROLES_COMPRAS_ADMIN + ['JEFE AUXILIAR INVENTARIO'])
+def timeline_orden(numero_oc):
+    """Trazabilidad completa de una OC para el panel del frontend (plan
+    2026-09-21): agrega solicitudes de origen, líneas, recepciones,
+    tránsito externo y factura en una sola respuesta. Mismo gate de rol
+    que detalle_orden -- no amplía quién puede ver qué, solo junta en un
+    viaje lo que ya se podía ver por separado."""
+    try:
+        datos = OrdenCompraService.timeline(numero_oc)
+        if not datos:
+            return api_error("OC no encontrada", status_code=404)
+        return api_success(data={
+            'orden': _ser_orden(datos['orden']),
+            'solicitudes_origen': [_ser_solicitud(s) for s in datos['solicitudes_origen']],
+            'lineas': [
+                _ser_linea_orden(d['linea'], extra={
+                    'cantidad_recibida_acumulada': d['cantidad_recibida_acumulada'],
+                    'pendiente': d['pendiente'],
+                    'dentro_tolerancia_baja': d['dentro_tolerancia_baja'],
+                })
+                for d in datos['lineas']
+            ],
+            'recepciones': [
+                {'recepcion': _ser_recepcion(r), 'lineas': [_ser_linea_recepcion(l) for l in lineas]}
+                for r, lineas in datos['recepciones']
+            ],
+            'transito': [
+                {'transito': _ser_transito(t), 'historial': [_ser_historial_transito(h) for h in hist]}
+                for t, hist in datos['transitos']
+            ],
+            'factura': (
+                {'factura': _ser_factura(datos['factura']['factura']),
+                 'lineas': [_ser_linea_factura(l) for l in datos['factura']['lineas']]}
+                if datos['factura'] else None
+            ),
+        })
+    except Exception as e:
+        logger.error(f"❌ Error consultando timeline de OC {numero_oc}: {e}")
+        return api_error("Error interno consultando la trazabilidad de la OC", status_code=500)
+
+
 @compras_bp.route('/api/compras/ordenes/<numero_oc>/anular', methods=['PATCH'])
 @require_role(ROLES_COMPRAS_ADMIN)
 def anular_orden(numero_oc):

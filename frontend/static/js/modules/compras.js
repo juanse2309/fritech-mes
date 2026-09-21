@@ -14,6 +14,7 @@ const ModuloCompras = {
     solicitudesSeleccionadas: new Set(),
     activeTab: null,
     lineasModalContador: 0,
+    misSolicitudesData: [],
 
     inicializar: async function () {
         console.log('🔧 [Compras] Inicializando módulo...');
@@ -23,6 +24,7 @@ const ModuloCompras = {
 
     desactivar: function () {
         this.solicitudesSeleccionadas.clear();
+        this.cerrarTrazabilidad();
     },
 
     // ------------------------------------------------------------------
@@ -277,7 +279,8 @@ const ModuloCompras = {
             // quien la pidió"). El botón "Cancelar" solo se muestra en las
             // propias -- ver renderSolicitudes.
             const data = await this._api('/api/compras/solicitudes');
-            this.renderSolicitudes(data || []);
+            this.misSolicitudesData = data || [];
+            this.renderSolicitudes(this.misSolicitudesData);
         } catch (e) {
             console.error('[Compras] Error cargando solicitudes:', e);
         }
@@ -300,7 +303,7 @@ const ModuloCompras = {
         const esAdmin = this._esAdmin(this._rolNormalizado());
         const borde = { PENDIENTE: 'border-start border-4 border-warning', EN_OC: 'border-start border-4 border-success', RECHAZADA: 'border-start border-4 border-danger', CANCELADA: 'border-start border-4 border-secondary' };
         cont.innerHTML = lista.map(s => `
-            <div class="card shadow-sm border-0 ${borde[s.estado] || ''} rounded-4 p-3">
+            <div class="card shadow-sm border-0 ${borde[s.estado] || ''} rounded-4 p-3" style="cursor:pointer;" onclick="ModuloCompras.abrirTrazabilidadDesdeSolicitud(${s.id})">
                 <div class="d-flex justify-content-between align-items-start">
                     <strong>${this._esc(s.item_descripcion)}</strong>
                     ${badgeEstado[s.estado] || s.estado}
@@ -313,7 +316,7 @@ const ModuloCompras = {
                 <div class="text-muted small mt-1"><i class="far fa-clock"></i> ${this._diasDesde(s.creado_en)} · ${new Date(s.creado_en).toLocaleDateString()}</div>
                 ${s.estado === 'EN_OC' ? `<div class="text-success small"><i class="fas fa-check-circle"></i> Ya se pidió: ${this._esc(s.id_oc_vinculada || '')}</div>` : ''}
                 ${s.estado === 'RECHAZADA' ? `<div class="text-danger small"><i class="fas fa-times-circle"></i> ${this._esc(s.motivo_rechazo || '')}</div>` : ''}
-                ${s.estado === 'PENDIENTE' && (s.solicitado_por === usuarioActual || esAdmin) ? `<button class="btn btn-sm btn-outline-secondary mt-2" onclick="ModuloCompras.cancelarSolicitud(${s.id})">Cancelar</button>` : ''}
+                ${s.estado === 'PENDIENTE' && (s.solicitado_por === usuarioActual || esAdmin) ? `<button class="btn btn-sm btn-outline-secondary mt-2" onclick="event.stopPropagation(); ModuloCompras.cancelarSolicitud(${s.id})">Cancelar</button>` : ''}
             </div>
         `).join('');
     },
@@ -675,7 +678,7 @@ const ModuloCompras = {
             ).join('');
 
             return `
-                <div class="card shadow-sm border-0 border-start border-4 ${bordeEstado[o.estado] || 'border-secondary'} rounded-4 p-3">
+                <div class="card shadow-sm border-0 border-start border-4 ${bordeEstado[o.estado] || 'border-secondary'} rounded-4 p-3" style="cursor:pointer;" onclick="ModuloCompras.abrirTrazabilidad('${this._esc(o.numero_oc)}')">
                     <div class="d-flex justify-content-between align-items-start">
                         <strong>${this._esc(o.numero_oc)}</strong>
                         <span class="badge ${badgeEstado[o.estado] || 'bg-secondary'}">${o.estado}</span>
@@ -685,10 +688,7 @@ const ModuloCompras = {
                     <div class="small fw-semibold mt-2">${lineas.length} línea(s)${total > 0 ? ' · <span class="text-success">$' + total.toLocaleString('es-CO') + '</span>' : ''}</div>
                     <div class="mt-1">${resumenLineas}</div>
                     <div class="mt-2 d-flex gap-1 flex-wrap">
-                        <button class="btn btn-sm btn-outline-primary" onclick="ModuloCompras.abrirCargarFactura('${this._esc(o.numero_oc)}')">
-                            <i class="fas fa-file-invoice-dollar"></i> Factura (FC)
-                        </button>
-                        <button class="btn btn-sm btn-outline-secondary" onclick="ModuloCompras.exportarOrdenWO('${this._esc(o.numero_oc)}')">
+                        <button class="btn btn-sm btn-outline-secondary" onclick="event.stopPropagation(); ModuloCompras.exportarOrdenWO('${this._esc(o.numero_oc)}')">
                             <i class="fas fa-file-export"></i> Exportar a WO
                         </button>
                     </div>
@@ -709,67 +709,39 @@ const ModuloCompras = {
             const data = await this._api('/api/wo/compras/exportar', {
                 method: 'POST', body: JSON.stringify({ numeros_oc: [numero_oc] }),
             });
-            Swal.fire({ icon: 'success', title: 'Exportación en proceso', text: `Tarea: ${data.task_id}`, timer: 2000, showConfirmButton: false });
+            Swal.fire({ title: 'Generando el archivo…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+            this._esperarTareaExportWO(data.task_id);
         } catch (e) {
             Swal.fire('No se pudo exportar', e.message, 'error');
         }
     },
 
-    abrirCargarFactura: async function (numero_oc) {
-        try {
-            const detalle = await this._api(`/api/compras/ordenes/${encodeURIComponent(numero_oc)}`);
-            const filasHtml = detalle.lineas.map(l => `
-                <div class="mb-2">
-                    <label class="form-label small">${this._esc(l.descripcion)} <span class="text-muted">(recibido: ${l.cantidad_recibida_acumulada})</span></label>
-                    <input type="number" step="0.01" class="form-control form-control-sm fc-linea-cantidad" data-id-linea="${l.id}" placeholder="Cantidad facturada">
-                </div>
-            `).join('');
-
-            const { value: formValues } = await Swal.fire({
-                title: `Cargar Factura (FC) — ${numero_oc}`,
-                html: `
-                    <div class="text-start">
-                        <div class="row g-2 mb-3">
-                            <div class="col-7">
-                                <label class="form-label small fw-bold">Número de factura</label>
-                                <input id="fc-numero" class="form-control" placeholder="Ej: FC-0001">
-                            </div>
-                            <div class="col-5">
-                                <label class="form-label small fw-bold">Fecha</label>
-                                <input id="fc-fecha" type="date" class="form-control">
-                            </div>
-                        </div>
-                        ${filasHtml}
-                    </div>
-                `,
-                focusConfirm: false,
-                showCancelButton: true,
-                preConfirm: () => {
-                    const lineas = Array.from(document.querySelectorAll('.fc-linea-cantidad'))
-                        .filter(i => i.value)
-                        .map(i => ({ id_linea_oc: parseInt(i.dataset.idLinea), cantidad_facturada: parseFloat(i.value) }));
-                    return {
-                        numero_factura: document.getElementById('fc-numero').value.trim(),
-                        fecha_factura: document.getElementById('fc-fecha').value,
-                        lineas,
-                    };
-                },
-            });
-
-            if (!formValues || !formValues.numero_factura || !formValues.lineas.length) return;
-
-            const factura = await this._api(`/api/compras/ordenes/${encodeURIComponent(numero_oc)}/factura`, {
-                method: 'POST', body: JSON.stringify(formValues),
-            });
-            const icono = factura.estado_conciliacion === 'COINCIDE' ? 'success' : 'warning';
-            Swal.fire(
-                factura.estado_conciliacion === 'COINCIDE' ? 'Factura conciliada' : 'Factura con discrepancia',
-                `Estado: ${factura.estado_conciliacion}`,
-                icono
-            );
-        } catch (e) {
-            Swal.fire('No se pudo cargar la factura', e.message, 'error');
+    // El archivo se genera en background (WoExportComprasService.generar_task) --
+    // faltaba este sondeo: antes el botón lanzaba la tarea y se quedaba ahí,
+    // sin avisar cuándo terminaba ni disparar la descarga. Mismo patrón que
+    // ModuloExportacionWO.esperarTarea (exportacion_wo.js) para OP.
+    _esperarTareaExportWO: function (taskId, intento = 0) {
+        clearTimeout(this._pollTimerExportWO);
+        if (intento > 60) {
+            Swal.fire('Está tardando demasiado', 'El archivo no terminó de generarse. Intenta de nuevo.', 'warning');
+            return;
         }
+        this._pollTimerExportWO = setTimeout(async () => {
+            try {
+                const estado = await this._api(`/api/tasks/status/${taskId}`);
+                if (estado.status === 'COMPLETED') {
+                    Swal.close();
+                    window.location.href = estado.download_url;
+                    await this.cargarOrdenes();   // refresca exportada_wo en las tarjetas
+                } else if (estado.status === 'FAILED') {
+                    Swal.fire('No se pudo generar', estado.error || 'Error desconocido', 'error');
+                } else {
+                    this._esperarTareaExportWO(taskId, intento + 1);
+                }
+            } catch (e) {
+                Swal.fire('No se pudo generar', e.message, 'error');
+            }
+        }, 1000);
     },
 
     // ==================================================================
@@ -813,7 +785,7 @@ const ModuloCompras = {
             const bordeEstado = o.estado === 'PARCIALMENTE_RECIBIDA' ? 'border-info' : 'border-warning';
             const badgeEstadoColor = o.estado === 'PARCIALMENTE_RECIBIDA' ? 'bg-info' : 'bg-warning text-dark';
             return `
-                <div class="card shadow-sm border-0 border-start border-4 ${bordeEstado} rounded-4 p-3">
+                <div class="card shadow-sm border-0 border-start border-4 ${bordeEstado} rounded-4 p-3" style="cursor:pointer;" onclick="ModuloCompras.abrirTrazabilidad('${this._esc(o.numero_oc)}', 'recepcion')">
                     <div class="d-flex justify-content-between align-items-start">
                         <strong>${this._esc(o.numero_oc)}</strong>
                         <span class="badge ${badgeEstadoColor}">${o.estado}</span>
@@ -821,14 +793,6 @@ const ModuloCompras = {
                     <div class="fw-semibold small"><i class="fas fa-truck-loading text-muted"></i> ${this._esc(o.proveedor_nombre || o.proveedor_nit)}</div>
                     <div class="text-muted small"><i class="far fa-calendar"></i> ${o.fecha_oc} · <i class="far fa-clock"></i> pedida ${this._diasDesde(o.creado_en)}</div>
                     <div class="mt-2">${filas}</div>
-                    <div class="d-flex gap-1 flex-wrap mt-2">
-                        <button class="btn btn-sm btn-primary" onclick="ModuloCompras.abrirRegistrarRecepcion('${this._esc(o.numero_oc)}')">
-                            <i class="fas fa-truck-loading"></i> Registrar recepción
-                        </button>
-                        <button class="btn btn-sm btn-outline-secondary" onclick="ModuloCompras.verRecepcionesParaTransito('${this._esc(o.numero_oc)}')">
-                            <i class="fas fa-shield-alt"></i> Enviar lote a maquila
-                        </button>
-                    </div>
                 </div>
             `;
         });
@@ -857,7 +821,7 @@ const ModuloCompras = {
         const tarjetas = lista.map((o) => {
             const numLineas = (lineasPorOc[o.numero_oc] || []).length;
             return `
-                <div class="card shadow-sm border-0 border-start border-4 ${bordeEstado[o.estado] || 'border-secondary'} rounded-4 p-3">
+                <div class="card shadow-sm border-0 border-start border-4 ${bordeEstado[o.estado] || 'border-secondary'} rounded-4 p-3" style="cursor:pointer;" onclick="ModuloCompras.abrirTrazabilidad('${this._esc(o.numero_oc)}')">
                     <div class="d-flex justify-content-between align-items-start">
                         <strong>${this._esc(o.numero_oc)}</strong>
                         <span class="badge ${badgeEstado[o.estado] || 'bg-secondary'}">${o.estado}</span>
@@ -868,149 +832,6 @@ const ModuloCompras = {
             `;
         });
         cont.innerHTML = tarjetas.join('');
-    },
-
-    abrirRegistrarRecepcion: async function (numero_oc) {
-        try {
-            const detalle = await this._api(`/api/compras/ordenes/${encodeURIComponent(numero_oc)}`);
-            const hoy = new Date().toISOString().split('T')[0];
-            // Fecha por línea -- los productos de una misma OC no siempre
-            // llegan el mismo día (pedido real 2026-09-16). Cada input
-            // arranca en "hoy" (mismo default que la fecha general) y Zoe
-            // solo la cambia en la línea puntual que llegó otro día.
-            const filasHtml = detalle.lineas.map(l => `
-                <div class="row g-2 mb-2 align-items-end">
-                    <div class="col-12"><label class="form-label small mb-1">${this._esc(l.descripcion)} <span class="text-muted">(pendiente: ${l.pendiente})</span></label></div>
-                    <div class="col-5">
-                        <input type="number" step="0.01" class="form-control form-control-sm rec-linea-recibida" data-id-linea="${l.id}" placeholder="Cantidad recibida">
-                    </div>
-                    <div class="col-4">
-                        <input type="number" step="0.01" class="form-control form-control-sm rec-linea-rechazada" data-id-linea="${l.id}" placeholder="Cantidad rechazada">
-                    </div>
-                    <div class="col-3">
-                        <input type="date" class="form-control form-control-sm rec-linea-fecha" data-id-linea="${l.id}" value="${hoy}" title="Fecha en que llegó este producto">
-                    </div>
-                </div>
-            `).join('');
-
-            const { value: formValues } = await Swal.fire({
-                title: `Registrar recepción — ${numero_oc}`,
-                html: `
-                    <div class="text-start">
-                        <div class="row g-2 mb-3">
-                            <div class="col-6">
-                                <label class="form-label small fw-bold">Fecha general</label>
-                                <input id="rec-fecha" type="date" class="form-control" value="${hoy}">
-                            </div>
-                            <div class="col-6">
-                                <label class="form-label small fw-bold">Estado</label>
-                                <select id="rec-estado" class="form-select">
-                                    <option value="RECIBIDA_TOTAL">Recibida total</option>
-                                    <option value="RECIBIDA_PARCIAL">Recibida parcial</option>
-                                    <option value="RECHAZADA">Rechazada</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="text-muted small mb-2">Si algún producto llegó otro día, cambia su fecha en la casilla junto a la cantidad.</div>
-                        ${filasHtml}
-                    </div>
-                `,
-                focusConfirm: false,
-                showCancelButton: true,
-                width: 650,
-                preConfirm: () => {
-                    if (!document.getElementById('rec-fecha').value) {
-                        Swal.showValidationMessage('Falta la fecha de recepción');
-                        return false;
-                    }
-                    const lineas = Array.from(document.querySelectorAll('.rec-linea-recibida'))
-                        .map(i => {
-                            const idLinea = i.dataset.idLinea;
-                            const rechazada = document.querySelector(`.rec-linea-rechazada[data-id-linea="${idLinea}"]`);
-                            const fecha = document.querySelector(`.rec-linea-fecha[data-id-linea="${idLinea}"]`);
-                            return {
-                                id_linea_oc: parseInt(idLinea),
-                                cantidad_recibida: parseFloat(i.value || 0),
-                                cantidad_rechazada: parseFloat((rechazada && rechazada.value) || 0),
-                                fecha_recepcion: (fecha && fecha.value) || null,
-                            };
-                        })
-                        .filter(l => l.cantidad_recibida > 0 || l.cantidad_rechazada > 0);
-                    // Si deja todo en blanco no hay nada que registrar -- antes
-                    // esto cerraba el modal en silencio como si hubiera
-                    // guardado algo (bug real reportado 2026-09-16, misma
-                    // familia del silent-drop ya corregido en creación de OC).
-                    if (!lineas.length) {
-                        Swal.showValidationMessage('Escribe cantidad recibida o rechazada en al menos una línea -- si no llegó nada todavía, cierra sin confirmar');
-                        return false;
-                    }
-                    return {
-                        fecha_recepcion: document.getElementById('rec-fecha').value,
-                        estado_recepcion: document.getElementById('rec-estado').value,
-                        lineas,
-                    };
-                },
-            });
-
-            if (!formValues) return;
-
-            const resultado = await this._api(`/api/compras/ordenes/${encodeURIComponent(numero_oc)}/recepciones`, {
-                method: 'POST', body: JSON.stringify(formValues),
-            });
-
-            if (resultado.lineas_con_exceso_tolerancia?.length) {
-                await Swal.fire('Recepción registrada con exceso', 'Se avisó a Diego: llegó más de lo pedido por encima de la tolerancia.', 'warning');
-            } else {
-                await Swal.fire({ icon: 'success', title: 'Recepción registrada', timer: 1500, showConfirmButton: false });
-            }
-
-            await this.cargarPendientesRecepcion();
-            await this.ofrecerEnvioATransito(numero_oc, resultado.lineas || []);
-        } catch (e) {
-            Swal.fire('No se pudo registrar la recepción', e.message, 'error');
-        }
-    },
-
-    // ------------------------------------------------------------------
-    // Tránsito externo (Granallado / Zincado)
-    // ------------------------------------------------------------------
-    ofrecerEnvioATransito: async function (numero_oc, lineasCreadas) {
-        const conRecibo = lineasCreadas.filter(l => l.cantidad_recibida > 0);
-        if (!conRecibo.length) return;
-
-        const { isConfirmed } = await Swal.fire({
-            title: '¿Enviar algo a maquila externa?',
-            text: `Se recibieron ${conRecibo.length} línea(s) en ${numero_oc}. ¿Alguna va a Granallado/Zincado ahora?`,
-            showCancelButton: true,
-            confirmButtonText: 'Sí, elegir',
-            cancelButtonText: 'No, más tarde',
-        });
-        if (!isConfirmed) return;
-        this.verRecepcionesParaTransito(numero_oc);
-    },
-
-    verRecepcionesParaTransito: async function (numero_oc) {
-        try {
-            const recepciones = await this._api(`/api/compras/ordenes/${encodeURIComponent(numero_oc)}/recepciones`);
-            const lineas = (recepciones || []).flatMap(r => r.lineas.map(l => ({ ...l, fecha: l.fecha_recepcion || r.recepcion.fecha_recepcion })))
-                .filter(l => l.cantidad_recibida > 0);
-
-            if (!lineas.length) {
-                Swal.fire('Sin lotes recibidos', 'Esta OC todavía no tiene cantidades recibidas.', 'info');
-                return;
-            }
-
-            const html = lineas.map(l => `
-                <div class="d-flex justify-content-between align-items-center border-bottom py-1">
-                    <span class="small">Lote del ${l.fecha}: ${l.cantidad_recibida} recibido</span>
-                    <button class="btn btn-sm btn-outline-primary" onclick="ModuloCompras.enviarATransito(${l.id}, ${l.cantidad_recibida})">Enviar</button>
-                </div>
-            `).join('');
-
-            Swal.fire({ title: `Lotes recibidos — ${numero_oc}`, html, width: 500 });
-        } catch (e) {
-            Swal.fire('No se pudo consultar', e.message, 'error');
-        }
     },
 
     cargarTransito: async function () {
@@ -1057,50 +878,6 @@ const ModuloCompras = {
         }
     },
 
-    enviarATransito: async function (idLineaRecepcion, cantidadDisponible) {
-        const { value: formValues } = await Swal.fire({
-            title: 'Enviar a maquila externa',
-            html: `
-                <div class="text-start">
-                    <div class="mb-2">
-                        <label class="form-label small fw-bold">Proceso</label>
-                        <select id="tr-proceso" class="form-select">
-                            <option value="GRANALLADO">Granallado</option>
-                            <option value="ZINCADO">Zincado</option>
-                        </select>
-                    </div>
-                    <div class="row g-2">
-                        <div class="col-6">
-                            <label class="form-label small fw-bold">Cantidad a enviar</label>
-                            <input id="tr-cantidad" type="number" step="0.01" max="${cantidadDisponible}" class="form-control" placeholder="Máx. ${cantidadDisponible}">
-                        </div>
-                        <div class="col-6">
-                            <label class="form-label small fw-bold">Fecha</label>
-                            <input id="tr-fecha" type="date" class="form-control" value="${new Date().toISOString().split('T')[0]}">
-                        </div>
-                    </div>
-                </div>
-            `,
-            showCancelButton: true,
-            preConfirm: () => ({
-                proceso: document.getElementById('tr-proceso').value,
-                cantidad_enviada: parseFloat(document.getElementById('tr-cantidad').value || 0),
-                fecha_envio: document.getElementById('tr-fecha').value,
-            }),
-        });
-        if (!formValues || formValues.cantidad_enviada <= 0) return;
-
-        try {
-            await this._api(`/api/compras/recepciones/${idLineaRecepcion}/transito`, {
-                method: 'POST', body: JSON.stringify(formValues),
-            });
-            Swal.fire({ icon: 'success', title: 'Enviado', timer: 1500, showConfirmButton: false });
-            await this.cargarTransito();
-        } catch (e) {
-            Swal.fire('No se pudo enviar', e.message, 'error');
-        }
-    },
-
     registrarRetornoTransito: async function (idTransito, cantidadEnviada) {
         const { value: formValues } = await Swal.fire({
             title: 'Registrar retorno',
@@ -1132,6 +909,427 @@ const ModuloCompras = {
             await this.cargarTransito();
         } catch (e) {
             Swal.fire('No se pudo registrar el retorno', e.message, 'error');
+        }
+    },
+
+    // ==================================================================
+    // Panel de trazabilidad (plan 2026-09-21): línea de tiempo de una
+    // compra completa -- Solicitud -> Orden de compra -> Recepción ->
+    // Tránsito externo -> Factura -- sin importar desde cuál de las 3
+    // pestañas se abrió. Reemplaza los modales sueltos que antes abrían
+    // abrirRegistrarRecepcion / verRecepcionesParaTransito / enviarATransito /
+    // abrirCargarFactura: esas acciones ahora viven inline dentro de cada
+    // paso de este panel.
+    // ==================================================================
+    _tzNumeroOc: null,
+    _tzPasoAbierto: null,
+    _tzDatos: null,
+
+    abrirTrazabilidad: async function (numero_oc, pasoAExpandir = null) {
+        const overlay = document.getElementById('compras-tz-overlay');
+        const cuerpo = document.getElementById('compras-tz-body');
+        const titulo = document.getElementById('compras-tz-titulo');
+        if (!overlay || !cuerpo || !titulo) return;
+
+        this._tzNumeroOc = numero_oc;
+        this._tzPasoAbierto = pasoAExpandir;
+        titulo.innerHTML = `<p class="fw-bold mb-0">${this._esc(numero_oc)}</p>`;
+        cuerpo.innerHTML = '<div class="text-center text-muted py-4"><i class="fas fa-spinner fa-spin"></i></div>';
+        overlay.style.display = 'flex';
+
+        try {
+            const datos = await this._api(`/api/compras/ordenes/${encodeURIComponent(numero_oc)}/timeline`);
+            this._tzDatos = datos;
+            this._renderTrazabilidad(datos);
+        } catch (e) {
+            cuerpo.innerHTML = `<div class="alert alert-danger">${this._esc(e.message)}</div>`;
+        }
+    },
+
+    // Desde una tarjeta de "Mis solicitudes": si ya tiene OC, abre el
+    // timeline completo; si no, muestra solo el paso de Solicitud (sin
+    // pegarle a la API -- ya se tiene el dato en mano).
+    abrirTrazabilidadDesdeSolicitud: function (idSolicitud) {
+        const solicitud = (this.misSolicitudesData || []).find(s => s.id === idSolicitud);
+        if (!solicitud) return;
+        if (solicitud.estado === 'EN_OC' && solicitud.id_oc_vinculada) {
+            this.abrirTrazabilidad(solicitud.id_oc_vinculada);
+            return;
+        }
+        const overlay = document.getElementById('compras-tz-overlay');
+        if (!overlay) return;
+        this._tzNumeroOc = null;
+        this._tzDatos = null;
+        document.getElementById('compras-tz-titulo').innerHTML =
+            `<p class="fw-bold mb-0">${this._esc(solicitud.item_descripcion)}</p><p class="small text-muted mb-0">${this._esc(solicitud.codigo_producto || '')}</p>`;
+        document.getElementById('compras-tz-body').innerHTML = this._tzPasosSoloSolicitudHtml(solicitud);
+        overlay.style.display = 'flex';
+    },
+
+    cerrarTrazabilidad: function () {
+        const overlay = document.getElementById('compras-tz-overlay');
+        if (overlay) overlay.style.display = 'none';
+        this._tzNumeroOc = null;
+        this._tzDatos = null;
+    },
+
+    // Recarga el panel (si sigue abierto) y las listas de fondo -- para que
+    // la tarjeta que abrió el panel no quede desactualizada al cerrarlo.
+    _tzRefrescar: async function () {
+        if (this._tzNumeroOc) await this.abrirTrazabilidad(this._tzNumeroOc, this._tzPasoAbierto);
+        if (this.activeTab === 'solicitud') this.cargarMisSolicitudes();
+        if (this.activeTab === 'orden') {
+            this.cargarSolicitudesPendientes();
+            this.cargarOrdenes();
+        }
+        if (this.activeTab === 'recepcion') {
+            this.cargarPendientesRecepcion();
+            this.cargarTransito();
+            this.cargarRecibidas();
+        }
+    },
+
+    _tzToggleStep: function (nombre) {
+        this._tzPasoAbierto = (this._tzPasoAbierto === nombre) ? null : nombre;
+        if (this._tzDatos) this._renderTrazabilidad(this._tzDatos);
+    },
+
+    _tzPasosSoloSolicitudHtml: function (s) {
+        const pasos = [
+            { nombre: 'Solicitud', hecho: true, resumen: `Pedida por ${this._esc(s.solicitado_por)} · ${new Date(s.creado_en).toLocaleDateString()}` },
+            {
+                nombre: 'Orden de compra', hecho: false,
+                resumen: s.estado === 'PENDIENTE' ? 'Pendiente de que se arme la orden de compra'
+                    : s.estado === 'RECHAZADA' ? `Rechazada: ${this._esc(s.motivo_rechazo || '')}` : 'Cancelada',
+            },
+            { nombre: 'Recepción', hecho: false, resumen: 'Aún no aplica' },
+            { nombre: 'Tránsito externo', hecho: false, resumen: 'Solo aplica si algo va a Granallado o Zincado' },
+            { nombre: 'Factura', hecho: false, resumen: 'Pendiente' },
+        ];
+        return pasos.map((p, i) => `
+            <div class="compras-tz-step">
+                <div class="compras-tz-step-rail">
+                    <i class="fas ${p.hecho ? 'fa-check-circle text-success' : 'fa-clock text-muted'}"></i>
+                    ${i < pasos.length - 1 ? '<div class="compras-tz-step-line"></div>' : ''}
+                </div>
+                <div class="compras-tz-step-body compras-tz-noclick">
+                    <p class="mb-0 fw-semibold small">${this._esc(p.nombre)}</p>
+                    <p class="mb-0 small ${p.hecho ? 'text-secondary' : 'text-muted'}">${p.resumen}</p>
+                </div>
+            </div>
+        `).join('');
+    },
+
+    _renderTrazabilidad: function (datos) {
+        const titulo = document.getElementById('compras-tz-titulo');
+        const cuerpo = document.getElementById('compras-tz-body');
+        const o = datos.orden;
+        const badgeEstado = {
+            ABIERTA: 'bg-warning text-dark', PARCIALMENTE_RECIBIDA: 'bg-info',
+            RECIBIDA_TOTAL: 'bg-success', RECHAZADA: 'bg-danger', ANULADA: 'bg-secondary',
+        };
+        titulo.innerHTML = `
+            <p class="fw-bold mb-0">${this._esc(o.numero_oc)} <span class="badge ${badgeEstado[o.estado] || 'bg-secondary'} ms-1">${o.estado}</span></p>
+            <p class="small text-muted mb-0">${this._esc(o.proveedor_nombre || o.proveedor_nit)} · pedida ${o.fecha_oc}</p>
+        `;
+
+        const solicitudesHtml = datos.solicitudes_origen.length
+            ? datos.solicitudes_origen.map(s => `<p class="small mb-1">${this._esc(s.item_descripcion)} <span class="text-muted">-- pedida por ${this._esc(s.solicitado_por)}</span></p>`).join('')
+            : '<p class="small text-muted mb-0">Esta OC no quedó vinculada a ninguna solicitud (se armó directo).</p>';
+
+        const lineasHtml = datos.lineas.map(l => `
+            <div class="d-flex justify-content-between small border-bottom py-1">
+                <span>${this._esc(l.descripcion)}</span>
+                <span class="text-muted">${l.cantidad_pedida} ${this._esc(l.unidad_medida || '')}</span>
+            </div>
+        `).join('');
+
+        const bloques = [
+            {
+                nombre: 'Solicitud', key: 'solicitud', hecho: true,
+                resumenCerrado: `${datos.solicitudes_origen.length} solicitud(es) de origen`,
+                detalle: solicitudesHtml,
+            },
+            {
+                nombre: 'Orden de compra', key: 'oc', hecho: true,
+                resumenCerrado: `${o.numero_oc} · creada por ${this._esc(o.creado_por)}`,
+                detalle: lineasHtml,
+            },
+            this._tzBloqueRecepcion(datos),
+            this._tzBloqueTransito(datos),
+            this._tzBloqueFactura(datos),
+        ];
+
+        const abierto = this._tzPasoAbierto;
+        cuerpo.innerHTML = bloques.map((b, i) => `
+            <div class="compras-tz-step">
+                <div class="compras-tz-step-rail">
+                    <i class="fas ${b.hecho ? 'fa-check-circle text-success' : 'fa-clock text-muted'}"></i>
+                    ${i < bloques.length - 1 ? '<div class="compras-tz-step-line"></div>' : ''}
+                </div>
+                <div class="compras-tz-step-body" onclick="ModuloCompras._tzToggleStep('${b.key}')">
+                    <p class="mb-0 fw-semibold small">${this._esc(b.nombre)} <i class="fas fa-chevron-${abierto === b.key ? 'up' : 'down'} small text-muted ms-1"></i></p>
+                    <p class="mb-0 small ${b.hecho ? 'text-secondary' : 'text-muted'}">${b.resumenCerrado}</p>
+                    ${abierto === b.key ? `<div class="compras-tz-step-detalle" onclick="event.stopPropagation()">${b.detalle}</div>` : ''}
+                </div>
+            </div>
+        `).join('');
+    },
+
+    _tzBloqueRecepcion: function (datos) {
+        const lineaPorId = {};
+        datos.lineas.forEach(l => { lineaPorId[l.id] = l; });
+        const hoy = new Date().toISOString().split('T')[0];
+
+        const historialHtml = datos.recepciones.map(({ recepcion: r, lineas }) => `
+            <div class="border-bottom pb-2 mb-2">
+                <p class="small fw-semibold mb-1">${r.fecha_recepcion} · ${r.estado_recepcion} <span class="text-muted fw-normal">(${this._esc(r.recibido_por)})</span></p>
+                ${lineas.map(l => `<p class="small mb-0 text-muted">${this._esc((lineaPorId[l.id_linea_oc] || {}).descripcion || '')}: recibido ${l.cantidad_recibida}${l.cantidad_rechazada ? `, rechazado ${l.cantidad_rechazada}` : ''}${l.excede_tolerancia ? ' <span class="badge bg-danger">excede tolerancia</span>' : ''}</p>`).join('')}
+            </div>
+        `).join('');
+
+        const puedeRecepcionar = this._puedeRecepcionar(this._rolNormalizado())
+            && !['RECIBIDA_TOTAL', 'RECHAZADA', 'ANULADA'].includes(datos.orden.estado);
+        const formHtml = puedeRecepcionar ? `
+            <div class="mt-2 pt-2 border-top">
+                <p class="small fw-bold mb-2">Registrar nueva recepción</p>
+                <div class="row g-2 mb-2">
+                    <div class="col-6">
+                        <label class="form-label small mb-1">Fecha general</label>
+                        <input id="tz-rec-fecha" type="date" class="form-control form-control-sm" value="${hoy}">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small mb-1">Estado</label>
+                        <select id="tz-rec-estado" class="form-select form-select-sm">
+                            <option value="RECIBIDA_TOTAL">Recibida total</option>
+                            <option value="RECIBIDA_PARCIAL">Recibida parcial</option>
+                            <option value="RECHAZADA">Rechazada</option>
+                        </select>
+                    </div>
+                </div>
+                ${datos.lineas.map(l => `
+                    <div class="row g-2 mb-2 align-items-end">
+                        <div class="col-12"><label class="form-label small mb-1">${this._esc(l.descripcion)} <span class="text-muted">(pendiente: ${l.pendiente})</span></label></div>
+                        <div class="col-5"><input type="number" step="0.01" class="form-control form-control-sm tz-rec-linea-recibida" data-id-linea="${l.id}" placeholder="Recibida"></div>
+                        <div class="col-4"><input type="number" step="0.01" class="form-control form-control-sm tz-rec-linea-rechazada" data-id-linea="${l.id}" placeholder="Rechazada"></div>
+                        <div class="col-3"><input type="date" class="form-control form-control-sm tz-rec-linea-fecha" data-id-linea="${l.id}" value="${hoy}"></div>
+                    </div>
+                `).join('')}
+                <button type="button" class="btn btn-sm btn-primary mt-1" onclick="ModuloCompras._tzGuardarRecepcion()">
+                    <i class="fas fa-save"></i> Guardar recepción
+                </button>
+            </div>
+        ` : '';
+
+        return {
+            nombre: 'Recepción', key: 'recepcion', hecho: datos.recepciones.length > 0,
+            resumenCerrado: datos.recepciones.length ? `${datos.recepciones.length} evento(s) registrado(s)` : 'Aún no llega mercancía',
+            detalle: (historialHtml || '<p class="small text-muted mb-0">Sin eventos todavía.</p>') + formHtml,
+        };
+    },
+
+    _tzGuardarRecepcion: async function () {
+        const numero_oc = this._tzNumeroOc;
+        const fecha = document.getElementById('tz-rec-fecha')?.value;
+        if (!fecha) { Swal.fire('Falta la fecha', 'Indica la fecha de recepción.', 'warning'); return; }
+        const estado_recepcion = document.getElementById('tz-rec-estado')?.value;
+        const lineas = Array.from(document.querySelectorAll('.tz-rec-linea-recibida'))
+            .map(i => {
+                const idLinea = i.dataset.idLinea;
+                const rechazada = document.querySelector(`.tz-rec-linea-rechazada[data-id-linea="${idLinea}"]`);
+                const fechaLinea = document.querySelector(`.tz-rec-linea-fecha[data-id-linea="${idLinea}"]`);
+                return {
+                    id_linea_oc: parseInt(idLinea),
+                    cantidad_recibida: parseFloat(i.value || 0),
+                    cantidad_rechazada: parseFloat((rechazada && rechazada.value) || 0),
+                    fecha_recepcion: (fechaLinea && fechaLinea.value) || null,
+                };
+            })
+            .filter(l => l.cantidad_recibida > 0 || l.cantidad_rechazada > 0);
+        // Si deja todo en blanco no hay nada que registrar -- mismo aviso
+        // que ya existía en el modal viejo (bug real reportado 2026-09-16).
+        if (!lineas.length) {
+            Swal.fire('Nada que registrar', 'Escribe cantidad recibida o rechazada en al menos una línea -- si no llegó nada todavía, no guardes.', 'warning');
+            return;
+        }
+        try {
+            const resultado = await this._api(`/api/compras/ordenes/${encodeURIComponent(numero_oc)}/recepciones`, {
+                method: 'POST', body: JSON.stringify({ fecha_recepcion: fecha, estado_recepcion, lineas }),
+            });
+            if (resultado.lineas_con_exceso_tolerancia?.length) {
+                await Swal.fire('Recepción registrada con exceso', 'Se avisó a Diego: llegó más de lo pedido por encima de la tolerancia.', 'warning');
+            } else {
+                Swal.fire({ icon: 'success', title: 'Recepción registrada', timer: 1500, showConfirmButton: false });
+            }
+            this._tzPasoAbierto = 'transito';
+            await this._tzRefrescar();
+        } catch (e) {
+            Swal.fire('No se pudo registrar la recepción', e.message, 'error');
+        }
+    },
+
+    _tzBloqueTransito: function (datos) {
+        const lineaRecepcionPorId = {};
+        datos.recepciones.forEach(({ recepcion: r, lineas }) => {
+            lineas.forEach(l => { lineaRecepcionPorId[l.id] = { ...l, fecha: l.fecha_recepcion || r.fecha_recepcion }; });
+        });
+        const puedeRecepcionar = this._puedeRecepcionar(this._rolNormalizado());
+        const hoy = new Date().toISOString().split('T')[0];
+        const colorEstado = { ENVIADO: 'bg-warning text-dark', EN_PROCESO: 'bg-info', RETORNADO: 'bg-success', RETORNADO_PARCIAL: 'bg-danger' };
+
+        const historialHtml = datos.transito.map(({ transito: t }) => `
+            <div class="border-bottom pb-2 mb-2">
+                <div class="d-flex justify-content-between align-items-center">
+                    <span class="small fw-semibold">${this._esc(t.proceso)}</span>
+                    <span class="badge ${colorEstado[t.estado] || 'bg-secondary'}">${t.estado}</span>
+                </div>
+                <p class="small text-muted mb-0">Enviado: ${t.cantidad_enviada} · ${t.fecha_envio}</p>
+                ${t.cantidad_retornada !== null ? `<p class="small text-muted mb-0">Retornado: ${t.cantidad_retornada}${t.diferencia_envio_retorno ? ` (diferencia: ${t.diferencia_envio_retorno})` : ''}</p>` : ''}
+                ${puedeRecepcionar && t.estado === 'ENVIADO' ? `<button type="button" class="btn btn-sm btn-outline-info mt-1 me-1" onclick="ModuloCompras._tzMarcarEnProceso(${t.id})">Marcar en proceso</button>` : ''}
+                ${puedeRecepcionar && ['ENVIADO', 'EN_PROCESO'].includes(t.estado) ? `
+                    <div class="row g-2 mt-1 align-items-end">
+                        <div class="col-6"><input id="tz-ret-cantidad-${t.id}" type="number" step="0.01" class="form-control form-control-sm" placeholder="Retornado (de ${t.cantidad_enviada})"></div>
+                        <div class="col-4"><input id="tz-ret-fecha-${t.id}" type="date" class="form-control form-control-sm" value="${hoy}"></div>
+                        <div class="col-2"><button type="button" class="btn btn-sm btn-outline-success" onclick="ModuloCompras._tzRegistrarRetorno(${t.id})"><i class="fas fa-save"></i></button></div>
+                    </div>
+                ` : ''}
+            </div>
+        `).join('');
+
+        const enviadoPorLinea = {};
+        datos.transito.forEach(({ transito: t }) => {
+            enviadoPorLinea[t.id_linea_recepcion_oc] = (enviadoPorLinea[t.id_linea_recepcion_oc] || 0) + parseFloat(t.cantidad_enviada || 0);
+        });
+        const disponiblesHtml = Object.values(lineaRecepcionPorId)
+            .filter(l => l.cantidad_recibida > (enviadoPorLinea[l.id] || 0) && puedeRecepcionar)
+            .map(l => {
+                const disponible = l.cantidad_recibida - (enviadoPorLinea[l.id] || 0);
+                return `
+                    <div class="border-top pt-2 mt-2">
+                        <p class="small mb-1">Lote del ${l.fecha}: <strong>${disponible}</strong> disponible para enviar</p>
+                        <div class="row g-2 align-items-end">
+                            <div class="col-4">
+                                <select id="tz-tr-proceso-${l.id}" class="form-select form-select-sm">
+                                    <option value="GRANALLADO">Granallado</option>
+                                    <option value="ZINCADO">Zincado</option>
+                                </select>
+                            </div>
+                            <div class="col-3"><input id="tz-tr-cantidad-${l.id}" type="number" step="0.01" max="${disponible}" class="form-control form-control-sm" placeholder="Cant."></div>
+                            <div class="col-3"><input id="tz-tr-fecha-${l.id}" type="date" class="form-control form-control-sm" value="${hoy}"></div>
+                            <div class="col-2"><button type="button" class="btn btn-sm btn-outline-primary" onclick="ModuloCompras._tzEnviarATransito(${l.id})"><i class="fas fa-paper-plane"></i></button></div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+        return {
+            nombre: 'Tránsito externo', key: 'transito', hecho: datos.transito.length > 0,
+            resumenCerrado: datos.transito.length ? `${datos.transito.length} envío(s) a maquila` : 'Solo aplica si algo va a Granallado o Zincado',
+            detalle: (historialHtml || '<p class="small text-muted mb-0">Nada enviado a maquila todavía.</p>') + disponiblesHtml,
+        };
+    },
+
+    _tzEnviarATransito: async function (idLineaRecepcion) {
+        const proceso = document.getElementById(`tz-tr-proceso-${idLineaRecepcion}`)?.value;
+        const cantidad = parseFloat(document.getElementById(`tz-tr-cantidad-${idLineaRecepcion}`)?.value || 0);
+        const fecha = document.getElementById(`tz-tr-fecha-${idLineaRecepcion}`)?.value;
+        if (cantidad <= 0) { Swal.fire('Cantidad inválida', 'Indica cuánto se envía.', 'warning'); return; }
+        try {
+            await this._api(`/api/compras/recepciones/${idLineaRecepcion}/transito`, {
+                method: 'POST', body: JSON.stringify({ proceso, cantidad_enviada: cantidad, fecha_envio: fecha }),
+            });
+            Swal.fire({ icon: 'success', title: 'Enviado', timer: 1500, showConfirmButton: false });
+            await this._tzRefrescar();
+        } catch (e) {
+            Swal.fire('No se pudo enviar', e.message, 'error');
+        }
+    },
+
+    _tzMarcarEnProceso: async function (idTransito) {
+        try {
+            await this._api(`/api/compras/transito/${idTransito}/estado`, {
+                method: 'PATCH', body: JSON.stringify({ estado: 'EN_PROCESO' }),
+            });
+            await this._tzRefrescar();
+        } catch (e) {
+            Swal.fire('No se pudo actualizar', e.message, 'error');
+        }
+    },
+
+    _tzRegistrarRetorno: async function (idTransito) {
+        const cantidad = parseFloat(document.getElementById(`tz-ret-cantidad-${idTransito}`)?.value || 0);
+        const fecha = document.getElementById(`tz-ret-fecha-${idTransito}`)?.value;
+        try {
+            await this._api(`/api/compras/transito/${idTransito}/retorno`, {
+                method: 'POST', body: JSON.stringify({ cantidad_retornada: cantidad, fecha_retorno: fecha }),
+            });
+            Swal.fire({ icon: 'success', title: 'Retorno registrado', timer: 1500, showConfirmButton: false });
+            await this._tzRefrescar();
+        } catch (e) {
+            Swal.fire('No se pudo registrar el retorno', e.message, 'error');
+        }
+    },
+
+    _tzBloqueFactura: function (datos) {
+        const esAdmin = this._esAdmin(this._rolNormalizado());
+        const hoy = new Date().toISOString().split('T')[0];
+
+        if (datos.factura) {
+            const f = datos.factura.factura;
+            const detalle = `
+                <p class="small mb-1">Factura <strong>${this._esc(f.numero_factura)}</strong> · ${f.fecha_factura}</p>
+                <p class="small text-muted mb-1">Cargada por ${this._esc(f.cargada_por)}</p>
+                <p class="small mb-0">Estado: <span class="badge ${f.estado_conciliacion === 'COINCIDE' ? 'bg-success' : 'bg-warning text-dark'}">${f.estado_conciliacion}</span></p>
+            `;
+            return { nombre: 'Factura', key: 'factura', hecho: true, resumenCerrado: `${f.numero_factura} · ${f.estado_conciliacion}`, detalle };
+        }
+
+        const puedeFacturar = esAdmin && datos.orden.estado !== 'ANULADA';
+        const formHtml = puedeFacturar ? `
+            <div class="row g-2 mb-2">
+                <div class="col-7">
+                    <label class="form-label small mb-1">Número de factura</label>
+                    <input id="tz-fc-numero" class="form-control form-control-sm" placeholder="Ej: FC-0001">
+                </div>
+                <div class="col-5">
+                    <label class="form-label small mb-1">Fecha</label>
+                    <input id="tz-fc-fecha" type="date" class="form-control form-control-sm" value="${hoy}">
+                </div>
+            </div>
+            ${datos.lineas.map(l => `
+                <div class="mb-2">
+                    <label class="form-label small mb-1">${this._esc(l.descripcion)} <span class="text-muted">(recibido: ${l.cantidad_recibida_acumulada})</span></label>
+                    <input type="number" step="0.01" class="form-control form-control-sm tz-fc-linea-cantidad" data-id-linea="${l.id}" placeholder="Cantidad facturada">
+                </div>
+            `).join('')}
+            <button type="button" class="btn btn-sm btn-primary mt-1" onclick="ModuloCompras._tzGuardarFactura()">
+                <i class="fas fa-save"></i> Cargar factura
+            </button>
+        ` : '<p class="small text-muted mb-0">Pendiente de cargar.</p>';
+
+        return { nombre: 'Factura', key: 'factura', hecho: false, resumenCerrado: 'Pendiente de cargar', detalle: formHtml };
+    },
+
+    _tzGuardarFactura: async function () {
+        const numero_oc = this._tzNumeroOc;
+        const numero_factura = document.getElementById('tz-fc-numero')?.value.trim();
+        const fecha_factura = document.getElementById('tz-fc-fecha')?.value;
+        const lineas = Array.from(document.querySelectorAll('.tz-fc-linea-cantidad'))
+            .filter(i => i.value)
+            .map(i => ({ id_linea_oc: parseInt(i.dataset.idLinea), cantidad_facturada: parseFloat(i.value) }));
+        if (!numero_factura || !lineas.length) {
+            Swal.fire('Faltan datos', 'Indica el número de factura y al menos una cantidad facturada.', 'warning');
+            return;
+        }
+        try {
+            const factura = await this._api(`/api/compras/ordenes/${encodeURIComponent(numero_oc)}/factura`, {
+                method: 'POST', body: JSON.stringify({ numero_factura, fecha_factura, lineas }),
+            });
+            const icono = factura.estado_conciliacion === 'COINCIDE' ? 'success' : 'warning';
+            Swal.fire(factura.estado_conciliacion === 'COINCIDE' ? 'Factura conciliada' : 'Factura con discrepancia', `Estado: ${factura.estado_conciliacion}`, icono);
+            await this._tzRefrescar();
+        } catch (e) {
+            Swal.fire('No se pudo cargar la factura', e.message, 'error');
         }
     },
 
