@@ -77,7 +77,7 @@ const AuthModule = {
         // === FRIMETALS ROLES (Phase 2 Multi-Tenant) ===
         'STAFF FRIMETALS': ['metals-dashboard', 'metals-produccion', 'metals-pedidos', 'metals-torno', 'metals-laser', 'metals-soldadura', 'metals-marcadora', 'metals-taladro', 'metals-dobladora', 'metals-pintura', 'metals-zincado', 'metals-horno', 'metals-pulido-m', 'pedidos', 'almacen', 'asistencia'],
         'JEFE DE PLANTA': ['metals-dashboard', 'metals-produccion', 'metals-pedidos', 'metals-torno', 'metals-laser', 'metals-soldadura', 'metals-marcadora', 'metals-taladro', 'metals-dobladora', 'metals-pintura', 'metals-zincado', 'metals-horno', 'metals-pulido-m', 'pedidos', 'almacen', 'asistencia', 'historial', 'inventario', 'exportacion-wo'],
-        'COMERCIAL FRIMETALS': ['metals-dashboard', 'metals-pedidos', 'pedidos', 'almacen', 'comercial-historico'],
+        'COMERCIAL FRIMETALS': ['metals-dashboard', 'metals-pedidos', 'pedidos', 'almacen', 'comercial-historico', 'facturacion'],
         'COMERCIAL': ['almacen', 'pedidos', 'comercial-historico', 'cartera'],
         'JEFE ALMACEN': ['inventario', 'inyeccion', 'facturacion', 'almacen', 'pedidos', 'asistencia', 'exportacion-wo'],
         'JEFE ALISTAMIENTO': ['inventario', 'inyeccion', 'ensamble', 'empaque', 'facturacion', 'almacen', 'pedidos', 'asistencia', 'exportacion-wo'],
