@@ -9,7 +9,7 @@ from backend.models.sql_models import db, ProduccionInyeccion, PncInyeccion, Pnc
 from backend.services.audit_service import AuditService, OwnershipMismatchException, ValidadorRequeridoException, TurnoInvalidoException
 from backend.services.op_numerador_service import OpNumeradorService
 from backend.utils.time_utils import get_colombia_time
-from backend.utils.formatters import sql_normalizar_codigo_fr
+from backend.utils.formatters import sql_normalizar_codigo_fr, preservar_o_normalizar_prefijo
 
 logger = logging.getLogger(__name__)
 
@@ -978,8 +978,24 @@ class InyeccionService:
                                 StockService.registrar_salida(comp['codigo_inventario'], comp['cantidad_total_descontar'], "STOCK_BODEGA")
 
                     # Actualizar inventario final (Validation is single point of entry para Inyeccion)
+                    #
+                    # BUGFIX 2026-09-22: buscaba SOLO por codigo_sistema == codigo
+                    # (codigo ya viene SIN prefijo, via normalizar_codigo_sin_prefijo
+                    # arriba), pero db_productos.codigo_sistema guarda el codigo CON
+                    # prefijo ('FR-9001', no '9001') -- ese match nunca encontraba
+                    # nada para ninguna referencia con division, que es
+                    # practicamente todo el catalogo. Confirmado en produccion:
+                    # "Producto 9001 no encontrado" en TODAS las referencias de un
+                    # lote real recien validado, con FR-9001.por_pulir en 0 despues
+                    # de validar 102 buenas. Mismo patron OR (codigo_sistema O
+                    # id_codigo) que ya usa PulidoService.ejecutar_persistencia_pulido
+                    # -- preservar_o_normalizar_prefijo respeta el prefijo que YA
+                    # traiga reg.id_codigo en vez de asumir uno.
                     if buenas_por_pulir > 0:
-                        producto = db.session.query(Producto).filter_by(codigo_sistema=codigo).first()
+                        codigo_con_prefijo = preservar_o_normalizar_prefijo(reg.id_codigo)
+                        producto = db.session.query(Producto).filter(
+                            (Producto.codigo_sistema == codigo_con_prefijo) | (Producto.id_codigo == codigo)
+                        ).first()
                         if producto:
                             producto.por_pulir = (producto.por_pulir or 0) + buenas_por_pulir
                         else:
