@@ -90,9 +90,22 @@ class StockService:
             if operacion == 'sumar':
                 nuevo_valor = stock_actual + cantidad
             else:
-                nuevo_valor = stock_actual - cantidad
-                if nuevo_valor < 0:
-                    logger.warning(f"⚠️ Stock negativo detectado en {codigo_norm} ({almacen}): {nuevo_valor}")
+                # Piso en 0 (pedido del usuario 2026-09-22): una cantidad
+                # fisica (materia prima, por_pulir, p_terminado...) nunca
+                # puede ser negativa de verdad -- un descuento que la cruzaria
+                # solo significa que el registro de ENTRADA de ese insumo va
+                # atrasado o falta, no que el almacen tenga "menos que nada".
+                # Se deja pasar la operacion igual (nunca bloquea produccion
+                # real por un tema de captura de datos), pero el valor
+                # guardado queda en 0, no en negativo -- el warning de abajo
+                # sigue siendo la senal de que algo quedo sin registrar.
+                nuevo_valor = max(0, stock_actual - cantidad)
+                if stock_actual - cantidad < 0:
+                    logger.warning(
+                        f"⚠️ Stock insuficiente en {codigo_norm} ({almacen}): "
+                        f"{stock_actual} - {cantidad} habria quedado en {stock_actual - cantidad:g}, "
+                        f"se deja en 0 (probable entrada de materia prima sin registrar)."
+                    )
 
             tipo_mov = "ENTRADA" if operacion == 'sumar' else "SALIDA"
             res_dict = {
