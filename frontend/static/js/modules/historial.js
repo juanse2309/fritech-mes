@@ -142,6 +142,24 @@
                     h_datos = rawData.filter(r => r.Tipo === 'METALS');
                 }
 
+                // BUGFIX 2026-09-22: /api/historial-global ni siquiera recibe
+                // 'operario'/'codigo' como parámetros (solo el camino especial de
+                // PULIDO -> /api/pulido/historial los usaba), así que escribir en
+                // esos campos con "Todos los Movimientos" u otro proceso distinto
+                // a Pulido no filtraba nada. construir_movimientos_historial ya
+                // normaliza TODOS los tipos (Inyección/Pulido/Ensamble/Ventas/PNC/
+                // Metals) a las mismas llaves 'Responsable' y 'Producto' -- se
+                // filtra acá en memoria (los datos ya están cargados completos)
+                // en vez de tocar cada rama del backend por separado.
+                const operarioFiltro = operario.trim().toUpperCase();
+                const codigoFiltro = codigo.trim().toUpperCase();
+                if (operarioFiltro) {
+                    h_datos = h_datos.filter(r => String(r.Responsable || '').toUpperCase().includes(operarioFiltro));
+                }
+                if (codigoFiltro) {
+                    h_datos = h_datos.filter(r => String(r.Producto || '').toUpperCase().includes(codigoFiltro));
+                }
+
                 h_paginaActual = 1;
 
                 if (h_datos.length > 0) {
@@ -453,20 +471,13 @@
                 btnExport.onclick = exportarHistorialExcel;
             }
 
-            // Filtros dinámicos (Auto-filtrar al cambiar)
-            ['fechaDesde', 'fechaHasta', 'tipoProceso', 'filtroOperario', 'filtroCodigo'].forEach(id => {
-                const el = document.getElementById(id);
-                if (el) {
-                    const eventType = el.tagName === 'INPUT' && el.type === 'text' ? 'keyup' : 'change';
-                    el.addEventListener(eventType, (e) => {
-                        // Si es keyup, solo filtrar después de 3 caracteres o Enter
-                        if (eventType === 'keyup' && e.key !== 'Enter' && el.value.length < 3 && el.value.length > 0) return;
-                        cargarHistorial();
-                    });
-                }
-            });
-
-            cargarHistorial();
+            // BUGFIX 2026-09-22: antes cada input (fecha/proceso/operario/codigo)
+            // traía su propio listener que disparaba cargarHistorial() solo con
+            // cambiar la fecha o teclear -- el usuario pedía que la consulta
+            // SOLO se dispare al hacer clic en "Filtrar" (el botón ya llama a
+            // cargarHistorial() directo vía onclick en el HTML). Tampoco se
+            // precarga al abrir la página: el placeholder de historial-container
+            // ya invita a elegir el rango y filtrar.
 
             // Re-renderizar al cambiar tamaño de ventana (Debounce simple)
             let resizeTimer;
