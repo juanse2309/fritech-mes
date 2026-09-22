@@ -27,38 +27,42 @@
  */
 window.ModuloTV = (function () {
 
+    // Duraciones subidas ~30% (pedido del usuario 2026-09-22: "salta" de una
+    // vista a otra) y la última del ciclo (maquinas-semana) queda con más
+    // aire todavía antes de volver a saltar a la primera, para que el corte
+    // del loop no se sienta tan abrupto.
     const SLIDES = [
         {
             id: 'ranking',
-            duracion: 24000,
+            duracion: 30000,
             titulo: 'Ranking por Referencia',
             subtitulo: 'Mix de Producción — Hoy · Meta diaria 2.000 pzs',
             cargar: cargarSlideRanking
         },
         {
             id: 'pulido',
-            duracion: 24000,
+            duracion: 30000,
             titulo: 'Pulido en Vivo',
             subtitulo: 'Quién está trabajando ahora mismo',
             cargar: cargarSlidePulido
         },
         {
             id: 'maquinas-hoy',
-            duracion: 20000,
+            duracion: 26000,
             titulo: 'Reporte de Máquinas',
             subtitulo: 'Avance de hoy',
             cargar: cargarSlideMaquinasHoy
         },
         {
             id: 'ranking-semana',
-            duracion: 22000,
+            duracion: 28000,
             titulo: 'Ranking por Referencia',
             subtitulo: 'Mix de Producción — Acumulado de la semana',
             cargar: cargarSlideRankingSemana
         },
         {
             id: 'maquinas-semana',
-            duracion: 20000,
+            duracion: 30000,
             titulo: 'Reporte de Máquinas',
             subtitulo: 'Acumulado de la semana',
             cargar: cargarSlideMaquinasSemana
@@ -343,7 +347,12 @@ window.ModuloTV = (function () {
                 datasets.push({
                     label: `Otras (${refsResto.length})`,
                     data: ops.map(o => refsResto.reduce((acc, r) => acc + ((operarioRef[o.nombre]?.[r]?.cantidad_total) || 0), 0)),
-                    backgroundColor: 'rgba(148, 163, 184, 0.6)',
+                    // Gris oscuro y apagado (slate-700-ish) a propósito: contra el
+                    // fondo azul-marino del TV, el slate-400 anterior quedaba MÁS
+                    // claro que varios colores de la paleta y "saltaba" como si
+                    // fuera una referencia más en vez de leerse como "el resto,
+                    // menos relevante" -- pedido del usuario 2026-09-22.
+                    backgroundColor: 'rgba(51, 65, 85, 0.75)',
                     borderWidth: 0,
                     borderRadius: 4,
                     barThickness: 40
@@ -372,19 +381,23 @@ window.ModuloTV = (function () {
                     scales: {
                         x: {
                             stacked: true, max: axisMax,
-                            ticks: { color: '#94a3b8', font: { size: 18 } },
+                            ticks: { color: '#cbd5e1', font: { size: 20 } },
                             grid: { color: 'rgba(255,255,255,0.06)' }
                         },
                         y: {
                             stacked: true,
-                            ticks: { color: '#f1f5f9', font: { size: 24, weight: '700' } },
+                            ticks: { color: '#f1f5f9', font: { size: 26, weight: '700' } },
                             grid: { display: false }
                         }
                     },
                     plugins: {
                         legend: {
                             position: 'bottom',
-                            labels: { color: '#cbd5e1', boxWidth: 18, font: { size: 16 }, padding: 14 }
+                            // boxWidth/boxHeight más grandes + más padding entre items:
+                            // con 11 referencias en una sola fila se veían "montadas"
+                            // (el swatch de color casi ilegible a distancia de TV) --
+                            // pedido del usuario 2026-09-22.
+                            labels: { color: '#e2e8f0', boxWidth: 24, boxHeight: 16, font: { size: 17, weight: '600' }, padding: 18 }
                         },
                         tooltip: { enabled: false }
                     }
@@ -728,15 +741,26 @@ window.ModuloTV = (function () {
 
             const ordenadas = [...maquinas].sort((a, b) => (b.produccion_semana || 0) - (a.produccion_semana || 0));
 
-            grid.innerHTML = ordenadas.map(m => `
+            // 'lotes_en_proceso_semana': lotes que ya arrancaron esta semana pero
+            // siguen EN_PROCESO -- su producción todavía no suma a produccion_semana
+            // (solo se cuenta al cerrar el lote). Se avisa como pendiente en vez de
+            // inventar un número de piezas sin auditar (ver programacion_service.py).
+            grid.innerHTML = ordenadas.map(m => {
+                const enCurso = m.lotes_en_proceso_semana || 0;
+                const avisoEnCurso = enCurso > 0
+                    ? `<div class="tv-maq-pendiente">+ ${enCurso} lote${enCurso > 1 ? 's' : ''} en curso esta semana, aún sin cerrar</div>`
+                    : '';
+                return `
                 <div class="tv-card" style="border-top-color:#38bdf8">
                     <div class="tv-card-header">
                         <span class="tv-card-nombre">${m.nombre}</span>
-                        <span class="tv-card-badge" style="background:#38bdf822;color:#38bdf8">${m.lotes_semana || 0} lotes</span>
+                        <span class="tv-card-badge" style="background:#38bdf822;color:#38bdf8">${m.lotes_semana || 0} lotes cerrados</span>
                     </div>
-                    <div class="tv-maq-total-label">Piezas esta semana</div>
+                    <div class="tv-maq-total-label">Piezas esta semana (validadas)</div>
                     <div class="tv-maq-total">${Math.round(m.produccion_semana || 0).toLocaleString('es-CO')}</div>
-                </div>`).join('');
+                    ${avisoEnCurso}
+                </div>`;
+            }).join('');
             iniciarAutoScrollGrid('tv-maquinas-semana-grid', duracionDeSlide('maquinas-semana'));
         } catch (e) {
             console.error('[ModuloTV] Error cargando Reporte de Máquinas (semana):', e);

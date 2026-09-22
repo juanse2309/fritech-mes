@@ -225,13 +225,13 @@ body.tv-produccion-mode #modo-tv-page {
 }
 
 .tv-card-nombre {
-    font-size: 1.6rem;
+    font-size: 1.85rem;
     font-weight: 800;
     color: #ffffff;
 }
 
 .tv-card-badge {
-    font-size: 1rem;
+    font-size: 1.1rem;
     font-weight: 700;
     text-transform: uppercase;
     padding: 5px 12px;
@@ -290,8 +290,9 @@ body.tv-produccion-mode #modo-tv-page {
 }
 
 .tv-card-meta {
-    font-size: 1.15rem;
-    color: #94a3b8;
+    font-size: 1.3rem;
+    font-weight: 600;
+    color: #cbd5e1;
     text-align: center;
 }
 
@@ -332,14 +333,15 @@ body.tv-produccion-mode #modo-tv-page {
 .tv-maq-producto {
     display: flex;
     justify-content: space-between;
-    font-size: 1.15rem;
-    color: #cbd5e1;
+    font-size: 1.3rem;
+    font-weight: 600;
+    color: #e2e8f0;
     padding: 4px 0;
     border-bottom: 1px dashed rgba(255,255,255,.08);
 }
 
 .tv-maq-total {
-    font-size: 3.3rem;
+    font-size: 3.5rem;
     font-weight: 900;
     color: #38bdf8;
     text-align: center;
@@ -349,11 +351,23 @@ body.tv-produccion-mode #modo-tv-page {
 
 .tv-maq-total-label {
     text-align: center;
-    color: #94a3b8;
-    font-size: 1.05rem;
+    color: #cbd5e1;
+    font-size: 1.2rem;
+    font-weight: 700;
     text-transform: uppercase;
     letter-spacing: .05em;
     margin-bottom: 4px;
+}
+
+.tv-maq-pendiente {
+    text-align: center;
+    margin-top: 10px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: rgba(251, 191, 36, .12);
+    color: #fbbf24;
+    font-size: 1.05rem;
+    font-weight: 700;
 }
 
 /* ── Footer: dots + barra de progreso ──────────────────────────────── */

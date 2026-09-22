@@ -498,10 +498,24 @@ class ProgramacionService:
                 })
 
         # Acumulado semanal por máquina (pedido Modo TV 2026-09-09): total de
-        # piezas de lotes CERRADOS desde el lunes de la semana en curso (hora
-        # Colombia) hasta ahora. Se agrega aparte de 'en_proceso'/'programaciones'
-        # (que son solo del día `fecha_str`) porque este acumulado cruza varios
-        # días y no debe cambiar solo porque se filtre otra fecha en Programación.
+        # piezas de lotes CERRADOS cuyo trabajo ARRANCÓ desde el lunes de la
+        # semana en curso (hora Colombia) hasta ahora. Se agrega aparte de
+        # 'en_proceso'/'programaciones' (que son solo del día `fecha_str`)
+        # porque este acumulado cruza varios días y no debe cambiar solo
+        # porque se filtre otra fecha en Programación.
+        #
+        # BUGFIX 2026-09-22: antes se filtraba por
+        # COALESCE(fecha_fin, fecha_inicia) >= lunes_semana -- un lote que
+        # arrancó la semana PASADA pero se cerró (reportó) este lunes le
+        # atribuía TODA su producción a la semana en curso, aunque casi todo
+        # el trabajo real fuera de la semana anterior. Confirmado en planta:
+        # el lunes en la mañana, antes de que se inyectara nada nuevo, el
+        # acumulado ya marcaba ~4.000 pz -- producción de la semana previa
+        # que arrastró el cierre. Ahora se ancla a fecha_inicia (cuándo
+        # arrancó el lote), igual que el Ranking/Mix de esta misma pantalla
+        # (ver cargarSlideRankingSemana -> /api/dashboard/stats, que ya
+        # filtraba por fecha_inicia), para que ambas tarjetas cuenten "esta
+        # semana" con el mismo criterio.
         ahora_co = get_colombia_time()
         lunes_semana = (ahora_co - timedelta(days=ahora_co.weekday())).replace(
             hour=0, minute=0, second=0, microsecond=0
@@ -512,7 +526,7 @@ class ProgramacionService:
             db.func.count(ProduccionInyeccion.id).label('lotes')
         ).filter(
             ProduccionInyeccion.estado == 'CERRADO',
-            db.func.coalesce(ProduccionInyeccion.fecha_fin, ProduccionInyeccion.fecha_inicia) >= lunes_semana
+            ProduccionInyeccion.fecha_inicia >= lunes_semana
         ).group_by(ProduccionInyeccion.maquina).all()
         semana_por_maquina = {
             (fila.maquina or '').upper(): {
@@ -521,6 +535,20 @@ class ProgramacionService:
             }
             for fila in filas_semana
         }
+
+        # Lotes que YA arrancaron esta semana pero siguen EN_PROCESO (no
+        # cerrados): su producción todavía no entra en produccion_semana
+        # (cantidad_real solo se fija al reportar/cerrar, ver
+        # InyeccionService -- no hay un conteo parcial confiable para
+        # mostrar como pieza-a-pieza sin leer directo la bitácora de
+        # lecturas parciales). Se expone solo la CANTIDAD de lotes, para que
+        # el Modo TV pueda avisar "falta cerrar esto" sin inventar un número
+        # de piezas que no está auditado todavía.
+        en_proceso_semana_por_maquina = {}
+        for r in en_proceso:
+            if r.fecha_inicia and r.fecha_inicia >= lunes_semana:
+                key = (r.maquina or '').upper()
+                en_proceso_semana_por_maquina[key] = en_proceso_semana_por_maquina.get(key, 0) + 1
 
         resultado = []
         for maquina_nom in maquinas_set:
@@ -576,6 +604,7 @@ class ProgramacionService:
                 'cola': cola,
                 'produccion_semana': datos_semana['produccion_semana'],
                 'lotes_semana': datos_semana['lotes_semana'],
+                'lotes_en_proceso_semana': en_proceso_semana_por_maquina.get(maquina_upper, 0),
                 'semana_desde': lunes_semana.strftime('%Y-%m-%d')
             })
 
