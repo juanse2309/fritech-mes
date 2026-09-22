@@ -346,6 +346,12 @@ class PDFGenerator:
             styles = getSampleStyleSheet()
             elements = []
 
+            # Nombre fijo, no Empresa.NOMBRE: este reporte es exclusivamente
+            # del flujo Frimetals -> FriParts sin importar cómo esté
+            # configurada la variable EMPRESA_NOMBRE de la instancia donde
+            # corra -- no debe depender de eso para decir lo correcto.
+            NOMBRE_EMPRESA_REPORTE = "FRIMETALS"
+
             titulo_style = ParagraphStyle(
                 'TituloStyle', parent=styles['Heading1'], fontSize=18,
                 alignment=1, textColor=colors.darkblue, spaceAfter=5
@@ -353,7 +359,7 @@ class PDFGenerator:
             elements.append(Paragraph("ENVÍO FRIMETALS &rarr; FRIPARTS", titulo_style))
 
             subtitulo_style = ParagraphStyle('Sub', parent=styles['Normal'], fontSize=10, alignment=1, textColor=colors.grey, spaceAfter=4)
-            elements.append(Paragraph(f"{Empresa.NOMBRE}", subtitulo_style))
+            elements.append(Paragraph(NOMBRE_EMPRESA_REPORTE, subtitulo_style))
             elements.append(Paragraph(
                 f"Rango consultado: {fecha_desde.strftime('%d/%m/%Y')} a {fecha_hasta.strftime('%d/%m/%Y')}",
                 subtitulo_style
@@ -363,6 +369,13 @@ class PDFGenerator:
                 subtitulo_style
             ))
             elements.append(Spacer(1, 0.2 * inch))
+
+            # Estilo de celda propio (en vez de strings planos): un
+            # id_pedido/código largo (ej. "PED-DEMO-FRI001") se salía de su
+            # columna y se montaba sobre la de al lado -- con Paragraph
+            # ajusta línea dentro de la celda en vez de desbordarse.
+            celda_style = ParagraphStyle('Celda', parent=styles['Normal'], fontSize=8, leading=10)
+            celda_centrada_style = ParagraphStyle('CeldaCentrada', parent=celda_style, alignment=1)
 
             total_lineas = 0
             total_pedidos = set()
@@ -380,27 +393,36 @@ class PDFGenerator:
                     fecha_envio = ln.get('fecha_envio_frimetals')
                     fecha_envio_str = fecha_envio.strftime('%d/%m/%Y %H:%M') if fecha_envio else ''
                     data_cliente.append([
-                        str(ln.get('id_pedido') or ''),
-                        str(ln.get('id_codigo') or ''),
-                        Paragraph(str(ln.get('descripcion') or ''), styles['Normal']),
-                        f"{PDFGenerator._safe_float(ln.get('cantidad')):.0f}",
-                        fecha_envio_str,
+                        Paragraph(str(ln.get('id_pedido') or ''), celda_centrada_style),
+                        Paragraph(str(ln.get('id_codigo') or ''), celda_centrada_style),
+                        Paragraph(str(ln.get('descripcion') or ''), celda_style),
+                        Paragraph(f"{PDFGenerator._safe_float(ln.get('cantidad')):.0f}", celda_centrada_style),
+                        Paragraph(fecha_envio_str, celda_centrada_style),
                     ])
 
-                t_cliente = Table(data_cliente, colWidths=[0.9*inch, 1.0*inch, 2.6*inch, 0.8*inch, 1.3*inch])
+                t_cliente = Table(
+                    data_cliente,
+                    colWidths=[1.3*inch, 1.0*inch, 2.3*inch, 0.7*inch, 1.3*inch],
+                    repeatRows=1,  # repite el encabezado si la tabla se corta entre páginas
+                )
                 t_cliente.setStyle(TableStyle([
                     ('BACKGROUND', (0,0), (-1,0), colors.darkblue),
                     ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
                     ('ALIGN', (0,0), (-1,0), 'CENTER'),
-                    ('ALIGN', (0,1), (1,-1), 'CENTER'),
-                    ('ALIGN', (3,1), (-1,-1), 'CENTER'),
+                    ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
                     ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-                    ('FONTSIZE', (0,0), (-1,-1), 8),
+                    ('FONTSIZE', (0,0), (-1,0), 8),
                     ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                    ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+                    ('TOPPADDING', (0,0), (-1,-1), 5),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+                    ('LEFTPADDING', (0,0), (-1,-1), 5),
+                    ('RIGHTPADDING', (0,0), (-1,-1), 5),
+                    # Franjas alternadas: ayuda a no "leer corrido" entre filas
+                    # cuando una descripción larga ocupa más de una línea.
+                    ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.Color(0.96, 0.97, 0.99)]),
                 ]))
                 elements.append(t_cliente)
-                elements.append(Spacer(1, 0.25 * inch))
+                elements.append(Spacer(1, 0.3 * inch))
 
             resumen_style = ParagraphStyle('Resumen', parent=styles['Normal'], fontSize=9, textColor=colors.darkblue)
             elements.append(Paragraph(
@@ -411,7 +433,7 @@ class PDFGenerator:
             footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=7, textColor=colors.grey, alignment=1)
             elements.append(Spacer(1, 0.4 * inch))
             elements.append(Paragraph("-" * 150, footer_style))
-            elements.append(Paragraph(f"Documento de Control Interno {Empresa.NOMBRE}", footer_style))
+            elements.append(Paragraph(f"Documento de Control Interno {NOMBRE_EMPRESA_REPORTE}", footer_style))
 
             doc.build(elements)
             return True
