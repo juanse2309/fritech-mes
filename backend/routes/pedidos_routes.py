@@ -1,5 +1,5 @@
 from backend.utils.auth_middleware import require_role, ROL_ADMINS, ROL_COMERCIALES, ROL_JEFES, _obtener_usuario_activo
-from flask import Blueprint, request, make_response, current_app
+from flask import Blueprint, request, make_response, current_app, send_file
 from backend.core.responses import api_success, api_error
 from backend.models.sql_models import db, Pedido, MetalsPedido, DespachoPedido
 from backend.services.audit_service import AuditService, OwnershipMismatchException
@@ -12,6 +12,8 @@ from backend.config.settings import Empresa
 from datetime import datetime
 import logging
 import json
+import os
+import tempfile
 
 
 pedidos_bp = Blueprint('pedidos', __name__)
@@ -832,6 +834,52 @@ def actualizar_envio_frimetals():
     except Exception as e:
         db.session.rollback()
         logger.error(f"❌ Error actualizando envío Frimetals: {e}")
+        return api_error(str(e), status_code=500)
+
+
+@pedidos_bp.route('/api/pedidos/envio-frimetals/pdf', methods=['GET'])
+@require_role(ROLES_METALS)
+def descargar_pdf_envio_frimetals():
+    """
+    PDF de líneas enviadas de Frimetals a FriParts en un rango de fechas
+    (query params 'desde'/'hasta', YYYY-MM-DD), agrupadas por cliente.
+    Solo lectura, repetible las veces que se quiera -- no marca ni cambia
+    nada en la base de datos. Thin controller: parsea el payload, delega
+    en el service + PDFGenerator y sirve el archivo.
+    """
+    from backend.services.pedidos_service import PedidosService
+    from backend.utils.report_service import PDFGenerator
+
+    desde_str = request.args.get('desde')
+    hasta_str = request.args.get('hasta')
+
+    try:
+        fecha_desde = datetime.strptime(desde_str, '%Y-%m-%d').date()
+        fecha_hasta = datetime.strptime(hasta_str, '%Y-%m-%d').date()
+    except (TypeError, ValueError):
+        return api_error("Parámetros 'desde' y 'hasta' requeridos, formato YYYY-MM-DD", status_code=400)
+
+    try:
+        grupos = PedidosService.listar_envios_frimetals(fecha_desde, fecha_hasta, db.session)
+
+        if not grupos:
+            return api_error("No hay envíos a FriParts en ese rango de fechas", status_code=404)
+
+        fd, tmp_path = tempfile.mkstemp(suffix='.pdf', prefix='envio_friparts_')
+        os.close(fd)
+
+        ok = PDFGenerator.generar_reporte_envio_frimetals(
+            grupos, tmp_path, fecha_desde, fecha_hasta, get_colombia_time()
+        )
+        if not ok:
+            return api_error("No se pudo generar el PDF", status_code=500)
+
+        filename = f"Envio_Frimetals_a_FriParts_{desde_str}_a_{hasta_str}.pdf"
+        return send_file(tmp_path, mimetype='application/pdf', as_attachment=True, download_name=filename)
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"❌ Error generando PDF de envío Frimetals->FriParts: {e}")
         return api_error(str(e), status_code=500)
 
 

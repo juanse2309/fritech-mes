@@ -3,13 +3,14 @@ import os
 import re
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, OperationalError
-from datetime import datetime
+from datetime import datetime, time
 from backend.models.sql_models import Pedido, DistribucionOpPedidos
 from backend.utils.formatters import (
     preservar_o_normalizar_prefijo,
     normalizar_codigo_sin_prefijo,
     sql_expr_codigo_sin_prefijo_fr,
 )
+from backend.utils.time_utils import get_colombia_time
 from backend.config.settings import Empresa
 
 logger = logging.getLogger(__name__)
@@ -798,8 +799,10 @@ class PedidosService:
                 nuevo_envio = str(nuevo_envio).strip().upper() if nuevo_envio else None
                 if nuevo_envio == 'ENVIADO_FRIPARTS' and cantidad_total > 0 and cant_segura >= cantidad_total:
                     item.estado_envio_frimetals = 'ENVIADO_FRIPARTS'
+                    item.fecha_envio_frimetals = get_colombia_time()
                 elif nuevo_envio is None:
                     item.estado_envio_frimetals = None
+                    item.fecha_envio_frimetals = None
                 # cualquier otro valor se ignora silenciosamente -- no rompe el resto del guardado
 
             # Lógica de progreso y estado por item
@@ -924,3 +927,52 @@ class PedidosService:
 
         db_session.flush()
         return {"estado_envio_frimetals": estado_normalizado}
+
+    @staticmethod
+    def listar_envios_frimetals(fecha_desde, fecha_hasta, db_session):
+        """
+        Líneas enviadas de Frimetals a FriParts en un rango de fechas,
+        agrupadas por cliente -- fuente del PDF de "Envío Frimetals ->
+        FriParts" (ver PDFGenerator.generar_reporte_envio_frimetals).
+
+        Filtra por fecha_envio_frimetals, NO por estado_envio_frimetals:
+        una línea que ya avanzó a 'DESPACHADO_FRIPARTS' se sigue contando
+        como enviada ese día (ese es un cierre posterior en el tablero de
+        Frimetals, no invalida que salió de la planta en esa fecha). Solo
+        lectura -- no cambia nada.
+
+        :param fecha_desde: date (inicio del rango, inclusive).
+        :param fecha_hasta: date (fin del rango, inclusive -- se extiende
+            internamente a las 23:59:59.999999 de ese día).
+        :return: dict {cliente: [ {id_pedido, id_codigo, descripcion,
+            cantidad, fecha_envio_frimetals}, ... ]}, ordenado por cliente
+            y luego por fecha de envío.
+        """
+        try:
+            desde_dt = datetime.combine(fecha_desde, time.min)
+            hasta_dt = datetime.combine(fecha_hasta, time.max)
+
+            items = (
+                Pedido.query.filter(
+                    Pedido.fecha_envio_frimetals.isnot(None),
+                    Pedido.fecha_envio_frimetals >= desde_dt,
+                    Pedido.fecha_envio_frimetals <= hasta_dt,
+                )
+                .order_by(Pedido.cliente, Pedido.fecha_envio_frimetals)
+                .all()
+            )
+
+            grupos = {}
+            for it in items:
+                grupos.setdefault(it.cliente or 'SIN CLIENTE', []).append({
+                    "id_pedido": it.id_pedido,
+                    "id_codigo": it.id_codigo,
+                    "descripcion": it.descripcion,
+                    "cantidad": PedidosService._clean_num(it.cantidad),
+                    "fecha_envio_frimetals": it.fecha_envio_frimetals,
+                })
+            return grupos
+        except Exception as e:
+            db_session.rollback()
+            logger.error(f"❌ Error listando envíos Frimetals->FriParts: {e}")
+            raise

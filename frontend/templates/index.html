@@ -5159,6 +5159,9 @@
                     <button class="btn btn-outline-success me-2" id="btn-ver-empacado-almacen" onclick="AlmacenModule.abrirModalEmpacado()">
                         <i class="fas fa-box-open"></i> Ver Empacado
                     </button>
+                    <button class="btn btn-outline-primary me-2" id="btn-pdf-envio-frimetals" style="display:none;" onclick="AlmacenModule.abrirModalPdfEnvioFrimetals()">
+                        <i class="fas fa-file-pdf"></i> PDF Envío a FriParts
+                    </button>
                     <button class="btn btn-primary" id="btn-refrescar-almacen" onclick="AlmacenModule.cargarPedidos()">
                         <i class="fas fa-sync"></i> Actualizar
                     </button>
@@ -5346,6 +5349,26 @@
                     <div id="empacado-almacen-modal-body" style="overflow-y: auto; flex-grow: 1; padding: 0 15px 15px;">
                         <div class="text-center py-4 text-muted"><i class="fas fa-spinner fa-spin fa-2x"></i></div>
                     </div>
+                </div>
+            </div>
+
+            <!-- Modal PDF Envío Frimetals -> FriParts -->
+            <div id="modalPdfEnvioFrimetals" class="modal-overlay"
+                style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 11000; align-items: center; justify-content: center; backdrop-filter: blur(4px);">
+                <div class="modal-content"
+                    style="background: white; border-radius: 16px; width: 95%; max-width: 420px; padding: 20px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="m-0 fw-bold"><i class="fas fa-file-pdf me-2 text-danger"></i>PDF Envío a FriParts</h5>
+                        <button class="btn-close" onclick="document.getElementById('modalPdfEnvioFrimetals').style.display='none'"></button>
+                    </div>
+                    <p class="text-muted small mb-3">Se puede generar las veces que quieras para el mismo rango o uno distinto.</p>
+                    <label class="form-label small fw-bold">Desde</label>
+                    <input type="date" id="pdf-envio-frimetals-desde" class="form-control mb-2">
+                    <label class="form-label small fw-bold">Hasta</label>
+                    <input type="date" id="pdf-envio-frimetals-hasta" class="form-control mb-3">
+                    <button class="btn btn-primary w-100" onclick="AlmacenModule.descargarPdfEnvioFrimetals()">
+                        <i class="fas fa-download me-1"></i>Generar y descargar
+                    </button>
                 </div>
             </div>
 

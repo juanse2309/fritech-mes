@@ -327,3 +327,94 @@ class PDFGenerator:
         except Exception as e:
             logger.error(f"Error generando PDF Batch: {str(e)}")
             return False
+
+    @staticmethod
+    def generar_reporte_envio_frimetals(grupos_por_cliente, filepath, fecha_desde, fecha_hasta, fecha_generacion):
+        """
+        PDF de líneas enviadas de Frimetals a FriParts en un rango de
+        fechas, agrupadas por cliente. Fuente: PedidosService.listar_envios_frimetals.
+
+        grupos_por_cliente: dict {cliente: [ {id_pedido, id_codigo,
+            descripcion, cantidad, fecha_envio_frimetals}, ... ]}.
+        fecha_desde/fecha_hasta: date del rango consultado.
+        fecha_generacion: datetime (hora de Bogotá) de cuándo se generó
+            este PDF -- se muestra junto a la fecha de envío de cada línea
+            para que quede claro que son dos momentos distintos.
+        """
+        try:
+            doc = SimpleDocTemplate(filepath, pagesize=letter)
+            styles = getSampleStyleSheet()
+            elements = []
+
+            titulo_style = ParagraphStyle(
+                'TituloStyle', parent=styles['Heading1'], fontSize=18,
+                alignment=1, textColor=colors.darkblue, spaceAfter=5
+            )
+            elements.append(Paragraph("ENVÍO FRIMETALS &rarr; FRIPARTS", titulo_style))
+
+            subtitulo_style = ParagraphStyle('Sub', parent=styles['Normal'], fontSize=10, alignment=1, textColor=colors.grey, spaceAfter=4)
+            elements.append(Paragraph(f"{Empresa.NOMBRE}", subtitulo_style))
+            elements.append(Paragraph(
+                f"Rango consultado: {fecha_desde.strftime('%d/%m/%Y')} a {fecha_hasta.strftime('%d/%m/%Y')}",
+                subtitulo_style
+            ))
+            elements.append(Paragraph(
+                f"PDF generado el: {fecha_generacion.strftime('%d/%m/%Y %H:%M:%S')}",
+                subtitulo_style
+            ))
+            elements.append(Spacer(1, 0.2 * inch))
+
+            total_lineas = 0
+            total_pedidos = set()
+
+            for cliente in sorted(grupos_por_cliente.keys()):
+                lineas = grupos_por_cliente[cliente]
+
+                elements.append(Paragraph(f"<b>{str(cliente).upper()}</b>", styles['Heading4']))
+
+                headers = ["PEDIDO", "CÓDIGO", "DESCRIPCIÓN", "CANTIDAD", "ENVIADO EL"]
+                data_cliente = [headers]
+                for ln in lineas:
+                    total_lineas += 1
+                    total_pedidos.add(ln.get('id_pedido'))
+                    fecha_envio = ln.get('fecha_envio_frimetals')
+                    fecha_envio_str = fecha_envio.strftime('%d/%m/%Y %H:%M') if fecha_envio else ''
+                    data_cliente.append([
+                        str(ln.get('id_pedido') or ''),
+                        str(ln.get('id_codigo') or ''),
+                        Paragraph(str(ln.get('descripcion') or ''), styles['Normal']),
+                        f"{PDFGenerator._safe_float(ln.get('cantidad')):.0f}",
+                        fecha_envio_str,
+                    ])
+
+                t_cliente = Table(data_cliente, colWidths=[0.9*inch, 1.0*inch, 2.6*inch, 0.8*inch, 1.3*inch])
+                t_cliente.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (-1,0), colors.darkblue),
+                    ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+                    ('ALIGN', (0,0), (-1,0), 'CENTER'),
+                    ('ALIGN', (0,1), (1,-1), 'CENTER'),
+                    ('ALIGN', (3,1), (-1,-1), 'CENTER'),
+                    ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+                    ('FONTSIZE', (0,0), (-1,-1), 8),
+                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+                ]))
+                elements.append(t_cliente)
+                elements.append(Spacer(1, 0.25 * inch))
+
+            resumen_style = ParagraphStyle('Resumen', parent=styles['Normal'], fontSize=9, textColor=colors.darkblue)
+            elements.append(Paragraph(
+                f"<b>Total:</b> {total_lineas} línea(s) de {len(total_pedidos)} pedido(s), {len(grupos_por_cliente)} cliente(s).",
+                resumen_style
+            ))
+
+            footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=7, textColor=colors.grey, alignment=1)
+            elements.append(Spacer(1, 0.4 * inch))
+            elements.append(Paragraph("-" * 150, footer_style))
+            elements.append(Paragraph(f"Documento de Control Interno {Empresa.NOMBRE}", footer_style))
+
+            doc.build(elements)
+            return True
+        except Exception as e:
+            logger.error(f"Error generando PDF de envío Frimetals->FriParts: {str(e)}")
+            return False

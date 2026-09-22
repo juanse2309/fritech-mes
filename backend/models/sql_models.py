@@ -455,6 +455,14 @@ class Pedido(db.Model):
     # Frimetals, no dispara nada -- son bases de datos separadas. Relevante
     # solo en la instancia de Frimetals.
     estado_envio_frimetals = db.Column(db.String(30), nullable=True)
+    # Momento exacto (hora de Bogotá, ver get_colombia_time) en que ESTA
+    # línea se marcó 'ENVIADO_FRIPARTS' -- se limpia junto con
+    # estado_envio_frimetals si se desmarca. Permite generar el PDF de
+    # envío a FriParts por rango de fechas (ver
+    # PedidosService.listar_envios_frimetals) en vez de depender del
+    # estado actual, que se pierde en cuanto el pedido pasa a
+    # 'DESPACHADO_FRIPARTS'. Relevante solo en la instancia de Frimetals.
+    fecha_envio_frimetals = db.Column(db.DateTime, nullable=True)
     # Marca manual por LÍNEA de producto: el ítem no se puede alistar/surtir
     # (faltante de stock). Ya viajaba en el payload de
     # /api/pedidos/actualizar-alistamiento pero nunca se persistía -- se

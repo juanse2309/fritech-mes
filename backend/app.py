@@ -208,6 +208,7 @@ with app.app_context():
         db.session.execute(text("ALTER TABLE db_pedidos ADD COLUMN IF NOT EXISTS tiene_pedido_frimetals BOOLEAN DEFAULT FALSE;"))
         db.session.execute(text("ALTER TABLE db_pedidos ADD COLUMN IF NOT EXISTS estado_envio_frimetals VARCHAR(30);"))
         db.session.execute(text("ALTER TABLE db_pedidos ADD COLUMN IF NOT EXISTS no_disponible BOOLEAN DEFAULT FALSE;"))
+        db.session.execute(text("ALTER TABLE db_pedidos ADD COLUMN IF NOT EXISTS fecha_envio_frimetals TIMESTAMP;"))
         db.session.commit()
     except Exception as e_db_frimetals:
         db.session.rollback()

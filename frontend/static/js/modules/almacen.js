@@ -172,6 +172,11 @@ const AlmacenModule = {
         try {
             if (showLoading) mostrarLoading(true);
 
+            const btnPdfEnvioFrimetals = document.getElementById('btn-pdf-envio-frimetals');
+            if (btnPdfEnvioFrimetals) {
+                btnPdfEnvioFrimetals.style.display = (window.AppState?.user?.division === 'FRIMETALS') ? 'inline-block' : 'none';
+            }
+
             // CRÍTICO: Si window.AppState.user no está listo, intentar recuperarlo de AuthModule o SessionStorage
             let user = window.AppState?.user;
             console.log('📦 [Almacen] Usuario inicial:', user);
@@ -1848,6 +1853,57 @@ const AlmacenModule = {
         } catch (e) {
             console.error('[Almacen] Error cargando empacado:', e);
             body.innerHTML = '<div class="text-center text-danger py-4">No se pudo cargar la información de empacado.</div>';
+        }
+    },
+
+    abrirModalPdfEnvioFrimetals: function () {
+        const modal = document.getElementById('modalPdfEnvioFrimetals');
+        if (!modal) return;
+
+        const hoy = new Date().toISOString().slice(0, 10);
+        const desdeInput = document.getElementById('pdf-envio-frimetals-desde');
+        const hastaInput = document.getElementById('pdf-envio-frimetals-hasta');
+        if (desdeInput) desdeInput.value = hoy;
+        if (hastaInput) hastaInput.value = hoy;
+
+        modal.style.display = 'flex';
+    },
+
+    descargarPdfEnvioFrimetals: async function () {
+        const desde = document.getElementById('pdf-envio-frimetals-desde')?.value;
+        const hasta = document.getElementById('pdf-envio-frimetals-hasta')?.value;
+
+        if (!desde || !hasta) {
+            mostrarNotificacion('Selecciona ambas fechas', 'warning');
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/pedidos/envio-frimetals/pdf?desde=${desde}&hasta=${hasta}`);
+
+            if (!response.ok) {
+                let mensaje = 'No se pudo generar el PDF';
+                try {
+                    const data = await response.json();
+                    mensaje = data.error || mensaje;
+                } catch (e) {}
+                mostrarNotificacion(mensaje, 'warning');
+                return;
+            }
+
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = `Envio_Frimetals_a_FriParts_${desde}_a_${hasta}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            console.error('❌ [Almacen] Error descargando PDF de envío a FriParts:', e);
+            mostrarNotificacion('Error de conexión', 'error');
         }
     },
 
