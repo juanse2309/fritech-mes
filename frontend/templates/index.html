@@ -4381,9 +4381,10 @@
                             <h5 class="mb-1 fw-bold text-dark"><i
                                     class="fas fa-list-check text-primary me-2"></i>Pedidos Pendientes
                             </h5>
-                            <small class="text-muted">Seleccione los pedidos para generar el archivo.
-                                Estado:
-                                <strong>PENDIENTE</strong></small>
+                            <small class="text-muted">Seleccione los pedidos para generar el archivo. Incluye
+                                pedidos en <strong>PENDIENTE</strong>, <strong>EN ALISTAMIENTO</strong> o
+                                <strong>LISTO PARA DESPACHO</strong> -- ninguno se ha exportado a WO todavía
+                                (ver columna Estado de cada fila).</small>
                         </div>
                         <div class="d-flex gap-2 align-items-center">
                             <div class="input-group input-group-sm" style="width: 220px;"
@@ -4418,13 +4419,14 @@
                                         <th>Cliente</th>
                                         <th>Fecha</th>
                                         <th>Vendedor</th>
+                                        <th class="text-center">Estado</th>
                                         <th class="text-center">Items</th>
                                         <th class="text-end pe-4">Total</th>
                                     </tr>
                                 </thead>
                                 <tbody id="tbody-pedidos-exportar">
                                     <tr>
-                                        <td colspan="7" class="text-center py-5 text-muted"><i
+                                        <td colspan="8" class="text-center py-5 text-muted"><i
                                                 class="fas fa-spinner fa-spin fa-2x mb-2"></i><br>Cargando
                                             pedidos...</td>
                                     </tr>
@@ -4433,10 +4435,8 @@
                         </div>
                     </div>
                     <div class="card-footer bg-light border-0 py-3 d-flex justify-content-between align-items-center">
-                        <small class="text-muted"><i class="fas fa-info-circle me-1"></i> Mostrando solo
-                            pedidos
-                            con
-                            estado PENDIENTE.</small>
+                        <small class="text-muted"><i class="fas fa-info-circle me-1"></i> No se muestran
+                            pedidos ya exportados a WO, facturados o cancelados.</small>
                         <div id="wo-selection-count" class="fw-bold text-primary" style="display: none;">
                             <i class="fas fa-check-circle me-1"></i> <span id="wo-count-val">0</span>
                             pedidos

@@ -65,7 +65,7 @@ const ModuloFacturacion = {
     cargarPedidosPendientes: async function () {
         try {
             const tbody = document.getElementById('tbody-pedidos-exportar');
-            if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="text-center py-5 text-muted"><i class="fas fa-spinner fa-spin fa-2x mb-2"></i><br>Cargando pedidos pendientes...</td></tr>';
+            if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="text-center py-5 text-muted"><i class="fas fa-spinner fa-spin fa-2x mb-2"></i><br>Cargando pedidos pendientes...</td></tr>';
 
             const response = await fetch('/api/facturacion/pedidos-pendientes');
             const data = await response.json();
@@ -84,13 +84,28 @@ const ModuloFacturacion = {
                     mostrarNotificacion('No hay pedidos pendientes', 'info');
                 }
             } else {
-                if (tbody) tbody.innerHTML = `<tr><td colspan="7" class="text-center py-4 text-danger">Error: ${data.error}</td></tr>`;
+                if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-danger">Error: ${data.error}</td></tr>`;
             }
         } catch (error) {
             console.error('Error cargando pedidos pendientes:', error);
             const tbody = document.getElementById('tbody-pedidos-exportar');
-            if (tbody) tbody.innerHTML = `<tr><td colspan="7" class="text-center py-4 text-danger">Error de conexión</td></tr>`;
+            if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-danger">Error de conexión</td></tr>`;
         }
+    },
+
+    /**
+     * Color de badge por estado real del pedido -- este panel muestra
+     * cualquier estado no bloqueado (ver FacturacionService.listar_pedidos_exportables),
+     * no solo PENDIENTE, así que cada fila necesita decir en cuál está.
+     */
+    badgeEstadoPedidoWO: function (estado) {
+        const map = {
+            'PENDIENTE': 'bg-secondary',
+            'EN ALISTAMIENTO': 'bg-primary',
+            'LISTO PARA DESPACHO': 'bg-success'
+        };
+        const clase = map[(estado || '').toUpperCase()] || 'bg-light text-dark border';
+        return `<span class="badge ${clase}">${estado || '—'}</span>`;
     },
 
     /**
@@ -101,7 +116,7 @@ const ModuloFacturacion = {
         if (!tbody) return;
 
         if (this.pedidosPendientes.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" class="text-center py-5 text-muted"><i class="fas fa-inbox fa-3x mb-3 text-light"></i><br>No hay pedidos en estado PENDIENTE</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center py-5 text-muted"><i class="fas fa-inbox fa-3x mb-3 text-light"></i><br>No hay pedidos pendientes de exportar</td></tr>';
             return;
         }
 
@@ -109,7 +124,7 @@ const ModuloFacturacion = {
             <tr onclick="ModuloFacturacion.toggleRowClick('${p.id}', event)" style="cursor: pointer;">
                 <td class="text-center">
                     <div class="form-check d-flex justify-content-center">
-                        <input class="form-check-input check-pedido-wo" type="checkbox" value="${p.id}" 
+                        <input class="form-check-input check-pedido-wo" type="checkbox" value="${p.id}"
                                ${this.pedidosSeleccionados.has(p.id) ? 'checked' : ''}
                                onchange="ModuloFacturacion.togglePedido('${p.id}'); event.stopPropagation();">
                     </div>
@@ -123,6 +138,7 @@ const ModuloFacturacion = {
                 </td>
                 <td>${p.fecha}</td>
                 <td>${p.vendedor}</td>
+                <td class="text-center">${this.badgeEstadoPedidoWO(p.estado)}</td>
                 <td class="text-center">
                     <span class="badge bg-light text-dark border rounded-pill px-3">${p.items_count}</span>
                 </td>
