@@ -453,8 +453,14 @@ class PedidosService:
 
         db_ventas es la fuente de verdad de lo que WO sí tiene (poblada por
         WoSyncService en cada sincronización comercial). El archivo generado
-        siempre usa 'Encab: Prefijo' = 'PED' (ver procesar_datos_wo), así que
-        el documento esperado en WO es exactamente 'PED-<wo_consecutivo>'.
+        usa 'Encab: Prefijo' = Empresa.PREFIJO_DOCUMENTO_WO_PEDIDO (ver
+        procesar_datos_wo) -- NO asumir 'PED' fijo: confirmado 2026-09-22
+        que FRIMETALS no tiene prefijo configurado en su WO (los documentos
+        quedan como número plano), así que el documento esperado es
+        '<prefijo>-<wo_consecutivo>' solo si hay prefijo, o el
+        wo_consecutivo a secas si no. Antes de este fix, el hardcode a
+        'PED-' hacía que la alerta reportara TODOS los pedidos exportados de
+        FRIMETALS como "nunca confirmados" aunque sí estuvieran en WO.
 
         dias_gracia evita falsos positivos el mismo día/día siguiente al
         exportar: el reflejo en db_ventas depende del próximo ciclo de
@@ -469,6 +475,14 @@ class PedidosService:
             fecha ascendente (los más viejos primero).
         """
         try:
+            # Mismo prefijo que FacturacionService.procesar_datos_wo escribe en
+            # 'Encab: Prefijo' al generar el archivo -- si la empresa no tiene
+            # prefijo configurado en su WO (Empresa.PREFIJO_DOCUMENTO_WO_PEDIDO
+            # vacío, caso FRIMETALS), el documento en WO queda como número
+            # plano, sin separador.
+            prefijo = (Empresa.PREFIJO_DOCUMENTO_WO_PEDIDO or '').strip()
+            prefijo_documento = f"{prefijo}-" if prefijo else ""
+
             sql = text("""
                 SELECT
                     p.id_pedido,
@@ -485,13 +499,15 @@ class PedidosService:
                   AND p.fecha <= (CURRENT_DATE - (:dias_gracia || ' days')::interval)
                   AND NOT EXISTS (
                       SELECT 1 FROM db_ventas v
-                      WHERE v.documento = 'PED-' || p.wo_consecutivo
+                      WHERE v.documento = :prefijo_documento || p.wo_consecutivo
                         AND v.clasificacion = 'pedido'
                   )
                 GROUP BY p.id_pedido, p.wo_consecutivo
                 ORDER BY MIN(p.fecha) ASC;
             """)
-            filas = db_session.execute(sql, {"dias_gracia": dias_gracia}).mappings().all()
+            filas = db_session.execute(
+                sql, {"dias_gracia": dias_gracia, "prefijo_documento": prefijo_documento}
+            ).mappings().all()
 
             hoy = datetime.now().date()
             return [{
