@@ -2167,27 +2167,59 @@ const ModuloPulido = {
         const s = this._sesionesSupervision.find(x => x.id_pulido === idPulido);
         if (!s) return;
 
-        const { value: motivo } = await Swal.fire({
+        // Lista canónica de operarias (pedido 2026-09-22: reasignar de una
+        // vez a la persona correcta, sin tener que ir aparte a Programación).
+        // Si el admin todavía no visitó el panel de Programación esta sesión,
+        // _operariasPulido puede venir vacía -- se recarga aquí para no
+        // depender de eso.
+        if (!this._operariasPulido || this._operariasPulido.length === 0) {
+            await this._cargarOperariasProgramacion();
+        }
+        const otrasOperarias = (this._operariasPulido || []).filter(n => n !== s.responsable);
+        const opcionesReasignar = otrasOperarias.map(n => `<option value="${n}">${n}</option>`).join('');
+
+        const { value: formValues } = await Swal.fire({
             title: 'Cancelar inicio equivocado',
-            html: `<p style="text-align:left; font-size:0.9em; color:#666;">
-                        ${s.codigo || '—'} · OP ${s.orden_produccion || 'SIN OP'} vuelve a la cola de hoy como
-                        programado. Como no hay piezas reportadas, no se toca inventario.
-                   </p>`,
-            input: 'text',
-            inputLabel: 'Motivo',
-            inputPlaceholder: 'Ej: la tarea era de Yudi, no de Laura',
+            html: `
+                <p style="text-align:left; font-size:0.9em; color:#666;">
+                    ${s.codigo || '—'} · OP ${s.orden_produccion || 'SIN OP'} vuelve a la cola de hoy como
+                    programado. Como no hay piezas reportadas, no se toca inventario.
+                </p>
+                <div class="text-start mb-2">
+                    <label class="form-label fw-bold small text-uppercase text-muted mb-1">Reasignar a (opcional)</label>
+                    <select id="swal-cancel-operaria" class="form-select">
+                        <option value="">No reasignar -- dejar sin dueño en la cola</option>
+                        ${opcionesReasignar}
+                    </select>
+                </div>
+                <div class="text-start">
+                    <label class="form-label fw-bold small text-uppercase text-muted mb-1">Motivo</label>
+                    <input type="text" id="swal-cancel-motivo" class="form-control" placeholder="Ej: la tarea era de Yudi, no de Laura">
+                </div>
+            `,
             showCancelButton: true,
             confirmButtonText: 'Cancelar sesión',
             cancelButtonText: 'Cerrar',
             confirmButtonColor: '#dc3545',
-            inputValidator: (val) => !val?.trim() ? 'El motivo es obligatorio' : undefined
+            focusConfirm: false,
+            preConfirm: () => {
+                const motivo = document.getElementById('swal-cancel-motivo').value.trim();
+                const nuevaOperaria = document.getElementById('swal-cancel-operaria').value;
+                if (!motivo) { Swal.showValidationMessage('El motivo es obligatorio'); return false; }
+                return { motivo, nuevaOperaria };
+            }
         });
-        if (!motivo) return;
+        if (!formValues) return;
 
         try {
-            await window.apiClient.post('/pulido/admin/cancelar_inicio', { id_pulido: idPulido, motivo: motivo.trim() });
+            await window.apiClient.post('/pulido/admin/cancelar_inicio', {
+                id_pulido: idPulido,
+                motivo: formValues.motivo,
+                nueva_operaria: formValues.nuevaOperaria || null,
+            });
             await this._cargarSesionesSupervision();
-            Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Sesión cancelada', showConfirmButton: false, timer: 1800 });
+            const msg = formValues.nuevaOperaria ? `Sesión cancelada y reasignada a ${formValues.nuevaOperaria}` : 'Sesión cancelada';
+            Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: msg, showConfirmButton: false, timer: 2200 });
         } catch (error) {
             Swal.fire('Error', error.body?.error || 'No se pudo cancelar la sesión.', 'error');
         }

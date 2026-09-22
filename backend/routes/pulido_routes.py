@@ -446,10 +446,11 @@ def cancelar_inicio_pulido():
         data = request.get_json() or {}
         id_pulido = data.get('id_pulido')
         motivo = (data.get('motivo') or '').strip()
+        nueva_operaria = (data.get('nueva_operaria') or '').strip() or None
         if not id_pulido:
             return api_error("Falta id_pulido", status_code=400)
 
-        resultado = PulidoService.cancelar_inicio_equivocado(id_pulido, motivo, _obtener_usuario_activo())
+        resultado = PulidoService.cancelar_inicio_equivocado(id_pulido, motivo, _obtener_usuario_activo(), nueva_operaria)
         return api_success(data=resultado)
     except ValueError as e:
         return api_error(str(e), status_code=400)

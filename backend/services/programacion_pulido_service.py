@@ -470,15 +470,23 @@ class ProgramacionPulidoService:
         item.estado = 'EN_PROCESO'
 
     @staticmethod
-    def revertir_a_programado(id_pulido) -> None:
+    def revertir_a_programado(id_pulido, nueva_operaria=None) -> None:
         """
         Nivel 1 del módulo de corrección de Pulido (plan 2026-09-22):
         contraparte de vincular_inicio. Si la sesión que
         PulidoService.cancelar_inicio_equivocado está a punto de borrar
         venía de una tarjeta programada, la devuelve a PROGRAMADO y
         desvincula el id_pulido -- para que la cola de hoy la vuelva a
-        mostrar como pendiente (y se pueda reasignar de operaria desde ahí,
-        con la edición normal de tarjeta) en vez de quedar huérfana.
+        mostrar como pendiente, lista para retomarse por Modo Satélite.
+
+        `nueva_operaria` (opcional, pedido del usuario 2026-09-22): cuando el
+        error de fondo era "esto no era de esta persona", reasigna de una
+        vez a la operaria correcta en el mismo paso -- mismo criterio que
+        actualizar_item para reasignar una tarjeta todavía PROGRAMADA: la
+        manda al FINAL de la cola de la operaria destino (mismo día), para
+        no meterla en medio de una cola ya armada por otra persona. Sin
+        `nueva_operaria`, la tarjeta queda igual que antes de iniciarla (se
+        puede reasignar después, a mano, desde el panel de Programación).
 
         No hace commit: mismo contrato que vincular_inicio, el caller
         confirma la transacción completa. No hace nada si no hay ninguna
@@ -492,6 +500,18 @@ class ProgramacionPulidoService:
             return
         item.estado = 'PROGRAMADO'
         item.id_pulido = None
+
+        nueva_operaria = str(nueva_operaria or '').strip()
+        if nueva_operaria and nueva_operaria != item.operaria:
+            maximo = db.session.query(
+                db.func.max(ProgramacionPulido.orden_prioridad)
+            ).filter(
+                ProgramacionPulido.operaria == nueva_operaria,
+                ProgramacionPulido.fecha == item.fecha,
+                ProgramacionPulido.id != item.id,
+            ).scalar()
+            item.operaria = nueva_operaria
+            item.orden_prioridad = int(maximo or 0) + 1
 
     @staticmethod
     def marcar_finalizada_si_corresponde(id_pulido, estado_produccion) -> None:

@@ -1666,7 +1666,7 @@ class PulidoService:
     #   revirtiendo/reaplicando el efecto de inventario bajo el código correcto.
 
     @staticmethod
-    def cancelar_inicio_equivocado(id_pulido, motivo, autorizado_por):
+    def cancelar_inicio_equivocado(id_pulido, motivo, autorizado_por, nueva_operaria=None):
         """
         Nivel 1: descarta una sesión que se inició por error (persona
         equivocada, tarea equivocada) y todavía no reportó ninguna pieza --
@@ -1674,9 +1674,14 @@ class PulidoService:
         se tocó (ver ejecutar_persistencia_pulido: total_descuento_por_pulir
         solo se aplica si es > 0), así que no hay nada que revertir: se
         borra la fila y, si venía de una tarjeta programada, esa tarjeta
-        vuelve a PROGRAMADO para que se pueda retomar (por la persona
-        correcta, incluso reasignándola desde ahí) por Modo Satélite normal
-        -- sin tocar la base de datos a mano.
+        vuelve a PROGRAMADO para que se pueda retomar por Modo Satélite
+        normal -- sin tocar la base de datos a mano.
+
+        `nueva_operaria` (opcional, pedido del usuario 2026-09-22): si el
+        error de fondo era "esto no era de esta persona", reasigna la
+        tarjeta reaparecida a la operaria correcta en el mismo paso -- ver
+        ProgramacionPulidoService.revertir_a_programado. Sin esto, la
+        tarjeta vuelve tal cual estaba, sin operaria nueva.
 
         Cubre también una sesión PAUSADA con tiempo acumulado: el tiempo de
         pausa no afecta inventario, solo métricas de eficiencia -- se
@@ -1714,16 +1719,18 @@ class PulidoService:
                 f"no se puede cancelar. Usa la corrección de código/OP en su lugar."
             )
 
+        nueva_operaria = (nueva_operaria or '').strip() or None
         detalle_log = (
             f"id_pulido={id_pulido} | codigo={registro.codigo} | "
             f"OP={registro.orden_produccion} | lote={registro.lote} | "
             f"responsable={registro.responsable} | motivo={motivo.strip()}"
+            + (f" | reasignado_a={nueva_operaria}" if nueva_operaria else "")
         )
 
         try:
             try:
                 from backend.services.programacion_pulido_service import ProgramacionPulidoService
-                ProgramacionPulidoService.revertir_a_programado(id_pulido)
+                ProgramacionPulidoService.revertir_a_programado(id_pulido, nueva_operaria)
             except Exception as err_prog:
                 # Silencioso a propósito, mismo criterio que vincular_inicio:
                 # un fallo acá no debe impedir cancelar la sesión real.
