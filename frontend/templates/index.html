@@ -1927,6 +1927,28 @@
                 </div>
                 <div id="pagination-container" class="mt-3"></div>
             </div>
+
+            <!-- Modal Comprometidos por Referencia: drill-down de la columna
+                 COMPROMETIDO en Productos y Existencias, para ver qué pedidos
+                 la componen sin tener que ir a buscar uno por uno. Debe vivir
+                 dentro de #inventario-page (bug 2026-09-22: estaba anidado en
+                 #almacen-page, que tiene display:none salvo que sea la página
+                 activa -- por eso el botón no hacía nada visible mientras se
+                 estaba en Productos y Existencias). -->
+            <div id="modalComprometidosProducto" class="modal-overlay"
+                style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 11000; align-items: center; justify-content: center; backdrop-filter: blur(4px);">
+                <div class="modal-content"
+                    style="background: white; border-radius: 16px; width: 95%; max-width: 800px; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);">
+                    <div class="d-flex justify-content-between align-items-center p-3 border-bottom" style="flex-shrink: 0;">
+                        <h5 class="m-0 fw-bold"><i class="fas fa-hand-holding me-2 text-danger"></i>Pedidos que Componen el Comprometido</h5>
+                        <button class="btn-close" onclick="document.getElementById('modalComprometidosProducto').style.display='none'"></button>
+                    </div>
+                    <p class="text-muted small px-3 pt-3 mb-2" id="comprometidos-modal-subtitulo">&nbsp;</p>
+                    <div id="comprometidos-modal-body" style="overflow-y: auto; flex-grow: 1; padding: 0 15px 15px;">
+                        <div class="text-center py-4 text-muted"><i class="fas fa-spinner fa-spin fa-2x"></i></div>
+                    </div>
+                </div>
+            </div>
         </div> <!-- Inyección -->
         <!-- Inyección -->
         <div id="inyeccion-page" class="page">
@@ -5302,24 +5324,6 @@
                         <button class="btn btn-sm btn-outline-primary" onclick="AlmacenModule.irACarteraCompleta()">
                             <i class="fas fa-external-link-alt me-1"></i> Ver Cartera Completa
                         </button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Modal Comprometidos por Referencia: drill-down de la columna
-                 COMPROMETIDO en Productos y Existencias, para ver qué pedidos
-                 la componen sin tener que ir a buscar uno por uno. -->
-            <div id="modalComprometidosProducto" class="modal-overlay"
-                style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 11000; align-items: center; justify-content: center; backdrop-filter: blur(4px);">
-                <div class="modal-content"
-                    style="background: white; border-radius: 16px; width: 95%; max-width: 800px; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);">
-                    <div class="d-flex justify-content-between align-items-center p-3 border-bottom" style="flex-shrink: 0;">
-                        <h5 class="m-0 fw-bold"><i class="fas fa-hand-holding me-2 text-danger"></i>Pedidos que Componen el Comprometido</h5>
-                        <button class="btn-close" onclick="document.getElementById('modalComprometidosProducto').style.display='none'"></button>
-                    </div>
-                    <p class="text-muted small px-3 pt-3 mb-2" id="comprometidos-modal-subtitulo">&nbsp;</p>
-                    <div id="comprometidos-modal-body" style="overflow-y: auto; flex-grow: 1; padding: 0 15px 15px;">
-                        <div class="text-center py-4 text-muted"><i class="fas fa-spinner fa-spin fa-2x"></i></div>
                     </div>
                 </div>
             </div>
