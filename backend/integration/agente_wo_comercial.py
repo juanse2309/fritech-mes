@@ -496,10 +496,24 @@ def ejecutar_extraccion():
         select_nit = f"E.[{col_nit}]" if col_nit else "NULL"
 
         # 2. Consulta SQL Definitiva simplificada
+        #
+        # 'documento' con CASE en vez de E.prefijo + '-' + CAST(...) directo:
+        # confirmado 2026-09-22 en FRIMETALS (empresa sin prefijo de
+        # documento configurado en su WO) que E.prefijo llega NULL para sus
+        # documentos 'PED' -- en T-SQL, NULL + cualquier cosa = NULL, así
+        # que la concatenación directa dejaba 'documento' en NULL para
+        # cada fila. WoSyncService._mapear_fila_comercial convierte ese
+        # None a '' silenciosamente (str(None or '')), así que el síntoma
+        # en Postgres era 'documento' = '' para TODAS las filas
+        # clasificacion='pedido' de Frimetals -- nunca hacía match contra
+        # nada, sin importar cómo se armara la comparación del lado de la
+        # app (ver detectar_exportados_sin_confirmar_wo).
         sql = f"""
         SELECT
             E.Fecha AS fecha,
-            (E.prefijo + '-' + CAST(E.Numero_de_Documento AS VARCHAR)) AS documento,
+            (CASE WHEN E.prefijo IS NULL OR E.prefijo = '' THEN ''
+                  ELSE E.prefijo + '-' END
+             + CAST(E.Numero_de_Documento AS VARCHAR)) AS documento,
             E.Nombre_tercero_externo AS nombres,
             E.Nombres_tercero_interno AS vendedor,
             E.Ciudad_Encabezado AS zona,
