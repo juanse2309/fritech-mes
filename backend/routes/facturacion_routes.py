@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 @facturacion_bp.route('/api/facturacion/pedidos-pendientes', methods=['GET'])
-@require_role(ROL_ADMINS + ['JEFE ALMACEN', 'JEFE ALISTAMIENTO'])
+@require_role(ROL_ADMINS + ['JEFE ALMACEN', 'JEFE ALISTAMIENTO', 'COMERCIAL FRIMETALS'])
 def obtener_pedidos_pendientes():
     """Pedidos exportables a WO -- ver FacturacionService.listar_pedidos_exportables."""
     try:
@@ -95,7 +95,7 @@ def _generar_excel_wo_task(task_id, ids_filter, consecutivo_inicial):
 
 
 @facturacion_bp.route('/api/exportar/world-office', methods=['POST'])
-@require_role(ROL_ADMINS + ['JEFE ALMACEN', 'JEFE ALISTAMIENTO'])
+@require_role(ROL_ADMINS + ['JEFE ALMACEN', 'JEFE ALISTAMIENTO', 'COMERCIAL FRIMETALS'])
 def exportar_world_office():
     """
     Controller delgado: dispara la generación (que incluye la persistencia
@@ -117,7 +117,7 @@ def exportar_world_office():
     return api_success(data={"task_id": task_id}, status_code=202)
 
 @facturacion_bp.route('/api/exportar/world-office/preview', methods=['GET', 'POST'])
-@require_role(ROL_ADMINS + ['JEFE ALMACEN', 'JEFE ALISTAMIENTO'])
+@require_role(ROL_ADMINS + ['JEFE ALMACEN', 'JEFE ALISTAMIENTO', 'COMERCIAL FRIMETALS'])
 def preview_world_office():
     """Vista previa sin persistencia (rollback automático de la sesión)."""
     try:
