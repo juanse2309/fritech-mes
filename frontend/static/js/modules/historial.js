@@ -1242,6 +1242,16 @@
     window.ModuloHistorial = {
         inicializar: initHistorial,
         filtrar: cargarHistorial,
+        // BUGFIX 2026-09-22: el boton "Filtrar" (index.html) y una llamada
+        // cruzada desde inyeccion.js ya invocaban .cargarHistorial(), no
+        // .filtrar() -- esa clave nunca existio aqui. Antes pasaba
+        // desapercibido porque el auto-filtrado en cada cambio de fecha
+        // disparaba la busqueda por una referencia directa a la funcion, sin
+        // pasar por window.ModuloHistorial. Al quitar el auto-filtrado (ver
+        // commit del mismo dia "Historial Global solo filtra al hacer clic
+        // en Filtrar"), el boton quedo como el unico camino para buscar, y
+        // resulto que nunca habia funcionado.
+        cargarHistorial: cargarHistorial,
         cambiarPagina: cambiarPagina,
         editarRegistro: editarRegistro,
         guardarCambios: guardarCambios,
