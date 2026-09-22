@@ -97,8 +97,22 @@ const ModuloFacturacion = {
      * Color de badge por estado real del pedido -- este panel muestra
      * cualquier estado no bloqueado (ver FacturacionService.listar_pedidos_exportables),
      * no solo PENDIENTE, así que cada fila necesita decir en cuál está.
+     *
+     * woConsecutivo aparte del estado de picking a propósito (pedido del
+     * usuario 2026-09-22): 'estado' lo puede resetear
+     * PedidosService.actualizar_alistamiento cuando Almacén sigue trabajando
+     * el pedido DESPUÉS de exportado, sin tocar wo_consecutivo -- por eso es
+     * la señal confiable de "ya existe un documento en WO", independiente
+     * de en qué estado de picking esté. El backend ya excluye estos pedidos
+     * de la lista; este badge es una defensa adicional por si alguno llega
+     * a colarse.
      */
-    badgeEstadoPedidoWO: function (estado) {
+    badgeEstadoPedidoWO: function (estado, woConsecutivo) {
+        if (woConsecutivo) {
+            return `<span class="badge bg-warning text-dark" title="Ya existe el documento PED-${woConsecutivo} en World Office">
+                        <i class="fas fa-triangle-exclamation me-1"></i>Ya en WO (PED-${woConsecutivo})
+                    </span>`;
+        }
         const map = {
             'PENDIENTE': 'bg-secondary',
             'EN ALISTAMIENTO': 'bg-primary',
@@ -138,7 +152,7 @@ const ModuloFacturacion = {
                 </td>
                 <td>${p.fecha}</td>
                 <td>${p.vendedor}</td>
-                <td class="text-center">${this.badgeEstadoPedidoWO(p.estado)}</td>
+                <td class="text-center">${this.badgeEstadoPedidoWO(p.estado, p.wo_consecutivo)}</td>
                 <td class="text-center">
                     <span class="badge bg-light text-dark border rounded-pill px-3">${p.items_count}</span>
                 </td>

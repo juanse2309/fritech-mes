@@ -248,12 +248,26 @@ class FacturacionService:
         listo para despacho el mismo día, solo se pudo exportar llamando
         /api/exportar/world-office directo con ids_filter, a mano).
 
+        BUGFIX 2026-09-22: filtrar solo por 'estado' no bastaba -- ese campo
+        también lo pisa PedidosService.actualizar_alistamiento() cada vez que
+        Almacén guarda progreso de picking (SIN mirar si el pedido ya estaba
+        EXPORTADO_WO), así que un pedido genuinamente ya exportado a WO podía
+        volver a aparecer aquí como pendiente en cuanto Almacén tocara de
+        nuevo su alistamiento. Confirmado en producción: pedidos 104651-104654
+        seguían con wo_consecutivo == su propio id_pedido (prueba de que
+        procesar_datos_wo ya corrió y generó el documento real en WO, ver
+        db_ventas), pero su 'estado' había vuelto a 'EN ALISTAMIENTO'.
+        wo_consecutivo NUNCA lo toca actualizar_alistamiento, así que es la
+        señal confiable de "ya existe un documento en WO" -- independiente
+        de en qué estado de picking esté el pedido.
         :return: lista de dicts agrupados por pedido (id/fecha/cliente/
-            vendedor/estado/items_count/total/items), orden fecha desc.
+            vendedor/estado/wo_consecutivo/items_count/total/items), orden
+            fecha desc.
         """
         try:
             estados_bloqueados = ESTADOS_INMUTABLES_PEDIDO | ESTADOS_SENSIBLES_PEDIDO
             query = Pedido.query.filter(~Pedido.estado.in_(estados_bloqueados))
+            query = query.filter(or_(Pedido.wo_consecutivo.is_(None), Pedido.wo_consecutivo == ''))
             query = query.filter(Pedido.es_exportacion.is_(True) if es_exportacion else Pedido.es_exportacion.isnot(True))
 
             agrupados = {}
@@ -262,7 +276,8 @@ class FacturacionService:
                 if id_ped not in agrupados:
                     agrupados[id_ped] = {
                         'id': id_ped, 'fecha': str(r.fecha), 'cliente': r.cliente,
-                        'vendedor': r.vendedor, 'estado': r.estado, 'items_count': 0, 'total': 0, 'items': []
+                        'vendedor': r.vendedor, 'estado': r.estado, 'wo_consecutivo': r.wo_consecutivo,
+                        'items_count': 0, 'total': 0, 'items': []
                     }
                 cant = float(r.cantidad or 0)
                 prec = float(r.precio_unitario or 0)
@@ -321,13 +336,27 @@ class FacturacionService:
             # Selección explícita: no exigir 'PENDIENTE', solo bloquear estados
             # ya protegidos (evita re-exportar/duplicar en WO un pedido que ya
             # tiene documento, o tocar uno cerrado/cancelado/facturado).
+            #
+            # BUGFIX 2026-09-22: bloquear solo por 'estado' no alcanza --
+            # actualizar_alistamiento() puede resetear 'estado' de un pedido
+            # ya EXPORTADO_WO de vuelta a EN ALISTAMIENTO (ver docstring de
+            # listar_pedidos_exportables), y ese estado ya no cae en
+            # estados_bloqueados_reexportacion. Sin este segundo filtro, una
+            # selección explícita (ids_filter) directa a este endpoint podía
+            # volver a exportar un pedido que YA tiene documento real en WO
+            # (wo_consecutivo ya asignado), generando un duplicado/choque de
+            # numeración en el ERP.
             estados_bloqueados_reexportacion = ESTADOS_INMUTABLES_PEDIDO | ESTADOS_SENSIBLES_PEDIDO
             query = query.filter(
                 Pedido.id_pedido.in_(ids_filter),
-                ~Pedido.estado.in_(estados_bloqueados_reexportacion)
+                ~Pedido.estado.in_(estados_bloqueados_reexportacion),
+                or_(Pedido.wo_consecutivo.is_(None), Pedido.wo_consecutivo == '')
             )
         else:
-            query = query.filter(Pedido.estado == 'PENDIENTE')
+            query = query.filter(
+                Pedido.estado == 'PENDIENTE',
+                or_(Pedido.wo_consecutivo.is_(None), Pedido.wo_consecutivo == '')
+            )
 
         results = query.order_by(Pedido.id_pedido.asc()).all()
 
