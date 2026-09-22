@@ -11,7 +11,7 @@ from backend.core.sql_database import db
 from backend.config.settings import Empresa
 from backend.models.sql_models import Producto, Pedido, AppConfig
 from backend.utils.formatters import normalizar_codigo, limpiar_identificacion_tercero
-from backend.services.pedidos_service import ESTADOS_INMUTABLES_PEDIDO, ESTADOS_SENSIBLES_PEDIDO
+from backend.services.pedidos_service import ESTADOS_INMUTABLES_PEDIDO, ESTADOS_SENSIBLES_PEDIDO, PedidosService
 
 logger = logging.getLogger(__name__)
 
@@ -315,7 +315,10 @@ class FacturacionService:
         Muta los objetos ORM (quema id_pedido/wo_consecutivo a doc_nro,
         estado=EXPORTADO_WO) -- el caller decide si hace commit o rollback
         (ver preview_world_office para el patrón de vista previa sin
-        persistencia).
+        persistencia). También recalcula PedidosService.recalcular_comprometido
+        para cada código tocado antes de retornar (fix 2026-09-22 -- antes
+        EXPORTADO_WO dejaba comprometido inflado en db_productos hasta que
+        alguna otra edición de ese código lo recalculaba por casualidad).
 
         :return: (df, items_con_exito, ids_omitidos)
         """
@@ -398,6 +401,14 @@ class FacturacionService:
             curr_cons = None
 
         items_con_exito = 0
+        # Códigos cuyo estado pasa a EXPORTADO_WO en este lote -- se recalcula
+        # comprometido para todos al final (ver bug 2026-09-22: esta función
+        # mutaba estado=EXPORTADO_WO sin avisarle nunca a
+        # PedidosService.recalcular_comprometido, así que db_productos.comprometido
+        # se quedaba inflado con pedidos que ya no debían contar como reserva
+        # pendiente hasta que alguna OTRA edición de ese código lo recalculara
+        # por casualidad).
+        codigos_afectados = set()
 
         for item, precio_maestro in results:
             id_orig = item.id_pedido
@@ -419,6 +430,8 @@ class FacturacionService:
             item.id_pedido = doc_nro  # Se sobreescribe el ID original con el consecutivo de WO
             item.wo_consecutivo = doc_nro
             item.estado = 'EXPORTADO_WO'
+            if item.id_codigo:
+                codigos_afectados.add(str(item.id_codigo).strip().upper())
 
             logger.info(f"🔄 ID de pedido actualizado: {old_id} -> {doc_nro}")
             items_con_exito += 1
@@ -506,6 +519,16 @@ class FacturacionService:
                 df = df[columnas_wo + ['precio_historico', 'precio_maestro']]
             else:
                 df = df[columnas_wo]
+
+        # Mismo patrón que pedidos_routes.py: recalcular es una corrección
+        # derivada, no la operación principal -- si falla, no debe tumbar la
+        # exportación a WO que ya está en curso (el caller sigue decidiendo
+        # el commit/rollback del resto). No hace commit propio.
+        if codigos_afectados:
+            try:
+                PedidosService.recalcular_comprometido(codigos_afectados, db.session)
+            except Exception as e:
+                logger.warning(f"⚠️ Error recalculando comprometido tras exportar a WO {codigos_afectados}: {e}")
 
         return df, items_con_exito, ids_omitidos
 
@@ -652,7 +675,9 @@ class FacturacionService:
         Muta los objetos ORM (quema id_pedido/wo_consecutivo a doc_nro,
         estado=EXPORTADO_WO) igual que procesar_datos_wo -- el caller decide
         si hace commit o rollback (ver preview_world_office para el patrón
-        de vista previa sin persistencia).
+        de vista previa sin persistencia). También recalcula
+        PedidosService.recalcular_comprometido para cada código tocado antes
+        de retornar (mismo fix 2026-09-22 que procesar_datos_wo).
 
         :return: (df, cnt) -- cnt es la cantidad de pedidos (no líneas)
             actualizados a EXPORTADO_WO.
@@ -698,6 +723,9 @@ class FacturacionService:
             curr_cons = None
 
         pedidos_actualizados = set()
+        # Mismo bug 2026-09-22 que procesar_datos_wo -- ver su comentario
+        # sobre codigos_afectados para el detalle completo.
+        codigos_afectados = set()
 
         for item, _precio_maestro in results:
             id_orig = item.id_pedido
@@ -714,6 +742,8 @@ class FacturacionService:
             item.wo_consecutivo = doc_nro
             item.estado = 'EXPORTADO_WO'
             pedidos_actualizados.add(id_orig)
+            if item.id_codigo:
+                codigos_afectados.add(str(item.id_codigo).strip().upper())
 
             nit_raw = mapa_clientes.get(str(item.cliente or '').upper(), item.nit or '')
             nit_limpio = limpiar_identificacion_tercero(nit_raw)
@@ -755,4 +785,11 @@ class FacturacionService:
             rows_finales.append(row)
 
         df = pd.DataFrame(rows_finales, columns=COLUMNAS_WO_EXPORTACION)
+
+        if codigos_afectados:
+            try:
+                PedidosService.recalcular_comprometido(codigos_afectados, db.session)
+            except Exception as e:
+                logger.warning(f"⚠️ Error recalculando comprometido tras exportar a WO {codigos_afectados}: {e}")
+
         return df, len(pedidos_actualizados)
