@@ -470,6 +470,30 @@ class ProgramacionPulidoService:
         item.estado = 'EN_PROCESO'
 
     @staticmethod
+    def revertir_a_programado(id_pulido) -> None:
+        """
+        Nivel 1 del módulo de corrección de Pulido (plan 2026-09-22):
+        contraparte de vincular_inicio. Si la sesión que
+        PulidoService.cancelar_inicio_equivocado está a punto de borrar
+        venía de una tarjeta programada, la devuelve a PROGRAMADO y
+        desvincula el id_pulido -- para que la cola de hoy la vuelva a
+        mostrar como pendiente (y se pueda reasignar de operaria desde ahí,
+        con la edición normal de tarjeta) en vez de quedar huérfana.
+
+        No hace commit: mismo contrato que vincular_inicio, el caller
+        confirma la transacción completa. No hace nada si no hay ninguna
+        tarjeta vinculada a este id_pulido (la sesión se pudo haber
+        iniciado "suelta", sin pasar por Programación).
+        """
+        if not id_pulido:
+            return
+        item = db.session.query(ProgramacionPulido).filter_by(id_pulido=id_pulido).first()
+        if not item:
+            return
+        item.estado = 'PROGRAMADO'
+        item.id_pulido = None
+
+    @staticmethod
     def marcar_finalizada_si_corresponde(id_pulido, estado_produccion) -> None:
         """Si el registro de ProduccionPulido que se acaba de guardar está
         vinculado a una tarjeta programada y su estado ya es terminal

@@ -1655,6 +1655,224 @@ class PulidoService:
         }
 
     # ---------------------------------------------------------------
+    # MÓDULO DE CORRECCIÓN DE PULIDO (plan 2026-09-22)
+    # ---------------------------------------------------------------
+    # Reemplaza la mala práctica de corregir errores de operación (persona
+    # equivocada iniciando una tarea, referencia/OP mal seleccionada) editando
+    # la base de datos a mano. Dos niveles, según si la sesión ya movió
+    # inventario o no -- ver diseño acordado con el usuario 2026-09-22:
+    #   Nivel 1 (cancelar_inicio_equivocado): sesión en cero, se descarta.
+    #   Nivel 2 (corregir_codigo_op): sesión con avance real, se corrige
+    #   revirtiendo/reaplicando el efecto de inventario bajo el código correcto.
+
+    @staticmethod
+    def cancelar_inicio_equivocado(id_pulido, motivo, autorizado_por):
+        """
+        Nivel 1: descarta una sesión que se inició por error (persona
+        equivocada, tarea equivocada) y todavía no reportó ninguna pieza --
+        ni buenas, ni PNC, ni revueltos. En ese estado el inventario NUNCA
+        se tocó (ver ejecutar_persistencia_pulido: total_descuento_por_pulir
+        solo se aplica si es > 0), así que no hay nada que revertir: se
+        borra la fila y, si venía de una tarjeta programada, esa tarjeta
+        vuelve a PROGRAMADO para que se pueda retomar (por la persona
+        correcta, incluso reasignándola desde ahí) por Modo Satélite normal
+        -- sin tocar la base de datos a mano.
+
+        Cubre también una sesión PAUSADA con tiempo acumulado: el tiempo de
+        pausa no afecta inventario, solo métricas de eficiencia -- se
+        descarta junto con el resto, correcto porque nunca fue producción
+        real.
+
+        Si la sesión SÍ tiene avance real (cantidad_real, PNC o revueltos
+        > 0), se rechaza: ese caso ya movió inventario y debe corregirse
+        con PulidoService.corregir_codigo_op (Nivel 2), no cancelarse.
+
+        :raises ValueError: id_pulido inexistente, sesión ya cerrada, o con
+            avance real.
+        """
+        if not motivo or not motivo.strip():
+            raise ValueError("El motivo es obligatorio para cancelar una sesión.")
+
+        registro = ProduccionPulido.query.filter_by(id_pulido=id_pulido).first()
+        if not registro:
+            raise ValueError(f"No existe ninguna sesión de Pulido con id_pulido={id_pulido}")
+
+        if (registro.estado or '').strip().upper() not in ESTADOS_PULIDO_EN_PROGRESO:
+            raise ValueError(
+                f"La sesión {id_pulido} ya está en estado {registro.estado} -- solo se pueden "
+                f"cancelar sesiones que siguen en curso (TRABAJANDO/EN_PROCESO/PAUSADO)."
+            )
+
+        cantidad_real = float(registro.cantidad_real or 0)
+        pnc_total = float(registro.pnc_inyeccion or 0) + float(registro.pnc_pulido or 0)
+        revueltos_count = db.session.query(BujeRevuelto).filter_by(id_pulido=id_pulido).count()
+
+        if cantidad_real > 0 or pnc_total > 0 or revueltos_count > 0:
+            raise ValueError(
+                f"La sesión {id_pulido} ya tiene avance real registrado "
+                f"({cantidad_real:g} buenas, {pnc_total:g} PNC, {revueltos_count} revueltos) -- "
+                f"no se puede cancelar. Usa la corrección de código/OP en su lugar."
+            )
+
+        detalle_log = (
+            f"id_pulido={id_pulido} | codigo={registro.codigo} | "
+            f"OP={registro.orden_produccion} | lote={registro.lote} | "
+            f"responsable={registro.responsable} | motivo={motivo.strip()}"
+        )
+
+        try:
+            try:
+                from backend.services.programacion_pulido_service import ProgramacionPulidoService
+                ProgramacionPulidoService.revertir_a_programado(id_pulido)
+            except Exception as err_prog:
+                # Silencioso a propósito, mismo criterio que vincular_inicio:
+                # un fallo acá no debe impedir cancelar la sesión real.
+                logger.warning(f"⚠️ [PULIDO-CANCELAR] No se pudo revertir la tarjeta programada de {id_pulido}: {err_prog}")
+
+            db.session.query(PncInyeccion).filter_by(id_inyeccion=id_pulido).delete()
+            db.session.query(PncPulido).filter_by(id_pulido=id_pulido).delete()
+            db.session.query(PncEnsamble).filter_by(id_ensamble=id_pulido).delete()
+            db.session.query(BujeRevuelto).filter_by(id_pulido=id_pulido).delete()
+            db.session.delete(registro)
+
+            from backend.models.sql_models import OperacionLog
+            db.session.add(OperacionLog(
+                modulo="PULIDO_SUPERVISION",
+                operario=autorizado_por,
+                accion=f"Cancelar inicio equivocado ({id_pulido})",
+                detalles=detalle_log,
+            ))
+
+            db.session.commit()
+            logger.info(f"✅ [PULIDO-CANCELAR] Sesión {id_pulido} cancelada por {autorizado_por}. {detalle_log}")
+            return {"id_pulido": id_pulido, "cancelado": True}
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"❌ [PULIDO-CANCELAR] Error cancelando {id_pulido}: {e}")
+            raise
+
+    @staticmethod
+    def corregir_codigo_op(id_pulido, nuevo_codigo, nueva_op, motivo, autorizado_por):
+        """
+        Nivel 2: corrige la referencia y/o la OP de un reporte que YA tiene
+        avance real (cantidad_real/PNC/revueltos > 0) -- ese avance ya
+        movió inventario (por_pulir/p_terminado) bajo el código viejo, así
+        que hay que revertirlo ahí y aplicarlo bajo el código nuevo, no
+        solo cambiar el texto.
+
+        A propósito NO reutiliza ejecutar_persistencia_pulido completo: esa
+        función recalcula duracion_segundos/tiempo_total_minutos combinando
+        la fecha de HOY con las horas del payload (pensada para cuando la
+        operaria reporta en el momento) -- reusarla para corregir un
+        reporte de un día anterior movería silenciosamente sus métricas de
+        tiempo. Esta función solo toca código/orden_produccion e
+        inventario -- nada de horas, duración, PNC ni revueltos.
+
+        NO reasigna las cubetas de DistribucionOpPedidos si cambia la OP
+        (fuera de alcance v1): la cantidad ya distribuida FIFO bajo la OP
+        vieja se queda ahí. Si eso importa para el caso puntual, hay que
+        revisarlo a mano en Auditoría de OP.
+
+        :raises ValueError: id_pulido inexistente, sin avance real (debería
+            cancelarse por Nivel 1, no corregirse), o sin ningún cambio real.
+        """
+        if not motivo or not motivo.strip():
+            raise ValueError("El motivo es obligatorio para corregir una sesión.")
+
+        registro = ProduccionPulido.query.filter_by(id_pulido=id_pulido).first()
+        if not registro:
+            raise ValueError(f"No existe ninguna sesión de Pulido con id_pulido={id_pulido}")
+
+        cantidad_real = float(registro.cantidad_real or 0)
+        pnc_total = float(registro.pnc_inyeccion or 0) + float(registro.pnc_pulido or 0)
+        rev_total = float(
+            db.session.query(db.func.coalesce(db.func.sum(BujeRevuelto.cantidad), 0))
+            .filter_by(id_pulido=id_pulido).scalar() or 0
+        )
+
+        if cantidad_real == 0 and pnc_total == 0 and rev_total == 0:
+            raise ValueError(
+                f"La sesión {id_pulido} no tiene avance real -- usa 'Cancelar inicio equivocado' en vez de corregirla."
+            )
+
+        codigo_viejo = registro.codigo
+        op_vieja = registro.orden_produccion
+
+        nuevo_codigo_norm = preservar_o_normalizar_prefijo(nuevo_codigo.strip()) if (nuevo_codigo or '').strip() else None
+        nueva_op_final = nueva_op.strip() if (nueva_op or '').strip() else None
+
+        cambia_codigo = bool(nuevo_codigo_norm) and nuevo_codigo_norm != codigo_viejo
+        cambia_op = bool(nueva_op_final) and nueva_op_final != op_vieja
+
+        if not cambia_codigo and not cambia_op:
+            raise ValueError("No se envió ningún cambio real de código u OP.")
+
+        try:
+            if cambia_codigo:
+                total_efecto = cantidad_real + pnc_total + rev_total
+                es_prueba = PulidoService._es_prueba(op_vieja, id_pulido)
+
+                if not es_prueba:
+                    codigo_viejo_norm = preservar_o_normalizar_prefijo(codigo_viejo)
+                    prod_viejo = db.session.query(Producto).filter(
+                        (Producto.codigo_sistema == codigo_viejo_norm) | (Producto.id_codigo == codigo_viejo_norm)
+                    ).first()
+                    if prod_viejo:
+                        prod_viejo.por_pulir = float(prod_viejo.por_pulir or 0) + total_efecto
+                        p_terminado_revertido = float(prod_viejo.p_terminado or 0) - cantidad_real
+                        if p_terminado_revertido < 0:
+                            logger.warning(
+                                f"⚠️ [PULIDO-CORRECCION] Al corregir {id_pulido}, revertir P.Terminado de "
+                                f"{codigo_viejo} lo manda a negativo ({p_terminado_revertido}) -- probablemente "
+                                f"ya se consumió aguas abajo. Se deja en 0."
+                            )
+                        prod_viejo.p_terminado = max(0, p_terminado_revertido)
+
+                    prod_nuevo = db.session.query(Producto).filter(
+                        (Producto.codigo_sistema == nuevo_codigo_norm) | (Producto.id_codigo == nuevo_codigo_norm)
+                    ).first()
+                    if prod_nuevo:
+                        prod_nuevo.por_pulir = max(0, float(prod_nuevo.por_pulir or 0) - total_efecto)
+                        prod_nuevo.p_terminado = float(prod_nuevo.p_terminado or 0) + cantidad_real
+
+                codigo_pnc_nuevo = normalizar_codigo_sin_prefijo(nuevo_codigo_norm)
+                db.session.query(PncInyeccion).filter_by(id_inyeccion=id_pulido).update({"id_codigo": codigo_pnc_nuevo})
+                db.session.query(PncPulido).filter_by(id_pulido=id_pulido).update({"codigo": codigo_pnc_nuevo})
+                db.session.query(PncEnsamble).filter_by(id_ensamble=id_pulido).update({"id_codigo": codigo_pnc_nuevo})
+
+                registro.codigo = nuevo_codigo_norm
+
+            if cambia_op:
+                registro.orden_produccion = nueva_op_final
+
+            db.session.add(PulidoOverride(
+                id_pulido=id_pulido,
+                tipo="CORRECCION_CODIGO_OP",
+                operaria=registro.responsable,
+                autorizado_por=autorizado_por,
+                motivo=motivo.strip(),
+                detalle=(
+                    f"codigo: {codigo_viejo} -> {registro.codigo} | "
+                    f"OP: {op_vieja} -> {registro.orden_produccion}"
+                ),
+            ))
+
+            db.session.commit()
+            logger.info(
+                f"✅ [PULIDO-CORRECCION] Sesión {id_pulido} corregida por {autorizado_por}: "
+                f"codigo {codigo_viejo}->{registro.codigo}, OP {op_vieja}->{registro.orden_produccion}"
+            )
+            return {
+                "id_pulido": id_pulido,
+                "codigo": registro.codigo,
+                "orden_produccion": registro.orden_produccion,
+            }
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"❌ [PULIDO-CORRECCION] Error corrigiendo {id_pulido}: {e}")
+            raise
+
+    # ---------------------------------------------------------------
     # HELPERS
     # ---------------------------------------------------------------
     @staticmethod

@@ -429,6 +429,61 @@ def rechazar_pendiente_pulido():
         return api_error(str(e), status_code=500)
 
 
+# ────────────────────────────────────────────────────────────────────
+# MÓDULO DE CORRECCIÓN DE PULIDO (plan 2026-09-22): reemplaza la práctica
+# de arreglar errores de operación (persona equivocada iniciando una tarea,
+# código/OP mal seleccionado) editando la base de datos a mano. Mismo nivel
+# de acceso que la cola de autorización de arriba -- ver
+# PulidoService.cancelar_inicio_equivocado / corregir_codigo_op.
+# ────────────────────────────────────────────────────────────────────
+
+@pulido_bp.route('/api/pulido/admin/cancelar_inicio', methods=['POST'])
+@require_role(ROL_ADMINS)
+def cancelar_inicio_pulido():
+    """Nivel 1: descarta una sesión iniciada por error que todavía no
+    reportó nada -- ver PulidoService.cancelar_inicio_equivocado."""
+    try:
+        data = request.get_json() or {}
+        id_pulido = data.get('id_pulido')
+        motivo = (data.get('motivo') or '').strip()
+        if not id_pulido:
+            return api_error("Falta id_pulido", status_code=400)
+
+        resultado = PulidoService.cancelar_inicio_equivocado(id_pulido, motivo, _obtener_usuario_activo())
+        return api_success(data=resultado)
+    except ValueError as e:
+        return api_error(str(e), status_code=400)
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"❌ Error cancelando inicio de Pulido: {e}")
+        return api_error(str(e), status_code=500)
+
+
+@pulido_bp.route('/api/pulido/admin/corregir_codigo_op', methods=['POST'])
+@require_role(ROL_ADMINS)
+def corregir_codigo_op_pulido():
+    """Nivel 2: corrige código/OP de una sesión con avance real,
+    revirtiendo y reaplicando el efecto de inventario -- ver
+    PulidoService.corregir_codigo_op."""
+    try:
+        data = request.get_json() or {}
+        id_pulido = data.get('id_pulido')
+        nuevo_codigo = data.get('codigo')
+        nueva_op = data.get('orden_produccion')
+        motivo = (data.get('motivo') or '').strip()
+        if not id_pulido:
+            return api_error("Falta id_pulido", status_code=400)
+
+        resultado = PulidoService.corregir_codigo_op(id_pulido, nuevo_codigo, nueva_op, motivo, _obtener_usuario_activo())
+        return api_success(data=resultado)
+    except ValueError as e:
+        return api_error(str(e), status_code=400)
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"❌ Error corrigiendo código/OP de Pulido: {e}")
+        return api_error(str(e), status_code=500)
+
+
 @pulido_bp.route('/api/pulido/tareas_pendientes', methods=['GET'])
 def get_pulido_tareas_pendientes():
     try:

@@ -1925,6 +1925,29 @@ const ModuloPulido = {
                 ? `<img src="${imagenUrl}" alt="${s.codigo}" style="width:100%; height:100%; object-fit:contain;" onerror="this.parentElement.innerHTML='<i class=\\'fas fa-image text-muted\\' style=\\'font-size:1.5rem;\\'></i>';">`
                 : `<i class="fas fa-cog text-muted" style="font-size:1.5rem;"></i>`;
 
+            // Módulo de corrección (plan 2026-09-22): reemplaza editar la DB a
+            // mano para dos errores operativos distintos, según si la sesión
+            // ya tiene avance real o no (ver PulidoService.cancelar_inicio_equivocado
+            // / corregir_codigo_op) --
+            //   Sin avance (0 buenas, 0 PNC): "Cancelar inicio" -- la tarea NO
+            //   era de esta persona, se descarta completa y la tarjeta
+            //   programada vuelve a PROGRAMADO para retomarla por Modo
+            //   Satélite. Distinto del botón "Corregir" de arriba (que es para
+            //   cuando SÍ era la persona correcta, solo se equivocó de
+            //   referencia/OP y sigue trabajando).
+            //   Con avance real: "Corregir con inventario" -- referencia/OP
+            //   mal puesta pero ya se reportaron piezas, así que hay que
+            //   mover el efecto en stock, no solo el texto.
+            // ROL_ADMINS únicamente -- mismo nivel que "Pendientes de autorización"
+            // (ver _esAdminActivo), aunque un Jefe de Pulido pueda ver el resto
+            // del panel. El backend también lo exige (@require_role(ROL_ADMINS)
+            // en cancelar_inicio/corregir_codigo_op), esto es solo para no
+            // mostrar un botón que le daría 403.
+            const sinAvance = !(parseFloat(s.cantidad_real) > 0) && !(parseInt(s.pnc_inyeccion) > 0) && !(parseInt(s.pnc_pulido) > 0);
+            const btnCorreccionModulo = !this._esAdminActivo() ? '' : (sinAvance
+                ? `<button class="btn btn-sm btn-outline-danger flex-fill" onclick="ModuloPulido._cancelarInicioEquivocado('${s.id_pulido}')"><i class="fas fa-rotate-left me-1"></i>Cancelar inicio</button>`
+                : `<button class="btn btn-sm btn-outline-warning flex-fill" onclick="ModuloPulido._abrirCorregirConInventario('${s.id_pulido}')"><i class="fas fa-boxes-stacked me-1"></i>Corregir c/inventario</button>`);
+
             return `
                 <div class="col-12 col-md-6 col-lg-4" id="card-sup-${s.id_pulido}" data-estado="${s.estado}" data-hora-inicio="${s.hora_inicio_dt || ''}" data-hora-pausa="${s.hora_pausa_dt || ''}" data-pausa-acumulada="${s.tiempo_pausa_acumulado || 0}">
                     <div class="card shadow-sm h-100" id="tarjeta-inner-sup-${s.id_pulido}" style="border: none; border-top: 4px solid ${tema.acento}; border-radius: 14px; overflow: hidden;">
@@ -1948,6 +1971,9 @@ const ModuloPulido = {
                             <div class="d-flex gap-2 mb-2 mt-3">
                                 ${btnPausarReanudar}
                                 <button class="btn btn-sm btn-outline-primary flex-fill" onclick="ModuloPulido._toggleEdicionSupervision('${s.id_pulido}')"><i class="fas fa-pen me-1"></i>Corregir</button>
+                            </div>
+                            <div class="d-flex gap-2 mb-2">
+                                ${btnCorreccionModulo}
                             </div>
                             <div id="edit-sup-${s.id_pulido}" style="display:none;" class="border-top pt-2 mt-1">
                                 <!-- Corregir aquí es para mientras SIGUE trabajando (Referencia/OP/Lote
@@ -2129,6 +2155,98 @@ const ModuloPulido = {
             }
         } catch (error) {
             Swal.fire('Error', error.body?.error || error.message || 'No se pudo guardar la corrección.', 'error');
+        }
+    },
+
+    // ── Módulo de corrección de Pulido (plan 2026-09-22) ──────────────────
+    // Nivel 1: descarta una sesión iniciada por error (persona equivocada,
+    // tarea equivocada) que todavía no reportó nada -- distinto del botón
+    // "Corregir" de arriba, que es para cuando la persona SÍ era la correcta
+    // y solo se equivocó de referencia/OP. Ver PulidoService.cancelar_inicio_equivocado.
+    _cancelarInicioEquivocado: async function (idPulido) {
+        const s = this._sesionesSupervision.find(x => x.id_pulido === idPulido);
+        if (!s) return;
+
+        const { value: motivo } = await Swal.fire({
+            title: 'Cancelar inicio equivocado',
+            html: `<p style="text-align:left; font-size:0.9em; color:#666;">
+                        ${s.codigo || '—'} · OP ${s.orden_produccion || 'SIN OP'} vuelve a la cola de hoy como
+                        programado. Como no hay piezas reportadas, no se toca inventario.
+                   </p>`,
+            input: 'text',
+            inputLabel: 'Motivo',
+            inputPlaceholder: 'Ej: la tarea era de Yudi, no de Laura',
+            showCancelButton: true,
+            confirmButtonText: 'Cancelar sesión',
+            cancelButtonText: 'Cerrar',
+            confirmButtonColor: '#dc3545',
+            inputValidator: (val) => !val?.trim() ? 'El motivo es obligatorio' : undefined
+        });
+        if (!motivo) return;
+
+        try {
+            await window.apiClient.post('/pulido/admin/cancelar_inicio', { id_pulido: idPulido, motivo: motivo.trim() });
+            await this._cargarSesionesSupervision();
+            Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Sesión cancelada', showConfirmButton: false, timer: 1800 });
+        } catch (error) {
+            Swal.fire('Error', error.body?.error || 'No se pudo cancelar la sesión.', 'error');
+        }
+    },
+
+    // Nivel 2: corrige referencia/OP de una sesión que YA tiene avance real
+    // (buenas o PNC reportados) -- revierte el efecto en inventario del
+    // código viejo y lo aplica bajo el código nuevo. Ver
+    // PulidoService.corregir_codigo_op.
+    _abrirCorregirConInventario: async function (idPulido) {
+        const s = this._sesionesSupervision.find(x => x.id_pulido === idPulido);
+        if (!s) return;
+
+        const { value: formValues } = await Swal.fire({
+            title: 'Corregir código / OP',
+            html: `
+                <div class="alert alert-warning border-0 text-start py-2 px-3 mb-3" style="background:#fef9c3; border-radius:10px; font-size:0.85em;">
+                    ${s.cantidad_real || 0} buenas / ${(s.pnc_inyeccion || 0) + (s.pnc_pulido || 0)} PNC ya afectaron inventario
+                    bajo <b>${s.codigo || '—'}</b>. Se revierte ese efecto y se aplica bajo lo nuevo.
+                </div>
+                <div class="text-start mb-2">
+                    <label class="form-label fw-bold small text-uppercase text-muted mb-1">Código correcto</label>
+                    <input type="text" id="swal-corr-codigo" class="form-control" value="${s.codigo || ''}">
+                </div>
+                <div class="text-start mb-2">
+                    <label class="form-label fw-bold small text-uppercase text-muted mb-1">OP correcta</label>
+                    <input type="text" id="swal-corr-op" class="form-control" value="${s.orden_produccion || ''}">
+                </div>
+                <div class="text-start">
+                    <label class="form-label fw-bold small text-uppercase text-muted mb-1">Motivo (obligatorio)</label>
+                    <input type="text" id="swal-corr-motivo" class="form-control" placeholder="Ej: confundió la referencia al iniciar">
+                </div>
+            `,
+            showCancelButton: true,
+            confirmButtonText: 'Aplicar corrección',
+            cancelButtonText: 'Cerrar',
+            focusConfirm: false,
+            preConfirm: () => {
+                const codigo = document.getElementById('swal-corr-codigo').value.trim();
+                const op = document.getElementById('swal-corr-op').value.trim();
+                const motivo = document.getElementById('swal-corr-motivo').value.trim();
+                if (!codigo) { Swal.showValidationMessage('El código no puede quedar vacío'); return false; }
+                if (!motivo) { Swal.showValidationMessage('El motivo es obligatorio'); return false; }
+                return { codigo, op, motivo };
+            }
+        });
+        if (!formValues) return;
+
+        try {
+            await window.apiClient.post('/pulido/admin/corregir_codigo_op', {
+                id_pulido: idPulido,
+                codigo: formValues.codigo,
+                orden_produccion: formValues.op,
+                motivo: formValues.motivo,
+            });
+            await this._cargarSesionesSupervision();
+            Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Corrección aplicada', showConfirmButton: false, timer: 1800 });
+        } catch (error) {
+            Swal.fire('Error', error.body?.error || 'No se pudo aplicar la corrección.', 'error');
         }
     },
 
