@@ -798,8 +798,13 @@ class PedidosService:
                 nuevo_envio = d.get("estado_envio_frimetals")
                 nuevo_envio = str(nuevo_envio).strip().upper() if nuevo_envio else None
                 if nuevo_envio == 'ENVIADO_FRIPARTS' and cantidad_total > 0 and cant_segura >= cantidad_total:
+                    # Solo estampar al transicionar -- un guardado posterior que
+                    # simplemente repite el mismo estado (ej. el usuario ajusta
+                    # otra línea del pedido y el payload reenvía esta ya marcada)
+                    # no debe pisar la fecha real de envío con "ahora".
+                    if item.estado_envio_frimetals != 'ENVIADO_FRIPARTS':
+                        item.fecha_envio_frimetals = get_colombia_time()
                     item.estado_envio_frimetals = 'ENVIADO_FRIPARTS'
-                    item.fecha_envio_frimetals = get_colombia_time()
                 elif nuevo_envio is None:
                     item.estado_envio_frimetals = None
                     item.fecha_envio_frimetals = None
