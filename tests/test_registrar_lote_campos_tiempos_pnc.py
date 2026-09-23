@@ -90,7 +90,7 @@ class TestSincronizacionCampos(_BaseRegistrarLoteTest):
             "codigo_producto": "8888001",
             "cantidad_real": 12,
             "no_cavidades": 4,
-            "molde": 7,
+            "molde": "5002A",
             "cant_contador": 100,
             "peso_bujes": 2.5,
             "observaciones": "obs de prueba",
@@ -104,7 +104,9 @@ class TestSincronizacionCampos(_BaseRegistrarLoteTest):
         self.assertIsNotNone(fila)
         self.assertEqual(fila.cantidad_real, 12)
         self.assertEqual(fila.cavidades, 4)
-        self.assertEqual(fila.molde, 7)
+        # molde es texto (VARCHAR), no numerico: codigos reales de catalogo como
+        # '5002A' -- ver inyeccion_service.py (str(item.get('molde'))).
+        self.assertEqual(fila.molde, "5002A")
         self.assertEqual(fila.cant_contador, 100)
         self.assertEqual(fila.peso_bujes, 2.5)
         self.assertEqual(float(fila.peso_lote), round(12 * 2.5, 4))  # columna Numeric(18,4): vuelve como Decimal, no str

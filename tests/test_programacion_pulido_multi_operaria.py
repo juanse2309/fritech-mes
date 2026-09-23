@@ -109,7 +109,10 @@ class TestCrearItemsMultiOperariaYReordenar(unittest.TestCase):
         self.assertEqual([c['codigo'] for c in cola], ['TEST-R3', 'TEST-R1', 'TEST-R2'])
         self.assertEqual([c['orden_prioridad'] for c in cola], [1, 2, 3])
 
-    def test_reordenar_cola_ignora_tarjetas_ya_iniciadas(self):
+    def test_reordenar_cola_renumera_tambien_tarjetas_ya_iniciadas(self):
+        # Comportamiento vigente desde 37f1f6d (2026-09-08): reordenar_cola
+        # renumera la columna ENTERA, bloqueadas incluidas. Antes solo tocaba
+        # las PROGRAMADO y dejaba numeros repetidos (columna "desordenada").
         fecha = date.today().strftime('%Y-%m-%d')
         resultado = ProgramacionPulidoService.crear_items(fecha, [
             {'operaria': OPERARIA_A, 'orden_produccion': OP_TEST, 'codigo': 'TEST-L1', 'cantidad_objetivo': 5},
@@ -121,12 +124,15 @@ class TestCrearItemsMultiOperariaYReordenar(unittest.TestCase):
         item_bloqueado.estado = 'EN_PROCESO'
         db.session.commit()
 
-        out = ProgramacionPulidoService.reordenar_cola(OPERARIA_A, [ids[0], ids[1]])
-        self.assertEqual(out['actualizados'], 1, "solo debio tocar la tarjeta PROGRAMADO, no la EN_PROCESO")
+        # El admin suelta la tarjeta editable ANTES de la bloqueada.
+        out = ProgramacionPulidoService.reordenar_cola(OPERARIA_A, [ids[1], ids[0]])
+        self.assertEqual(out['actualizados'], 2, "debe renumerar toda la columna, bloqueadas incluidas")
 
         item_bloqueado_final = db.session.get(ProgramacionPulido, ids[0])
-        self.assertEqual(item_bloqueado_final.estado, 'EN_PROCESO')
-        self.assertEqual(item_bloqueado_final.orden_prioridad, 1, "una tarjeta bloqueada no debio renumerarse")
+        self.assertEqual(item_bloqueado_final.estado, 'EN_PROCESO', "renumerar no debe cambiarle el estado")
+        self.assertEqual(item_bloqueado_final.orden_prioridad, 2, "la bloqueada tambien sigue el orden de la pantalla")
+        item_editable_final = db.session.get(ProgramacionPulido, ids[1])
+        self.assertEqual(item_editable_final.orden_prioridad, 1)
 
     def test_flujo_completo_reasignar_y_reordenar_como_el_drag_and_drop(self):
         """Reproduce exactamente lo que hace el frontend al soltar una
