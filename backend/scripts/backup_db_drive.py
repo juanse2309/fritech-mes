@@ -8,27 +8,47 @@ proyecto "Migracion Render -> DigitalOcean"), sin que quedara registrado en
 este repo porque vivía solo en la configuración de Render.
 
 Mismo destino y formato de archivo que el cron viejo (carpeta Drive
-"fritech_backups", nombre friparts_YYYYMMDD_HHMMSS.sql.gz), para no romper
+"fritech_backups", nombre <empresa>_YYYYMMDD_HHMMSS.sql.gz), para no romper
 continuidad con los backups anteriores que ya están ahí. Ahora corre como
 Tarea Programada de Coolify DENTRO de este mismo contenedor de la app --
 no depende de SSH, de ninguna PC externa, ni de ningún recurso/servicio
 adicional (cero costo extra).
 
+El prefijo del nombre de archivo sale de EMPRESA_NOMBRE (ver
+backend/config/settings.py::Empresa), NO está quemado a "friparts" --
+cada instancia (FriParts, Frimetals, la siguiente que se despliegue) ya
+define esa variable para su propia identidad de negocio, así que reusarla
+aquí evita que los backups de un cliente nuevo queden nombrados como si
+fueran de FriParts en la carpeta compartida de Drive.
+
 Reutiliza la misma cuenta/token OAuth que ya usa drive_service.py para los
 PDF de validación de Inyección (GOOGLE_OAUTH_*) -- mismo Drive personal de
 friparts09@gmail.com (5 TB propios), sin pagar almacenamiento externo (S3,
-etc).
+etc). Por diseño, TODAS las instancias (FriParts, Frimetals, futuros
+clientes) comparten la misma carpeta "fritech_backups" -- se distinguen
+solo por el prefijo del nombre de archivo. Si en algún momento eso deja de
+ser aceptable (aislamiento de datos entre clientes, por ejemplo), hay que
+separar por carpeta o por cuenta de Drive; hoy no está separado.
 
 Variables de entorno:
   DATABASE_URL -- ya la tiene el contenedor de la app (Postgres real).
-  DRIVE_BACKUP_FOLDER_ID -- ID de la carpeta "fritech_backups" en Drive.
+  DRIVE_BACKUP_FOLDER_ID -- ID de la carpeta "fritech_backups" en Drive
+    (mismo valor para todas las instancias hoy).
+  EMPRESA_NOMBRE -- ya la tiene el contenedor de la app; determina el
+    prefijo del archivo (ver Empresa.NOMBRE).
 
 Invocación (Tarea Programada de Coolify, dentro del contenedor):
   python3 -m backend.scripts.backup_db_drive
+
+IMPORTANTE para un cliente nuevo: esta Tarea Programada de Coolify hay que
+crearla A MANO en el servicio de ESE cliente. No se hereda de FriParts ni
+de ningún otro -- ver checklist completo en CLAUDE.md, sección
+"Backups de base de datos".
 """
 import gzip
 import logging
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -39,6 +59,8 @@ from datetime import datetime
 # agente_wo_comercial.py, por si Coolify o quien sea termina llamándolo de
 # la segunda forma.
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+
+from backend.config.settings import Empresa
 
 logger = logging.getLogger("backup_db_drive")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
@@ -84,8 +106,14 @@ def main():
         logger.error("❌ DRIVE_BACKUP_FOLDER_ID no está configurada -- no hay carpeta destino en Drive.")
         sys.exit(1)
 
+    # Sanitizado defensivo: EMPRESA_NOMBRE es texto libre en .env (pensado
+    # para mostrarse en UI, no para ir en un nombre de archivo), así que se
+    # reduce a algo seguro para Drive/filesystem en vez de asumir que ya
+    # viene limpio.
+    prefijo = re.sub(r'[^a-z0-9]+', '', Empresa.NOMBRE.lower()) or 'empresa'
+
     ahora = datetime.now()
-    nombre_archivo = f"friparts_{ahora.strftime('%Y%m%d_%H%M%S')}.sql.gz"
+    nombre_archivo = f"{prefijo}_{ahora.strftime('%Y%m%d_%H%M%S')}.sql.gz"
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         ruta_gz = os.path.join(tmp_dir, nombre_archivo)

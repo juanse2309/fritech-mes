@@ -37,6 +37,56 @@ Antes de dar un cambio por cerrado, indicar explícitamente:
 No asumir que "ya se hizo el push" equivale a "ya está desplegado en todos
 los clientes" — son dos pasos distintos en este proyecto.
 
+## Backups de base de datos
+
+El backup diario (`pg_dump` -> gzip -> Google Drive) vive en
+`backend/scripts/backup_db_drive.py` y corre como **Tarea Programada de
+Coolify dentro del propio contenedor de cada instancia** (no como recurso
+separado, no depende de ninguna PC ni de SSH). Sube a la carpeta de Drive
+"fritech_backups", compartida hoy por todas las instancias, con el nombre
+`<empresa>_YYYYMMDD_HHMMSS.sql.gz` (prefijo = `EMPRESA_NOMBRE` de esa
+instancia, en minúsculas).
+
+**Clave: una Tarea Programada de Coolify es de UN servicio, no se hereda
+entre instancias** — el mismo patrón que el auto-deploy de la sección
+anterior. Que FRIPARTS tenga sus backups corriendo no significa que
+FRIMETALS (ni ningún cliente nuevo) los tenga; hay que configurarlo a mano,
+por cliente, en Coolify.
+
+### Checklist para que un cliente nuevo tenga backups
+
+1. Confirmar que el `.env` de esa instancia ya define `DATABASE_URL` y
+   `EMPRESA_NOMBRE` (ya son obligatorios por otras razones — ver
+   `.env.example`). `EMPRESA_NOMBRE` determina el prefijo del archivo.
+2. Definir `DRIVE_BACKUP_FOLDER_ID` en su `.env` — hoy se reusa el mismo
+   valor que ya usan las demás instancias (misma carpeta compartida de
+   Drive, se distinguen por prefijo de archivo). No hay que crear una
+   carpeta nueva salvo que se decida separar por cliente (ver riesgo abajo).
+3. Confirmar `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` /
+   `GOOGLE_OAUTH_REFRESH_TOKEN` — hoy se reusa la misma cuenta de Drive
+   (`friparts09@gmail.com`) que ya usan los PDF de Inyección.
+4. En Coolify, en el servicio de ESA instancia (no en el de FriParts),
+   crear una Tarea Programada nueva (Scheduled Tasks -> Add Task). Valores
+   de la de FriParts, que vive solo en Coolify, no en este repo: Name
+   `Backup DB a Drive`, Schedule `0 6 * * *` (06:00 UTC), Timeout `600`,
+   Command `python3 -m backend.scripts.backup_db_drive`. FriParts tiene el
+   campo Container con el uuid de su app; en Frimetals se dejó en blanco
+   (contenedor principal) — confirmar con un "Execute Now" que resuelve.
+5. Verificar al día siguiente que apareció en Drive un archivo
+   `<empresa>_YYYYMMDD_HHMMSS.sql.gz` con el prefijo correcto y un tamaño
+   razonable (no 0 bytes) — no basta con que la Tarea Programada aparezca
+   como "creada" en Coolify.
+
+### Riesgo abierto, sin resolver
+
+Todas las instancias comparten hoy la misma carpeta y la misma cuenta
+personal de Drive para los backups — a pesar de que la arquitectura exige
+base de datos separada por cliente. Es aceptable mientras los backups sean
+un asunto interno de FRITECH y nadie prometa aislamiento de backups a un
+cliente, pero si eso cambia (más clientes, exigencia contractual de
+aislamiento de datos) hay que separar por carpeta o por cuenta de Drive
+antes de que se vuelva un problema, no después.
+
 ## Reglas de arquitectura de código (innegociables)
 
 1. **Separación estricta de capas.** Prohibido escribir lógica de negocio,
