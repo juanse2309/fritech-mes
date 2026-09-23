@@ -71,7 +71,9 @@ por cliente, en Coolify.
    `Backup DB a Drive`, Schedule `0 6 * * *` (06:00 UTC), Timeout `600`,
    Command `python3 -m backend.scripts.backup_db_drive`. FriParts tiene el
    campo Container con el uuid de su app; en Frimetals se dejó en blanco
-   (contenedor principal) — confirmar con un "Execute Now" que resuelve.
+   (contenedor principal) y funciona (verificado 2026-09-23 con "Execute
+   Now": generó `frimetals_20260923_163941.sql.gz`, confirmado en la
+   carpeta de Drive).
 5. Verificar al día siguiente que apareció en Drive un archivo
    `<empresa>_YYYYMMDD_HHMMSS.sql.gz` con el prefijo correcto y un tamaño
    razonable (no 0 bytes) — no basta con que la Tarea Programada aparezca
