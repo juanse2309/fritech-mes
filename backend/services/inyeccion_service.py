@@ -1731,6 +1731,25 @@ class InyeccionService:
             raise ValueError("El campo id_codigo es obligatorio")
 
         try:
+            prod_iny = db.session.query(ProduccionInyeccion).filter_by(id_inyeccion=id_iny, id_codigo=id_cod).first()
+
+            # Guard 2026-09-23: un lote CERRADO ya fue auditado en Validación
+            # (validar_lote). Este endpoint solo es del cierre de turno en MES,
+            # que corre con el lote PENDIENTE. Sin el guard, un reenvío o una
+            # pestaña vieja borraba el desglose de PNC validado y dejaba
+            # cantidad_real = cant_contador - PNC, pisando lo que Validación
+            # dejó como neta (de ahí sale 'Cantidad Recibida' a WO).
+            if prod_iny and prod_iny.estado == 'CERRADO':
+                logger.warning(
+                    f"⚠️ [registrar_pnc] Lote {id_iny}/{id_cod} ya está CERRADO: "
+                    f"se ignora el reporte de PNC para no pisar lo validado."
+                )
+                return {
+                    "success": False,
+                    "message": "El lote ya fue validado (CERRADO); no se modificó el PNC ni la cantidad real",
+                    "total_pnc": float(prod_iny.pnc_total or 0)
+                }
+
             db.session.query(PncInyeccion).filter_by(id_inyeccion=id_iny, id_codigo=id_cod).delete()
 
             quemado_manchado = 0
@@ -1768,8 +1787,6 @@ class InyeccionService:
                     deformacion_rechupado += cant
 
             total_cantidad = quemado_manchado + incompleto_falta_llenado + rebaba_excesiva + burbuja_porosidad + deformacion_rechupado
-
-            prod_iny = db.session.query(ProduccionInyeccion).filter_by(id_inyeccion=id_iny, id_codigo=id_cod).first()
 
             if total_cantidad > 0:
                 codigo_ensamble = prod_iny.codigo_ensamble if prod_iny else None
