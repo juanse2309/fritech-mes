@@ -482,9 +482,19 @@ const ModuloInyeccion = {
             const cantReal = parseFloat(String(reg.cantidad_real || 0).replace(/[^0-9.]/g, '')) || 0;
             const pncVal = parseFloat(String(reg.pnc || 0).replace(/[^0-9.]/g, '')) || 0;
             
-            // Tarea 1: Calcular disparos reales
-            const dispCalc = Math.ceil(cantReal / cavs);
-            
+            // Contador: la lectura real de la máquina que ya quedó guardada en
+            // db_inyeccion.cant_contador al reportar el turno. Solo si no hay
+            // ninguna (registro viejo/manual) se deriva de las buenas.
+            //
+            // BUG (2026-09-23): siempre se derivaba de las buenas
+            // (ceil(cantReal / cavs)) y el payload lo devolvía tal cual, con lo
+            // que validar_lote pisaba cant_contador con ese valor derivado
+            // (desde 2df0cc1, 2026-09-04). Resultado: 'Detalle:Cantidad' y
+            // 'Detalle:Cantidad Recibida' salían idénticas a WO aunque el
+            // contador real fuera otro.
+            const contadorGuardado = Number(reg.cant_contador) || 0;
+            const dispCalc = contadorGuardado > 0 ? contadorGuardado : Math.ceil(cantReal / cavs);
+
             // Ajuste de Bruto vs Buenas Juan Sebastian Request
             // Inyectadas = Buenas + PNC + Revueltos + WIP
             const brutoReal = cantReal + pncVal + (reg.revueltos || 0) + (reg.wip || 0);
@@ -494,6 +504,10 @@ const ModuloInyeccion = {
                 codigo_producto: reg.id_codigo || reg.codigo_sistema,
                 no_cavidades: cavs,
                 disparos: dispCalc,
+                // Valores con los que se cargó la fila: validarRegistro solo
+                // manda disparos/cavidades si Zoe los cambió a mano.
+                _disparos_orig: dispCalc,
+                _cavidades_orig: cavs,
                 cantidad_real: brutoReal, // TOTAL (Buenas + PNC)
                 manual_buenas: cantReal,   // BUENAS
                 pnc: pncVal,
@@ -595,8 +609,13 @@ const ModuloInyeccion = {
                         operaria_pulido: i.operaria_pulido || '',
                         pnc_list: i.pnc_list || [],
                         pnc_pulido_list: i.pnc_pulido_list || [],
-                        disparos: i.disparos || 0,
-                        no_cavidades: i.no_cavidades || 1,
+                        // null = "no lo toques": validar_lote deja intacto
+                        // cant_contador/cavidades/produccion_teorica del
+                        // registro. Solo viajan si la fila fue editada.
+                        disparos: (i._disparos_orig !== undefined && i.disparos === i._disparos_orig)
+                            ? null : (i.disparos || 0),
+                        no_cavidades: (i._cavidades_orig !== undefined && i.no_cavidades === i._cavidades_orig)
+                            ? null : (i.no_cavidades || 1),
                         buenas: (i.piezasBuenas !== undefined && i.piezasBuenas !== null)
                             ? i.piezasBuenas
                             : (i.manual_buenas != null ? i.manual_buenas : 0)
