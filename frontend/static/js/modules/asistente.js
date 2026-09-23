@@ -49,11 +49,8 @@ window.ModuloAsistente = (function () {
         return { desde, hasta };
     }
 
-    function escapeHtml(str) {
-        const div = document.createElement('div');
-        div.textContent = String(str ?? '');
-        return div.innerHTML;
-    }
+    // escapeHtml es global, definida una sola vez en modules/utils.js
+    // (que carga antes que este módulo) -- no duplicar aquí.
 
     // Markdown ligero -> HTML seguro: encabezados (#/##/###), negritas (**texto**),
     // listas con viñeta (*/-) o numeradas (1.) y separadores (---). Gemini responde

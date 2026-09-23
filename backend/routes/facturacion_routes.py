@@ -1,7 +1,9 @@
 from flask import Blueprint, request, jsonify, current_app
+from pydantic import ValidationError
 from backend.utils.auth_middleware import require_role, ROL_ADMINS
 from backend.services.facturacion_service import FacturacionService, FacturacionDatosInvalidosException
 from backend.services.pedidos_service import PedidosService
+from backend.schemas.facturacion_schemas import ExportarWorldOfficeSchema
 from backend.core.responses import api_success, api_error
 from backend.core import task_runner
 import pandas as pd
@@ -104,14 +106,16 @@ def exportar_world_office():
     terminar de armar el libro completo.
     """
     data = request.get_json(silent=True) or {}
-    ids_filter = data.get('ids', None)
-    consecutivo_inicial = data.get('consecutivo_inicial', None)
+    try:
+        payload = ExportarWorldOfficeSchema(**data)
+    except ValidationError as e:
+        return api_error(f"Datos inválidos: {e.errors()[0]['msg']}", status_code=400)
 
     task_id = task_runner.create_task()
     app_obj = current_app._get_current_object()
     task_runner.run_in_background(
         task_id, app_obj, _generar_excel_wo_task,
-        ids_filter, consecutivo_inicial
+        payload.ids, payload.consecutivo_inicial
     )
 
     return api_success(data={"task_id": task_id}, status_code=202)
@@ -125,9 +129,13 @@ def preview_world_office():
         consecutivo_inicial = None
         if request.method == 'POST':
             data = request.get_json(silent=True) or {}
-            ids_filter = data.get('ids', None)
-            consecutivo_inicial = data.get('consecutivo_inicial', None)
-        
+            try:
+                payload = ExportarWorldOfficeSchema(**data)
+            except ValidationError as e:
+                return jsonify({'success': False, 'error': f"Datos inválidos: {e.errors()[0]['msg']}"}), 400
+            ids_filter = payload.ids
+            consecutivo_inicial = payload.consecutivo_inicial
+
         df, _, ids_omitidos = FacturacionService.procesar_datos_wo(ids_filter, consecutivo_inicial, incluir_auditoria=True)
 
         # OBLIGATORIO: Hacer rollback para que el preview NO guarde cambios en la BD

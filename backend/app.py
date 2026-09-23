@@ -52,6 +52,13 @@ limiter = Limiter(
     storage_uri="memory://",
 )
 
+# Limite global de tamaño de request/upload -- sin esto, Flask acepta
+# cualquier tamaño y trata de cargarlo completo en memoria antes de que el
+# codigo de la ruta llegue a validar nada (DoS barato con un solo POST
+# gigante). 20MB cubre con margen el archivo mas grande legitimo hoy (listas
+# de precios CSV/XLSX en productos_routes.sincronizar_precios_wo).
+app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024
+
 # Compresion de respuestas (gzip/brotli) para reducir ancho de banda en Render
 app.config['COMPRESS_MIMETYPES'] = ['application/json', 'text/html']
 Compress(app)
@@ -268,6 +275,26 @@ from backend.routes.compras_routes import compras_bp
 from backend.routes.wo_export_compras_routes import wo_export_compras_bp
 
 app.register_blueprint(auth_bp)
+
+# Rate limiting especifico de login: el limite global de 60/min por IP no
+# frena fuerza bruta contra UNA cuenta si el atacante rota de IP. Se limita
+# por la identidad del body (responsable/email), no por IP -- da igual desde
+# cuantas IPs se intente, la MISMA cuenta objetivo queda acotada igual.
+def _login_key_staff():
+    data = request.get_json(silent=True) or {}
+    identidad = str(data.get('responsable', '')).strip().lower()
+    return identidad or get_remote_address()
+
+def _login_key_client():
+    data = request.get_json(silent=True) or {}
+    identidad = str(data.get('email', '')).strip().lower()
+    return identidad or get_remote_address()
+
+_LOGIN_RATE_LIMIT = "8 per 5 minutes"
+app.view_functions['auth.login'] = limiter.limit(_LOGIN_RATE_LIMIT, key_func=_login_key_staff)(app.view_functions['auth.login'])
+app.view_functions['auth.metals_login'] = limiter.limit(_LOGIN_RATE_LIMIT, key_func=_login_key_staff)(app.view_functions['auth.metals_login'])
+app.view_functions['auth.login_client'] = limiter.limit(_LOGIN_RATE_LIMIT, key_func=_login_key_client)(app.view_functions['auth.login_client'])
+
 app.register_blueprint(tasks_bp)
 app.register_blueprint(simulador_bp)
 app.register_blueprint(programacion_bp)
@@ -372,7 +399,7 @@ def serve_manifest():
 # (cache-busting de CSS/JS en index.html, footer, loader). Distinta de
 # _APP_VERSION de abajo, que es el hash del deploy activo para detectar
 # frontend desactualizado -- no confundir ambas.
-RELEASE_VERSION = "1.8.83"
+RELEASE_VERSION = "1.8.84"
 
 # --- VERSION DEL DEPLOY ACTIVO ---
 # RENDER_GIT_COMMIT la puebla Render automaticamente en cada deploy (no hay

@@ -184,6 +184,7 @@ def registrar_pulido():
 
 
 @pulido_bp.route('/api/pulido/ultimo_registro', methods=['GET'])
+@require_role(ROLES_PULIDO)
 def get_ultimo_registro_pulido():
     """
     Devuelve el último registro de db_pulido insertado por el operario
@@ -232,6 +233,7 @@ def get_ultimo_registro_pulido():
 
 
 @pulido_bp.route('/api/pulido/session_active', methods=['GET'])
+@require_role(ROLES_PULIDO)
 def get_active_pulido_session():
     try:
         # Forzar limpieza de caché de sesión para obtener datos frescos de la DB
@@ -486,6 +488,7 @@ def corregir_codigo_op_pulido():
 
 
 @pulido_bp.route('/api/pulido/tareas_pendientes', methods=['GET'])
+@require_role(ROLES_PULIDO)
 def get_pulido_tareas_pendientes():
     try:
         responsable = request.args.get('responsable')
@@ -1190,6 +1193,7 @@ def registrar_pnc_pulido():
 
 
 @pulido_bp.route('/api/pulido/ultimo_registro/<responsable>', methods=['GET'])
+@require_role(ROLES_PULIDO)
 def get_ultimo_registro_pulido_legacy(responsable):
     """
     Variante legacy (path param en vez de query string) de

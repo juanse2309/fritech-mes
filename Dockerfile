@@ -33,6 +33,16 @@ COPY backend/ backend/
 COPY frontend/ frontend/
 COPY gunicorn.conf.py .
 
+# No correr como root: si algún día aparece otro bug (RCE en una dependencia,
+# un upload mal validado, etc.) que le de a un atacante ejecución dentro del
+# contenedor, un usuario sin privilegios acota el daño (sin acceso de
+# escritura fuera de /app, sin poder instalar/alterar nada a nivel sistema).
+# chown DESPUES de copiar todo: este usuario es dueño de /app completo,
+# incluyendo logs/, temp_reports/ y demás carpetas que la app cree en
+# runtime (ver LOG_FILE en .env.example).
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
+
 ENV PYTHONUNBUFFERED=1
 ENV PORT=10000
 EXPOSE 10000

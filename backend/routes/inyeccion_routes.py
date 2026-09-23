@@ -140,6 +140,7 @@ def guardar_programacion_diaria():
 
 
 @inyeccion_bp.route('/api/pedidos/pendientes/<codigo>', methods=['GET'])
+@require_role(ROLES_MES_INYECCION)
 def obtener_pedidos_pendientes(codigo):
     """
     Controller delgado: delega la consulta a InyeccionService.obtener_pedidos_pendientes
@@ -159,6 +160,7 @@ def obtener_pedidos_pendientes(codigo):
 
 
 @inyeccion_bp.route('/api/produccion/verificar_demanda/<codigo>', methods=['GET'])
+@require_role(ROLES_MES_INYECCION)
 def verificar_demanda_b2b(codigo):
     """
     Controller delgado: delega la consulta a InyeccionService.obtener_demanda_b2b
@@ -179,6 +181,7 @@ def verificar_demanda_b2b(codigo):
 
 
 @inyeccion_bp.route('/api/mes/pendientes_validacion', methods=['GET'])
+@require_role(ROLES_MES_INYECCION)
 def mes_pendientes_validacion():
     """Obtiene todos los lotes en estado PENDIENTE/FINALIZADO para validación."""
     resultado = InyeccionService.obtener_pendientes_validacion()
@@ -371,6 +374,7 @@ def registrar_inyeccion():
 
 
 @inyeccion_bp.route('/api/cavidades/config', methods=['GET'])
+@require_login
 def obtener_config_cavidades():
     """Obtiene la configuración de cavidades disponibles."""
     try:

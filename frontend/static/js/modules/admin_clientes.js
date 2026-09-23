@@ -25,6 +25,23 @@ const ModuloAdminClientes = {
                 this.renderizarTabla();
             });
         }
+
+        // Delegado una sola vez sobre el contenedor (sobrevive a los
+        // re-renders de renderizarTabla) -- reemplaza los onclick="...('${x}')"
+        // inline, que rompían el atributo si el dato tenía una comilla.
+        const container = document.getElementById('admin-clientes-container');
+        if (container) {
+            container.addEventListener('click', (e) => {
+                const btn = e.target.closest('[data-action]');
+                if (!btn) return;
+                const email = btn.dataset.email || '';
+                if (btn.dataset.action === 'reset-password') {
+                    this.resetearPassword(email);
+                } else if (btn.dataset.action === 'toggle-estado') {
+                    this.toggleEstado(email, btn.dataset.estado || '');
+                }
+            });
+        }
     },
 
     cargarClientesMaster: async function () {
@@ -113,22 +130,23 @@ const ModuloAdminClientes = {
         const cambiarClave = cliente.cambiar_clave === 'TRUE' || cliente.cambiar_clave === true
             ? '<i class="fas fa-exclamation-triangle text-warning ms-2" title="Debe cambiar contraseña"></i>'
             : '';
+        const email = cliente.email || '';
 
         return `
             <tr>
-                <td class="fw-bold">${cliente.nit || 'N/A'}</td>
-                <td>${cliente.nombre_empresa || 'N/A'}</td>
-                <td><small>${cliente.email || 'N/A'}</small></td>
-                <td>${cliente.nombre_contacto || 'N/A'}</td>
+                <td class="fw-bold">${escapeHtml(cliente.nit || 'N/A')}</td>
+                <td>${escapeHtml(cliente.nombre_empresa || 'N/A')}</td>
+                <td><small>${escapeHtml(email || 'N/A')}</small></td>
+                <td>${escapeHtml(cliente.nombre_contacto || 'N/A')}</td>
                 <td>${estadoBadge}${cambiarClave}</td>
-                <td><small class="text-muted">${cliente.fecha_registro || 'N/A'}</small></td>
+                <td><small class="text-muted">${escapeHtml(cliente.fecha_registro || 'N/A')}</small></td>
                 <td class="text-center">
                     <div class="btn-group btn-group-sm">
-                        <button class="btn btn-outline-primary" onclick="ModuloAdminClientes.resetearPassword('${cliente.email}')" title="Resetear Contraseña">
+                        <button class="btn btn-outline-primary" data-action="reset-password" data-email="${escapeHtml(email)}" title="Resetear Contraseña">
                             <i class="fas fa-key"></i>
                         </button>
-                        <button class="btn btn-outline-${cliente.estado === 'ACTIVO' ? 'warning' : 'success'}" 
-                                onclick="ModuloAdminClientes.toggleEstado('${cliente.email}', '${cliente.estado}')" 
+                        <button class="btn btn-outline-${cliente.estado === 'ACTIVO' ? 'warning' : 'success'}"
+                                data-action="toggle-estado" data-email="${escapeHtml(email)}" data-estado="${escapeHtml(cliente.estado || '')}"
                                 title="${cliente.estado === 'ACTIVO' ? 'Desactivar' : 'Activar'}">
                             <i class="fas fa-${cliente.estado === 'ACTIVO' ? 'ban' : 'check'}"></i>
                         </button>

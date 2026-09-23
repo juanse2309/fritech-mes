@@ -4,7 +4,6 @@ from backend.core.responses import api_success, api_error
 from backend.models.sql_models import db, Pedido, MetalsPedido, DespachoPedido
 from backend.services.audit_service import AuditService, OwnershipMismatchException
 from backend.config.constants import FALLBACK_OPERARIO
-from sqlalchemy import text
 from backend.core.tenant import get_tenant_from_request
 from backend.utils.time_utils import get_colombia_time
 from backend.utils.formatters import normalizar_codigo_sin_prefijo, sql_expr_codigo_sin_prefijo_fr, preservar_o_normalizar_prefijo, to_bool_seguro
@@ -194,19 +193,10 @@ def registrar_pedido():
         if es_edicion:
             ids_enviados = [p.get('id_sql') for p in productos if p.get('id_sql')]
             if ids_enviados:
-                try:
-                    filas_a_borrar = db.session.execute(
-                        text("SELECT id_codigo FROM db_pedidos WHERE id_pedido = :id_p AND id NOT IN :ids"),
-                        {"id_p": id_pedido_final, "ids": tuple(ids_enviados)}
-                    ).fetchall()
-                    codigos_afectados.update(str(f[0]) for f in filas_a_borrar if f[0])
-
-                    db.session.execute(
-                        text("DELETE FROM db_pedidos WHERE id_pedido = :id_p AND id NOT IN :ids"),
-                        {"id_p": id_pedido_final, "ids": tuple(ids_enviados)}
-                    )
-                except Exception as e:
-                    logger.warning(f"⚠️ Error limpiando items eliminados: {e}")
+                from backend.services.pedidos_service import PedidosService
+                codigos_afectados.update(
+                    PedidosService.eliminar_lineas_no_enviadas(id_pedido_final, ids_enviados, db.session)
+                )
 
         items_procesados = 0
         for prod in productos:

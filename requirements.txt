@@ -1,20 +1,33 @@
-flask
-flask-cors
-flask-compress
-python-dotenv
-gunicorn
-pandas
-openpyxl
-pytz
-reportlab
-flask-sqlalchemy
-sqlalchemy
-psycopg2-binary
-requests
-google-generativeai
-google-api-python-client
-google-auth
-pyjwt
-pywebpush
-flask-limiter
-gTTS
+flask==3.1.3
+flask-cors==6.0.0
+flask-compress==1.24
+python-dotenv==1.2.2
+gunicorn==25.1.0
+pandas==3.0.1
+openpyxl==3.1.5
+pytz==2026.1.post1
+reportlab==4.4.10
+flask-sqlalchemy==3.1.1
+sqlalchemy==2.0.49
+psycopg2-binary==2.9.11
+requests==2.33.0
+google-generativeai==0.8.6
+google-api-python-client==2.192.0
+google-auth==2.25.2
+pyjwt==2.13.0
+pywebpush==2.5.0
+flask-limiter==4.1.1
+gTTS==2.5.4
+# Validacion de payloads (nuevo estandar del proyecto, ver CLAUDE.md) --
+# reemplaza los checks manuales `data.get(...)` sueltos en endpoints nuevos
+# o tocados de dinero/trazabilidad.
+pydantic==2.13.4
+# NOTA (pip-audit 2026-09-23): click queda sin pin propio y resuelve a la
+# version que permite gTTS (`click<8.2`, ver requires_dist de gTTS 2.5.4 --
+# ES la ultima version publicada, no hay una mas nueva que releaje esto).
+# Eso deja instalada una version con CVE conocido (PYSEC-2026-2132), pero es
+# un command injection en click.edit() que exige acceso LOCAL + privilegio
+# alto + interaccion de usuario -- esta app nunca llama a click.edit() (solo
+# es dependencia transitiva de Flask/gTTS), asi que no es explotable via
+# web. Riesgo residual aceptado; revisar si gTTS libera una version que
+# relaje el pin de click.

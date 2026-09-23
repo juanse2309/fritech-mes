@@ -78,6 +78,78 @@ los clientes" — son dos pasos distintos en este proyecto.
    es truthy), así que cada pedido nuevo se leía con sus líneas marcadas
    "no disponible" sin que nadie las tocara.
 
+## Reglas de seguridad (curadas en la auditoría 2026-09-23)
+
+Salieron de una auditoría de seguridad completa del repo. Aplican a
+código nuevo Y a código tocado por otra razón (mismo criterio que la regla
+de capas: si se nota una violación preexistente al pasar por ahí,
+señalarla/corregirla, no ignorarla).
+
+1. **Todo endpoint nuevo lleva `@require_login` o `@require_role(...)`
+   desde el día uno**, salvo que sea deliberadamente público (ej. login,
+   registro de cliente) o máquina-a-máquina con su propio secreto
+   compartido (mismo patrón que ya usan las rutas WO y
+   `ensamble_routes.cerrar_jornada_auto`: `X-Sync-Token`/`X-API-Key` contra
+   una env var, no sesión de usuario). Nunca lo dejes sin protección "para
+   agregarlo después" — la auditoría encontró varios endpoints de
+   producción (inyección, pulido) expuestos así por meses.
+2. **Nunca insertar datos de BD/usuario en `innerHTML` sin escapar.** Usa
+   `escapeHtml(...)` (global, definida una sola vez en
+   `frontend/static/js/modules/utils.js` — no dupliques esta función en
+   otro módulo). Esto incluye datos que van DENTRO de un atributo HTML
+   (`data-*`, `title`, etc.) — ahí además hay que evitar interpolar el dato
+   directo en un `onclick="...('${variable}')"` inline, porque una comilla
+   en el dato rompe el atributo aunque el texto esté "escapado" a medias.
+   Patrón correcto: `data-*` attributes + un solo listener delegado
+   (`addEventListener` en el contenedor padre, revisa `dataset.action` /
+   `dataset.email` etc.) — ver `admin_clientes.js` como referencia.
+3. **Rate limiting de login es específico, no solo el límite global de
+   IP.** El límite global (`60 per minute` en `backend/app.py`) no frena
+   fuerza bruta contra UNA cuenta si el atacante rota de IP. Los tres
+   endpoints de login llevan un límite propio keyed por la identidad del
+   body (`responsable`/`email`, no por IP) aplicado desde `backend/app.py`
+   vía `app.view_functions['auth.xxx'] = limiter.limit(...)(...)` — **no**
+   importar el objeto `limiter` dentro de `backend/routes/*.py` (vive en
+   `app.py`; importarlo desde una ruta arriesga un import circular, por
+   eso el patrón existente engancha los límites de rutas específicas desde
+   `app.py`, después de `register_blueprint`, no con un decorador en el
+   archivo de la ruta).
+4. **Validación de payloads con Pydantic, no `data.get(...)` sueltos** —
+   nuevo estándar del proyecto (antes no había librería de validación).
+   Los schemas viven en `backend/schemas/<dominio>_schemas.py` (ver
+   `facturacion_schemas.py` como referencia/plantilla). Aplica por lo menos
+   a endpoints nuevos o tocados que sean de dinero/trazabilidad (regla 4
+   de arquitectura, arriba) — no hace falta retrofitear TODO el backend de
+   una vez, pero cualquier endpoint de ese tipo que se toque de ahora en
+   adelante se valida así. **Cuidado con los defaults reales del
+   frontend**: un `<input>` vacío manda `''` (string vacío), no `None` —
+   si el schema espera `Optional[int]`, hay que mapear `''` a `None` con un
+   `field_validator(..., mode='before')` o vas a rechazar el caso más común
+   en producción (pasó en el primer schema escrito, `ExportarWorldOfficeSchema`,
+   detectado con un test antes de shippearlo).
+5. **`requirements.txt` con versiones fijadas (`==`), no sueltas.** Antes
+   de fijar una versión, correr `pip-audit -r requirements.txt` (en un
+   venv de prueba, no el de desarrollo) — fijar sin auditar puede congelar
+   una versión con CVE conocido que el build sin pin habría recogido ya
+   parchada. Si el fix de un CVE choca con el pin de OTRA dependencia
+   (pasó con `click`, bloqueado en `<8.2` por `gTTS==2.5.4`, la última
+   versión publicada), documentarlo como riesgo residual aceptado con el
+   razonamiento de por qué no es explotable en este contexto — no dejarlo
+   silencioso ni fingir que se arregló.
+6. **El contenedor corre con un usuario no-root** (`Dockerfile`, `USER
+   appuser`) — cualquier `RUN` o `COPY` nueva que necesite escribir en
+   `/app` debe ir ANTES del `chown -R appuser:appuser /app`, o ese archivo
+   quedará sin permiso de escritura para el proceso de la app.
+7. **`MAX_CONTENT_LENGTH` está fijado en 20MB** (`backend/app.py`) — si
+   algún día se necesita subir un archivo legítimo más grande que eso
+   (ej. un catálogo de precios enorme), subir el límite explícitamente ahí
+   en vez de quitarlo.
+8. **Nunca hardcodear una credencial real** (password de BD, API key) en
+   ningún script, ni siquiera en `scratch/` (está en `.gitignore`, pero
+   este repo vive dentro de OneDrive — un archivo ignorado por git igual
+   se sincroniza a la nube). Usar siempre `os.getenv(...)` incluso en
+   scripts de un solo uso.
+
 ## Postura esperada: nada de complacencia
 
 No asumir que "el usuario lo pidió así" es suficiente para proceder sin

@@ -439,6 +439,36 @@ class PedidosService:
     """
 
     @staticmethod
+    def eliminar_lineas_no_enviadas(id_pedido, ids_enviados, db_session):
+        """
+        Sincronización de eliminaciones al editar un pedido (UPSERT en
+        registrar_pedido): borra las líneas de db_pedidos que ya no vienen en
+        el payload de edición. Devuelve los id_codigo borrados para que el
+        caller recalcule 'comprometido' en db_productos -- si no se hace, la
+        reserva vieja de una línea borrada queda pegada para siempre.
+
+        No propaga excepciones: un fallo de limpieza no debe tumbar el
+        guardado del resto del pedido (mismo comportamiento que tenía esta
+        lógica cuando vivía directo en la ruta, movida aquí por la regla de
+        capas del proyecto -- sin SQL en backend/routes/*_routes.py).
+        """
+        try:
+            filas_a_borrar = db_session.execute(
+                text("SELECT id_codigo FROM db_pedidos WHERE id_pedido = :id_p AND id NOT IN :ids"),
+                {"id_p": id_pedido, "ids": tuple(ids_enviados)}
+            ).fetchall()
+            codigos = {str(f[0]) for f in filas_a_borrar if f[0]}
+
+            db_session.execute(
+                text("DELETE FROM db_pedidos WHERE id_pedido = :id_p AND id NOT IN :ids"),
+                {"id_p": id_pedido, "ids": tuple(ids_enviados)}
+            )
+            return codigos
+        except Exception as e:
+            logger.warning(f"⚠️ Error limpiando items eliminados de pedido {id_pedido}: {e}")
+            return set()
+
+    @staticmethod
     def detectar_exportados_sin_confirmar_wo(db_session, dias_gracia=2):
         """
         Reconciliación de integridad: pedidos que la app marcó EXPORTADO_WO
@@ -916,6 +946,17 @@ class PedidosService:
         items_sql = db_session.query(Pedido).filter_by(id_pedido=id_pedido).all()
         if not items_sql:
             raise PedidoNoEncontradoError(f"Pedido {id_pedido} no encontrado en SQL")
+
+        # Chequeo explícito de pertenencia al flujo conjunto (defensa en
+        # profundidad): sin esto, la única barrera real es que
+        # actualizar_alistamiento (quien marca ENVIADO_FRIPARTS por línea)
+        # exige ROLES_PEDIDOS_INTERNOS, distinto de ROLES_METALS -- protección
+        # implícita que se rompería en silencio si algún día se tocan esos
+        # roles sin recordar esta dependencia.
+        if not any(it.tiene_pedido_frimetals for it in items_sql):
+            raise ValueError(
+                f"El pedido {id_pedido} no está marcado como pedido conjunto con Frimetals."
+            )
 
         pendientes = [
             it.id_codigo for it in items_sql

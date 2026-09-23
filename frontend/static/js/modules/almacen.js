@@ -639,7 +639,7 @@ const AlmacenModule = {
         const clienteEl = document.getElementById('modal-alistamiento-cliente');
         clienteEl.innerHTML = `
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
-            <span><i class="fas fa-user me-1"></i> ${pedido.cliente}${horaStr}</span>
+            <span><i class="fas fa-user me-1"></i> ${escapeHtml(pedido.cliente)}${horaStr}</span>
             <span class="badge ${completadas === totalRefs ? 'bg-success' : 'bg-primary'}" style="font-size: 0.85rem; padding: 6px 12px;">
                 <i class="fas fa-cube me-1"></i> ${completadas}/${totalRefs} ${isMetals ? 'items' : 'referencias'}
             </span>
@@ -653,7 +653,7 @@ const AlmacenModule = {
                 observacionesContainer.innerHTML = `
                     <div class="alert alert-warning mb-3" style="border-left: 5px solid #f59e0b; background-color: #fffbeb;">
                         <h6 class="fw-bold mb-1" style="color: #92400e;"><i class="fas fa-comment-dots me-2"></i>Observaciones del Vendedor:</h6>
-                        <p class="mb-0 text-dark" style="font-size: 0.95rem;">${obsText}</p>
+                        <p class="mb-0 text-dark" style="font-size: 0.95rem;">${escapeHtml(obsText)}</p>
                     </div>
                 `;
                 observacionesContainer.style.display = 'block';
