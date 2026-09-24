@@ -756,13 +756,60 @@ async function chequearLiderPulido() {
     }
 }
 
-// WAV silencioso de 10ms (204 bytes) embebido para el truco de desbloqueo:
-// se reproduce SINCRÓNICAMENTE dentro del clic, antes de cualquier await,
-// porque el "user activation" del navegador expira apenas se espera algo
-// async (ej. un fetch de red) -- confirmado en TV y en celular: el audio
-// real llegaba bien (200, tamaño correcto) pero el play() se bloqueaba en
-// silencio por venir después de un `await fetch(...)`.
-const SILENCIO_WAV_DATA_URI = 'data:audio/wav;base64,UklGRsQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+// WAV silencioso de 10ms (204 bytes) para el truco de desbloqueo: se reproduce
+// SINCRÓNICAMENTE dentro del gesto, antes de cualquier await, porque el "user
+// activation" del navegador expira apenas se espera algo async (ej. un fetch
+// de red) -- confirmado en TV y en celular: el audio real llegaba bien (200,
+// tamaño correcto) pero el play() se bloqueaba en silencio por venir después
+// de un `await fetch(...)`.
+//
+// Es un ARCHIVO del mismo servidor y no un data: URI a propósito: la CSP de
+// backend/app.py (default-src 'self', sin media-src) bloquea el audio data:
+// (NotSupportedError, reproducido 2026-09-24), así que el desbloqueo silencioso
+// embebido nunca llegaba a reproducir en producción.
+const SILENCIO_WAV_URL = '/static/audio/silencio.wav';
+
+// ── Desbloqueo automático con el PRIMER gesto de cualquier tipo ─────────
+// Ningún navegador deja reproducir audio sin una interacción previa del
+// usuario con la página, y eso no se puede saltar desde el código. Lo que sí
+// se puede es que CUALQUIER primer toque, clic o tecla (un botón cualquiera
+// del control remoto, o el clic para entrar a Modo TV) desbloquee el audio,
+// en vez de exigir apuntar justo al botón "Activar sonido". Solo se da por
+// desbloqueado si play() se cumple de verdad; si el navegador lo rechaza,
+// el botón manual queda como respaldo.
+let audioDesbloqueado = false;
+let desbloqueoEnCurso = false; // un mismo toque dispara varios eventos (pointerdown + click...)
+const EVENTOS_GESTO_DESBLOQUEO = ['pointerdown', 'click', 'keydown', 'touchstart'];
+
+function marcarAudioDesbloqueado() {
+    if (audioDesbloqueado) return;
+    audioDesbloqueado = true;
+    EVENTOS_GESTO_DESBLOQUEO.forEach(ev => document.removeEventListener(ev, desbloquearAudioConPrimerGesto, true));
+    const btn = document.getElementById('btn-activar-sonido-pulido');
+    if (btn && btn.textContent.indexOf('...') === -1) btn.remove(); // no cortar el flujo del propio botón
+}
+
+function desbloquearAudioConPrimerGesto(ev) {
+    if (audioDesbloqueado || desbloqueoEnCurso) return;
+    // Si el gesto es sobre el botón manual, él hace su propio desbloqueo (y habla).
+    if (ev && ev.target && ev.target.closest && ev.target.closest('#btn-activar-sonido-pulido')) return;
+    try {
+        // Sin await antes: debe quedar dentro del mismo tick síncrono del gesto.
+        const promesa = new Audio(SILENCIO_WAV_URL).play();
+        if (promesa && typeof promesa.then === 'function') {
+            desbloqueoEnCurso = true;
+            promesa
+                .then(marcarAudioDesbloqueado)
+                // Sigue bloqueado: queda el botón y el siguiente gesto vuelve a intentarlo.
+                .catch(() => { /* nada */ })
+                .finally(() => { desbloqueoEnCurso = false; });
+        } else {
+            marcarAudioDesbloqueado();
+        }
+    } catch (e) { /* queda el botón manual */ }
+}
+
+EVENTOS_GESTO_DESBLOQUEO.forEach(ev => document.addEventListener(ev, desbloquearAudioConPrimerGesto, true));
 
 /**
  * Botón flotante para desbloquear el audio en TVs/navegadores que
@@ -771,9 +818,12 @@ const SILENCIO_WAV_DATA_URI = 'data:audio/wav;base64,UklGRsQAAABXQVZFZm10IBAAAAA
  * audio funcionan bien, pero el play() automático se bloquea en
  * silencio). Un solo toque desbloquea el audio para el resto de la
  * sesión en esa pestaña y de paso confirma que sí funciona, anunciando
- * al líder actual en el momento.
+ * al líder actual en el momento. Desde 2026-09-24 es solo respaldo: el
+ * primer gesto de cualquier tipo ya lo desbloquea (ver arriba) y el botón
+ * desaparece solo cuando eso funciona.
  */
 function mostrarBotonActivarSonidoLiderPulido() {
+    if (audioDesbloqueado) return;
     if (document.getElementById('btn-activar-sonido-pulido')) return;
     const btn = document.createElement('button');
     btn.id = 'btn-activar-sonido-pulido';
@@ -784,13 +834,14 @@ function mostrarBotonActivarSonidoLiderPulido() {
     btn.onclick = () => {
         // Disparo del silencio SIN await antes -- tiene que quedar dentro
         // del mismo tick síncrono del clic para contar como gesto real.
-        const desbloqueo = new Audio(SILENCIO_WAV_DATA_URI);
+        const desbloqueo = new Audio(SILENCIO_WAV_URL);
         desbloqueo.play().catch(() => {});
 
         btn.textContent = '🔊 ...';
         hablarLiderPulido().then(() => {
             btn.textContent = '✅ Sonido activado';
             setTimeout(() => btn.remove(), 3000);
+            marcarAudioDesbloqueado();
         });
     };
     document.body.appendChild(btn);
