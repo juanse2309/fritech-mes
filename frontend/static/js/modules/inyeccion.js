@@ -508,6 +508,9 @@ const ModuloInyeccion = {
                 // manda disparos/cavidades si Zoe los cambió a mano.
                 _disparos_orig: dispCalc,
                 _cavidades_orig: cavs,
+                // Buenas reportadas del lote: a esto se vuelve si Zoe borra el
+                // campo Buenas (ver editarItem).
+                _buenas_orig: cantReal,
                 cantidad_real: brutoReal, // TOTAL (Buenas + PNC)
                 manual_buenas: cantReal,   // BUENAS
                 pnc: pncVal,
@@ -622,9 +625,18 @@ const ModuloInyeccion = {
                     }))
                 };
 
+                // BUG (2026-09-24, confirmado en producción con el lote
+                // INY-F8B8C5A2): este body iba como objeto JS, sin
+                // JSON.stringify ni Content-Type. fetch() lo mandaba como
+                // text/plain con el texto literal "[object Object]", el
+                // backend (get_json(silent=True)) recibía None y validaba SIN
+                // ningún dato de esta pantalla (Buenas, PNC, operaria de
+                // pulido, disparos): cantidad_real quedaba igual al reporte
+                // de máquina, siempre. fetchData no serializa por su cuenta.
                 const res = await fetchData(`/api/inyeccion/validar/${idInyeccion}`, {
                     method: 'POST',
-                    body: payload
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
                 });
                 mostrarLoading(false);
 
@@ -1132,7 +1144,18 @@ const ModuloInyeccion = {
         if (isNaN(val) || val < 0) val = 0;
 
         if (campo === 'manual_buenas') {
-            item.manual_buenas = valor === '' ? null : val;
+            // Guard 2026-09-24: con el campo vacío las buenas se recalculaban
+            // como disparos x cavidades. En lotes de MES 'disparos' viene en
+            // piezas (cant_contador = cierres x cavidades), así que eso da
+            // cavidades veces lo real (330 -> 1980) y, desde que Validación
+            // sí manda el payload, se guardaría y acreditaría a por_pulir.
+            // En un lote cargado para validar, vaciar Buenas vuelve a lo
+            // reportado en máquina, no a un valor derivado.
+            if (valor === '' && item._buenas_orig !== undefined) {
+                item.manual_buenas = item._buenas_orig;
+            } else {
+                item.manual_buenas = valor === '' ? null : val;
+            }
         } else if (campo === 'no_cavidades') {
             item.no_cavidades = val;
         } else {
