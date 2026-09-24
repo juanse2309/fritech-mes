@@ -208,7 +208,7 @@ window.ModuloTV = (function () {
         caja.classList.toggle('tv-seguridad-sin-dato', dias === null);
         const html = dias === null
             ? 'Sin fecha del<br>último accidente'
-            : `<strong>${dias.toLocaleString('es-CO')}</strong>${dias === 1 ? 'día' : 'días'} sin accidentes`;
+            : `<strong>${dias.toLocaleString('es-CO')}</strong><span>${dias === 1 ? 'día' : 'días'} sin<br>accidentes</span>`;
         if (texto.dataset.pintado !== html) {
             texto.innerHTML = html; // solo números y texto fijo, ningún dato del usuario
             texto.dataset.pintado = html;

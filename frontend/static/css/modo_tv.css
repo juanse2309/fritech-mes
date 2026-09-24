@@ -121,18 +121,20 @@ body.tv-produccion-mode #modo-tv-page {
     flex-shrink: 0;
 }
 
-#tv-seguridad-icono { font-size: 2.2rem; }
+#tv-seguridad-icono { font-size: 2.4rem; }
 
 #tv-seguridad-texto {
-    font-size: 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 1.3rem;
     font-weight: 700;
     line-height: 1.1;
-    text-align: center;
+    text-align: left;
 }
 
 #tv-seguridad-texto strong {
-    display: block;
-    font-size: 2.6rem;
+    font-size: 3.4rem;
     font-weight: 900;
     line-height: 1;
     color: #ffffff;
@@ -175,14 +177,14 @@ body.tv-produccion-mode #modo-tv-page {
    Se compacta el encabezado en vez de dejar que crezca. */
 @media (max-width: 1300px) {
     #tv-logo-icono { display: none; }
-    #tv-slide-titulo { font-size: 2.3rem; }
-    #tv-slide-subtitulo { font-size: 1.2rem; }
-    #tv-reloj { font-size: 2.6rem; }
-    #tv-fecha { font-size: 1.1rem; }
-    #tv-seguridad { margin: 0 12px; padding: 4px 12px; gap: 8px; }
-    #tv-seguridad-icono { font-size: 1.6rem; }
-    #tv-seguridad-texto { font-size: 1rem; }
-    #tv-seguridad-texto strong { font-size: 2rem; }
+    #tv-slide-titulo { font-size: 2.2rem; }
+    #tv-slide-subtitulo { font-size: 1.15rem; }
+    #tv-reloj { font-size: 3.2rem; }
+    #tv-fecha { font-size: 1.15rem; }
+    #tv-seguridad { margin: 0 12px; padding: 4px 14px; gap: 10px; }
+    #tv-seguridad-icono { font-size: 2rem; }
+    #tv-seguridad-texto { font-size: 1.2rem; }
+    #tv-seguridad-texto strong { font-size: 3.2rem; }
 }
 
 /* SweetAlert2 por encima del Modo TV (z-index 6000). */
@@ -530,33 +532,37 @@ body.tv-produccion-mode #modo-tv-page {
 /* ── Footer: dots + barra de progreso ──────────────────────────────── */
 #tv-footer {
     flex-shrink: 0;
-    padding-top: 1.2vh;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding-top: .8vh;
 }
 
 #tv-dots {
     display: flex;
-    justify-content: center;
-    gap: 10px;
-    margin-bottom: 8px;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    flex-shrink: 0;
 }
 
 .tv-dot {
-    width: 14px;
-    height: 14px;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
-    background: rgba(255,255,255,.2);
+    background: rgba(255,255,255,.22);
     transition: all .3s ease;
 }
 
 .tv-dot.active {
     background: #38bdf8;
-    width: 38px;
-    border-radius: 7px;
+    width: 22px;
+    border-radius: 4px;
 }
 
 #tv-progreso-barra {
+    flex: 1 1 auto;
     height: 4px;
-    width: 100%;
     background: rgba(255,255,255,.08);
     border-radius: 4px;
     overflow: hidden;
@@ -572,17 +578,17 @@ body.tv-produccion-mode #modo-tv-page {
 /* ── Botón salir ────────────────────────────────────────────────────── */
 #btn-exit-modo-tv {
     position: fixed;
-    bottom: 20px;
-    right: 20px;
+    bottom: 4px;
+    right: 8px;
     z-index: 10000;
     background: #ef4444;
     color: #fff;
     border: none;
-    padding: 12px 22px;
-    border-radius: 10px;
-    font-size: 1rem;
+    padding: 5px 12px;
+    border-radius: 8px;
+    font-size: .8rem;
     font-weight: 600;
-    opacity: .55;
+    opacity: .45;
     display: none;
 }
 
