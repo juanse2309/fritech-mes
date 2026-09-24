@@ -12,6 +12,12 @@ ROL_ADMINS = ['ADMIN', 'ADMINISTRACION', 'ADMINISTRADOR', 'GERENCIA']
 ROL_JEFES = ['JEFE ALMACEN', 'JEFE INYECCION', 'JEFE PULIDO', 'JEFE DE PLANTA', 'JEFE ALISTAMIENTO', 'JEFE AUXILIAR INVENTARIO']
 ROL_COMERCIALES = ['COMERCIAL', 'COMERCIAL FRIMETALS', 'STAFF FRIMETALS']
 ROL_OPERARIOS = ['INYECCION', 'PULIDO', 'ALISTAMIENTO', 'ENSAMBLE', 'AUXILIAR INVENTARIO']
+# Roles que pueden abrir la página 'modo-tv' (ver permissions en
+# frontend/static/js/modules/auth.js -- mantener sincronizado). Los endpoints de
+# solo lectura que alimentan las pantallas de la TV de planta usan este set, no el
+# del módulo de origen: quien tiene la TV abierta no necesariamente tiene el rol de
+# Ensamble/Pulido.
+ROL_MODO_TV = ROL_ADMINS + ['JEFE INYECCION', 'INYECCION', 'JEFE PULIDO']
 # Roles autorizados para omitir el Ownership Guard (ver AuditService._usuario_autenticado_puede_override).
 # Mantener sincronizado con los roles usados en @require_role de las rutas de validación.
 ROLES_VALIDACION_OVERRIDE = ROL_ADMINS + ROL_JEFES + ['AUXILIAR INVENTARIO', 'INVENTARIO', 'CALIDAD', 'STAFF FRIMETALS', 'SUPERVISOR']
@@ -126,6 +132,20 @@ def obtener_identidad_segura(req):
         return None, None
 
     return user, role
+
+def es_rol_admin(raw_role) -> bool:
+    """
+    True si el rol pertenece a ROL_ADMINS -- misma normalización que
+    require_role (mayúsculas, sin tildes, pertenencia EXACTA). Para que un
+    controlador le diga al frontend si mostrar un control de edición sin que
+    el frontend adivine el rol.
+    """
+    if not raw_role:
+        return False
+    rol = str(raw_role).strip().upper()
+    rol = ''.join(c for c in unicodedata.normalize('NFD', rol) if unicodedata.category(c) != 'Mn')
+    return rol in _ROL_ADMINS_SET
+
 
 def require_login(f):
     """

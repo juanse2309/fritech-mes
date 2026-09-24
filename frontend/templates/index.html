@@ -726,6 +726,12 @@
                                 <p id="tv-slide-subtitulo">Mix de Producción — Pulido</p>
                             </div>
                         </div>
+                        <!-- Días sin accidentes: oculto hasta que exista una fecha registrada -->
+                        <div id="tv-seguridad" style="display:none;">
+                            <i class="fas fa-shield-alt" id="tv-seguridad-icono"></i>
+                            <div id="tv-seguridad-texto"></div>
+                            <button id="tv-seguridad-editar" type="button" title="Cambiar la fecha del último accidente" aria-label="Cambiar la fecha del último accidente" style="display:none;"><i class="fas fa-pen"></i></button>
+                        </div>
                         <div id="tv-header-right">
                             <div id="tv-reloj">--:--:--</div>
                             <div id="tv-fecha">-</div>
@@ -745,6 +751,11 @@
                         <!-- Slide 2: Pulido en vivo (supervisión, solo lectura) -->
                         <section class="tv-slide" data-tv-slide="pulido">
                             <div class="tv-grid-viewport"><div id="tv-pulido-grid" class="tv-grid"></div></div>
+                        </section>
+
+                        <!-- Slide 2b: Metas de Ensamble (avance reportado + checklist de procesos) -->
+                        <section class="tv-slide" data-tv-slide="ensamble">
+                            <div class="tv-grid-viewport"><div id="tv-ensamble-grid" class="tv-grid"></div></div>
                         </section>
 
                         <!-- Slide 3: Reporte de máquinas — ronda del día -->
@@ -772,6 +783,7 @@
                         <div id="tv-dots">
                             <span class="tv-dot active" data-tv-dot="ranking"></span>
                             <span class="tv-dot" data-tv-dot="pulido"></span>
+                            <span class="tv-dot" data-tv-dot="ensamble"></span>
                             <span class="tv-dot" data-tv-dot="maquinas-hoy"></span>
                             <span class="tv-dot" data-tv-dot="ranking-semana"></span>
                             <span class="tv-dot" data-tv-dot="maquinas-semana"></span>

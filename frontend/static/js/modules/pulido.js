@@ -1713,18 +1713,16 @@ const ModuloPulido = {
         PAUSADO_COLA: { acento: '#64748b', tinte: '#f8fafc', badge: 'secondary' },
     },
 
-    // Ventanas de pausa programada (plan 2026-09-02): MISMAS horas exactas
-    // que ya descuenta PausasService al cerrar un reporte (ver
-    // _VENTANAS_PAUSAS_PROGRAMADAS en pausas_service.py) -- esto NO cambia
-    // el estado real ni toca la base de datos, es solo un aviso visual en
-    // el Panel de Supervisión para que quien supervisa sepa que alguien
-    // "sigue TRABAJANDO" en el sistema porque está en desayuno/almuerzo
-    // (que el sistema igual va a descontar solo al final), no porque haya
-    // dejado de trabajar sin avisar.
-    _VENTANAS_BREAK_SUPERVISION: [
-        { nombre: 'Desayuno', inicioMin: 9 * 60, finMin: 9 * 60 + 20 },
-        { nombre: 'Almuerzo', inicioMin: 13 * 60, finMin: 13 * 60 + 40 },
-    ],
+    // Ventanas de pausa programada (plan 2026-09-02): las entrega el backend
+    // junto a las sesiones ('pausas_programadas', ver PausasService.obtener_
+    // ventanas) -- son las MISMAS horas que descuenta al cerrar un reporte,
+    // sin copia local que pueda desincronizarse. Esto NO cambia el estado
+    // real ni toca la base de datos, es solo un aviso visual en el Panel de
+    // Supervisión para que quien supervisa sepa que alguien "sigue
+    // TRABAJANDO" en el sistema porque está en desayuno/almuerzo (que el
+    // sistema igual va a descontar solo al final), no porque haya dejado de
+    // trabajar sin avisar. Vacío hasta la primera carga: sin datos, sin aviso.
+    _VENTANAS_BREAK_SUPERVISION: [],
 
     _minutosColombiaAhora: function () {
         const partes = new Intl.DateTimeFormat('es-CO', {
@@ -1868,6 +1866,10 @@ const ModuloPulido = {
         try {
             const res = await window.apiClient.get('/pulido/admin/sesiones');
             this._sesionesSupervision = res?.data?.sesiones || [];
+            const aMinutos = (hhmm) => { const [h, m] = String(hhmm).split(':'); return parseInt(h, 10) * 60 + parseInt(m, 10); };
+            this._VENTANAS_BREAK_SUPERVISION = (res?.data?.pausas_programadas || []).map(v => ({
+                nombre: v.nombre, inicioMin: aMinutos(v.inicio), finMin: aMinutos(v.fin)
+            }));
             this._renderGridSupervision();
         } catch (error) {
             console.error('[Pulido][Supervisión] Error cargando sesiones:', error);

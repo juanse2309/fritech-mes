@@ -16,6 +16,19 @@ class PausasService:
     )
 
     @staticmethod
+    def obtener_ventanas() -> list:
+        """
+        Ventanas de pausa programada en formato serializable para el frontend
+        (Panel de Supervisión y Modo TV de Pulido): así las horas viven solo
+        acá y no se copian a mano en JS, donde un cambio de horario quedaría
+        desincronizado con el descuento real que aplica el backend.
+        """
+        return [
+            {"tipo": tipo, "nombre": tipo.capitalize(), "inicio": ini, "fin": fin}
+            for tipo, ini, fin in PausasService._VENTANAS_PAUSAS_PROGRAMADAS
+        ]
+
+    @staticmethod
     def calcular_descuento_pausas_programadas(hora_inicio, hora_fin) -> dict:
         """
         Calcula el descuento por intersección entre el intervalo trabajado

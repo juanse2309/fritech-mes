@@ -14,7 +14,7 @@ from backend.services.ensamble_service import (
     MetaEnsambleNoEncontradaException,
 )
 from backend.config.constants import FALLBACK_OPERARIO
-from backend.utils.auth_middleware import _obtener_usuario_activo, obtener_identidad_segura, require_role, ROL_ADMINS, ROL_JEFES, ROL_OPERARIOS
+from backend.utils.auth_middleware import _obtener_usuario_activo, obtener_identidad_segura, require_role, ROL_ADMINS, ROL_JEFES, ROL_OPERARIOS, ROL_MODO_TV
 
 ensamble_bp = Blueprint('ensamble_bp', __name__)
 logger = logging.getLogger(__name__)
@@ -60,6 +60,20 @@ def historial_metas():
         return api_success(data=resultado)
     except Exception as e:
         logger.error(f"Error al listar historial de metas ensamble: {e}")
+        return api_error(str(e), status_code=500)
+
+@ensamble_bp.route('/api/ensamble/modo_tv', methods=['GET'])
+@require_role(ROL_MODO_TV)
+def resumen_modo_tv():
+    """Controlador puro (solo lectura): metas de ensamble con avance y checklist
+    para la TV de planta -- mismo dato que el panel "Historial de Metas", pero con
+    los roles que pueden abrir el Modo TV (ver ROL_MODO_TV). Solo metas: la UI de
+    Ensamble no registra un "inicio" en la BD, así que no hay forma real de saber
+    quién está ensamblando en este instante."""
+    try:
+        return api_success(data={'metas': EnsambleService.listar_historial_metas()})
+    except Exception as e:
+        logger.error(f"Error en resumen Modo TV de ensamble: {e}")
         return api_error(str(e), status_code=500)
 
 @ensamble_bp.route('/api/ensamble/session_active', methods=['GET'])

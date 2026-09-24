@@ -107,6 +107,87 @@ body.tv-produccion-mode #modo-tv-page {
     text-transform: capitalize;
 }
 
+/* ── Días sin accidentes (encabezado, visible en todas las pantallas) ─── */
+#tv-seguridad {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0 20px;
+    padding: 6px 18px;
+    border-radius: 14px;
+    background: rgba(22, 163, 74, .18);
+    border: 2px solid rgba(74, 222, 128, .45);
+    color: #bbf7d0;
+    flex-shrink: 0;
+}
+
+#tv-seguridad-icono { font-size: 2.2rem; }
+
+#tv-seguridad-texto {
+    font-size: 1.25rem;
+    font-weight: 700;
+    line-height: 1.1;
+    text-align: center;
+}
+
+#tv-seguridad-texto strong {
+    display: block;
+    font-size: 2.6rem;
+    font-weight: 900;
+    line-height: 1;
+    color: #ffffff;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Accidente de hoy (0 días): rojo, para que no pase desapercibido. */
+#tv-seguridad.tv-seguridad-cero {
+    background: rgba(239, 68, 68, .18);
+    border-color: rgba(248, 113, 113, .55);
+    color: #fecaca;
+}
+
+/* Admin sin fecha registrada todavía: aviso apagado, solo lo ve quien puede editar. */
+#tv-seguridad.tv-seguridad-sin-dato {
+    background: rgba(148, 163, 184, .12);
+    border-color: rgba(148, 163, 184, .35);
+    color: #94a3b8;
+}
+
+/* El lápiz solo aparece al pasar el mouse o con foco: en la TV (sin puntero)
+   no se ve; el ADMIN que abre el Modo TV en su PC sí lo encuentra. */
+#tv-seguridad-editar {
+    opacity: 0;
+    transition: opacity .2s;
+    background: rgba(255, 255, 255, .12);
+    border: 0;
+    border-radius: 8px;
+    color: inherit;
+    width: 34px;
+    height: 34px;
+    cursor: pointer;
+}
+#tv-seguridad:hover #tv-seguridad-editar,
+#tv-seguridad-editar:focus { opacity: 1; }
+
+/* Pantallas lógicas angostas (la TV de planta reporta ~960px de ancho aunque
+   sea de 55"): con el recuadro de días sin accidentes el encabezado no cabe en
+   una línea y el título se partía en 2-3 líneas, robándole alto al contenido.
+   Se compacta el encabezado en vez de dejar que crezca. */
+@media (max-width: 1300px) {
+    #tv-logo-icono { display: none; }
+    #tv-slide-titulo { font-size: 2.3rem; }
+    #tv-slide-subtitulo { font-size: 1.2rem; }
+    #tv-reloj { font-size: 2.6rem; }
+    #tv-fecha { font-size: 1.1rem; }
+    #tv-seguridad { margin: 0 12px; padding: 4px 12px; gap: 8px; }
+    #tv-seguridad-icono { font-size: 1.6rem; }
+    #tv-seguridad-texto { font-size: 1rem; }
+    #tv-seguridad-texto strong { font-size: 2rem; }
+}
+
+/* SweetAlert2 por encima del Modo TV (z-index 6000). */
+.tv-swal-z { z-index: 7000 !important; }
+
 /* ── Slides ─────────────────────────────────────────────────────── */
 #tv-slides {
     position: relative;
@@ -324,10 +405,86 @@ body.tv-produccion-mode #modo-tv-page {
 }
 
 /* Tarjetas de máquina (hoy / semana) */
-.tv-maq-molde {
-    font-size: 2.1rem;
+/* OP en grande, en su propio recuadro: es el dato que la gente de planta
+   usa para identificar el trabajo (pedido del usuario 2026-09-24). */
+.tv-maq-op {
+    font-size: 2.6rem;
     font-weight: 900;
     color: #ffffff;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: .02em;
+    padding: 6px 14px;
+    margin: 6px 0 10px;
+    border-radius: 12px;
+    background: rgba(37, 99, 235, .22);
+    border: 2px solid rgba(96, 165, 250, .55);
+    overflow-wrap: anywhere;
+}
+
+.tv-maq-op-vacio {
+    background: rgba(251, 191, 36, .12);
+    border-color: rgba(251, 191, 36, .55);
+    color: #fbbf24;
+}
+
+/* Variante más baja del recuadro de OP para tarjetas que además llevan barra
+   y checklist (Ensamble): en pantallas bajas cada píxel de alto cuenta. */
+.tv-maq-op-sm {
+    font-size: 2rem;
+    padding: 3px 12px;
+    margin: 4px 0 8px;
+}
+
+/* ── Metas de Ensamble ────────────────────────────────────────────── */
+.tv-ens-barra {
+    height: 16px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, .1);
+    overflow: hidden;
+}
+
+.tv-ens-barra-fill {
+    height: 100%;
+    border-radius: 8px;
+}
+
+.tv-ens-avance {
+    display: flex;
+    justify-content: space-between;
+    margin: 4px 0 8px;
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #e2e8f0;
+    font-variant-numeric: tabular-nums;
+}
+
+.tv-ens-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.tv-ens-chip {
+    font-size: 1.05rem;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 14px;
+    border: 1px solid rgba(148, 163, 184, .35);
+    color: #94a3b8;
+}
+
+.tv-ens-chip-hecho {
+    background: rgba(22, 163, 74, .2);
+    border-color: rgba(74, 222, 128, .5);
+    color: #86efac;
+}
+
+.tv-ens-atraso {
+    margin-top: 8px;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #fbbf24;
 }
 
 .tv-maq-producto {

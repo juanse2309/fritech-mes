@@ -252,6 +252,7 @@ from backend.routes.asistencia_routes import asistencia_bp
 from backend.routes.productos_routes import productos_bp
 from backend.routes.historial_routes import historial_bp
 from backend.routes.ensamble_routes import ensamble_bp
+from backend.routes.seguridad_routes import seguridad_bp
 from backend.routes.empaque_routes import empaque_bp
 from backend.routes.pintura_routes import pintura_bp
 from backend.routes.rayada_routes import rayada_bp
@@ -318,6 +319,7 @@ app.register_blueprint(pulido_bp)
 app.register_blueprint(programacion_pulido_bp)
 app.register_blueprint(asistencia_bp, url_prefix='/api/asistencia')
 app.register_blueprint(ensamble_bp)
+app.register_blueprint(seguridad_bp)
 app.register_blueprint(empaque_bp)
 app.register_blueprint(pintura_bp)
 app.register_blueprint(rayada_bp)

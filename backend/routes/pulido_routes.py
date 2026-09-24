@@ -11,6 +11,7 @@ from backend.models.sql_models import db, ProduccionPulido, PncPulido, BujeRevue
 from backend.utils.formatters import normalizar_codigo, preservar_o_normalizar_prefijo
 from backend.services.audit_service import AuditService, OwnershipMismatchException, TurnoInvalidoException
 from backend.services.pulido_service import PulidoService, FechaPulidoInvalidaException, CantidadExcedeInyectadoException, CantidadRealCeroException
+from backend.services.pausas_service import PausasService
 from backend.utils.time_utils import get_colombia_time
 import uuid
 from datetime import datetime
@@ -71,7 +72,7 @@ def lider_hoy_audio():
         lider = _resolver_lider_hoy()
         if not lider:
             return api_error("Sin líder registrado hoy", status_code=404)
-        texto = f"{lider['nombre']} se puso a la cabeza en Pulido con {lider['buenas']} piezas."
+        texto = PulidoService.texto_anuncio_lider(lider['nombre'], lider['buenas'])
         ruta_audio = PulidoService.generar_audio_lider(texto)
         # conditional=False: sin esto Flask responde 304 ante un If-None-Match
         # del navegador, y el fetch() del cliente lo trata como !resp.ok y se
@@ -296,7 +297,10 @@ def listar_sesiones_pulido_admin():
     original (ver AuditService.resolver_y_validar_propietario).
     """
     try:
-        return api_success(data={'sesiones': PulidoService.listar_sesiones_activas()})
+        return api_success(data={
+            'sesiones': PulidoService.listar_sesiones_activas(),
+            'pausas_programadas': PausasService.obtener_ventanas(),
+        })
     except Exception as e:
         logger.error(f"❌ Error listando sesiones de Pulido (admin): {e}")
         return api_error(str(e), status_code=500)

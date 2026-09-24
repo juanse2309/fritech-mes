@@ -569,6 +569,32 @@ class PulidoService:
             )
 
     @staticmethod
+    def formatear_nombre_para_voz(nombre) -> str:
+        """
+        Nombre en formato normal ("Paola Nimisica") para el sintetizador.
+
+        get_ranking_leaderboard entrega los nombres con UPPER(TRIM(...)), y
+        Google Translate TTS (gTTS) deletrea letra por letra las palabras en
+        MAYÚSCULAS que no reconoce como palabra (las trata como siglas):
+        medido 2026-09-24 con NIMISICA, LIZETH y YESICA -- el audio dura 2-3
+        veces más -- mientras que nombres comunes (Paola, Laura, Leidy...) suenan
+        igual en mayúsculas. En formato normal esas mismas palabras se leen
+        como palabras.
+        """
+        limpio = ' '.join(str(nombre or '').split())
+        return limpio.title() if limpio else 'Una operaria'
+
+    @staticmethod
+    def texto_anuncio_lider(nombre, buenas) -> str:
+        """Frase que se sintetiza cuando cambia el líder del Mix de Producción."""
+        try:
+            piezas = int(buenas or 0)
+        except (TypeError, ValueError):
+            piezas = 0
+        # Entero a propósito: un float ("1234.0") se leería "... punto cero".
+        return f"{PulidoService.formatear_nombre_para_voz(nombre)} se puso a la cabeza en Pulido con {piezas} piezas."
+
+    @staticmethod
     def generar_audio_lider(texto: str) -> str:
         """
         Genera (con cache en disco por texto) el audio del anuncio del
