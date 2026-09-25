@@ -367,7 +367,7 @@
                         <td>
                             ${formatearDetalle(r.Detalle)}
                             ${r.Tipo === 'PULIDO' && (r.HORA_INICIO || r.HORA_FIN) && formatHorario(r.HORA_INICIO) ? `<div class="mt-1"><span class="horario-movimiento"><i class="far fa-clock me-1"></i>${formatHorario(r.HORA_INICIO)} - ${formatHorario(r.HORA_FIN) || '?'}</span></div>` : ''}
-                            ${r.Tipo === 'INYECCION' && r.tiempo_total_minutos != null ? `<div class="mt-1"><span class="badge bg-light text-dark border me-1" title="Tiempo total min"><i class="fas fa-stopwatch me-1 text-primary"></i>${formatMetricaNum(r.tiempo_total_minutos, 2)} min</span><span class="badge bg-light text-dark border" title="Peso Bujes"><i class="fas fa-weight-hanging me-1 text-secondary"></i>${formatMetricaNum(r.peso_bujes, 4)}g</span></div>` : ''}
+                            ${r.Tipo === 'INYECCION' && r.tiempo_total_minutos != null ? `<div class="mt-1"><span class="badge bg-light text-dark border me-1" title="Tiempo total min"><i class="fas fa-stopwatch me-1 text-primary"></i>${formatMetricaNum(r.tiempo_total_minutos, 2)} min</span><span class="badge bg-light text-dark border" title="Peso Bujes (kg)"><i class="fas fa-weight-hanging me-1 text-secondary"></i>${formatMetricaNum(r.peso_bujes, 4)} kg</span></div>` : ''}
                         </td>
 
                         <td class="text-center fw-bold">${cantidad ?? '-'}</td>
@@ -586,8 +586,8 @@
                         <h6 class="section-title"><i class="fas fa-weight-hanging me-2"></i> Pesos (g)</h6>
                         <div class="row g-3">
                             <div class="col-md-6">${crearCampoEdicion('Peso Tomadas (g)', formatVal(det.peso_tomados_proceso), 'number', 'PESO TOMADAS EN PROCESO')}</div>
-                            <div class="col-md-6">${crearCampoEdicion('Peso Vela (g)', formatVal(det.peso_vela), 'number', 'PESO VELA MAQUINA')}</div>
-                            <div class="col-md-12">${crearCampoEdicion('Peso Bujes (g)', formatVal(det.peso_bujes), 'number', 'PESO BUJES')}</div>
+                            <div class="col-md-6">${crearCampoEdicion('Peso Vela (kg)', formatVal(det.peso_vela_maquina), 'number', 'PESO VELA MAQUINA')}</div>
+                            <div class="col-md-12">${crearCampoEdicion('Peso Bujes (kg)', formatVal(det.peso_bujes), 'number', 'PESO BUJES')}</div>
                         </div>
                     </div>
 

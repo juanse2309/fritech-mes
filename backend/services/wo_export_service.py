@@ -276,8 +276,12 @@ class WoExportService:
 
         total_peso = sum(l['peso'] for l in lineas)
         total_cant = sum(l['bruto'] for l in lineas)
+        # Solo se reparte por peso si TODAS las líneas tienen peso: con peso
+        # parcial (Validación empezó a guardarlo el 2026-09-25 y no todos los
+        # lotes lo traen) las líneas sin peso quedarían con 0 % del costo.
+        todas_con_peso = all(l['peso'] > 0 for l in lineas)
 
-        if total_peso > 0:
+        if total_peso > 0 and todas_con_peso:
             base = [l['peso'] for l in lineas]
             total = total_peso
         elif total_cant > 0:

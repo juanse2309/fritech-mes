@@ -232,6 +232,18 @@ with app.app_context():
     except Exception as e_db_fecha_recepcion:
         db.session.rollback()
         logger.error(f"❌ Error agregando fecha_recepcion a db_lineas_recepcion_oc: {e_db_fecha_recepcion}")
+
+    # Peso de la vela de máquina (Validación de Inyección, 2026-09-25). Bloque
+    # propio, mismo motivo que los de arriba. IMPORTANTE: ProduccionInyeccion
+    # (sql_models.py) ya declara esta columna, así que si esta ALTER fallara
+    # en una instancia, TODA consulta ORM a db_inyeccion fallaría -- por eso
+    # el error se loguea con fuerza y no se silencia.
+    try:
+        db.session.execute(text("ALTER TABLE db_inyeccion ADD COLUMN IF NOT EXISTS peso_vela_maquina NUMERIC(12,4) DEFAULT 0;"))
+        db.session.commit()
+    except Exception as e_db_peso_vela:
+        db.session.rollback()
+        logger.critical(f"❌ CRÍTICO: no se pudo agregar peso_vela_maquina a db_inyeccion: {e_db_peso_vela}")
 # ---------------------------------------------
 
 # Login Blueprints
@@ -401,7 +413,7 @@ def serve_manifest():
 # (cache-busting de CSS/JS en index.html, footer, loader). Distinta de
 # _APP_VERSION de abajo, que es el hash del deploy activo para detectar
 # frontend desactualizado -- no confundir ambas.
-RELEASE_VERSION = "1.8.87"
+RELEASE_VERSION = "1.8.91"
 
 # --- VERSION DEL DEPLOY ACTIVO ---
 # RENDER_GIT_COMMIT la puebla Render automaticamente en cada deploy (no hay

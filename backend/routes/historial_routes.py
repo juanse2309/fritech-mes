@@ -171,6 +171,7 @@ def actualizar_registro_historial():
             'CANTIDAD REAL': 'cantidad_real',
             'ALMACEN DESTINO': 'almacen_destino',
             'PESO BUJES': 'peso_bujes',
+            'PESO VELA MAQUINA': 'peso_vela_maquina',
             'OBSERVACIONES': 'observaciones',
             'CANTIDAD RECIBIDA': 'cantidad_recibida',
             'BUJES BUENOS': 'cantidad_real',

@@ -1,5 +1,7 @@
 import os
+import re
 from datetime import datetime
+from xml.sax.saxutils import escape
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -28,6 +30,20 @@ class PDFGenerator:
             return float(val)
         except (ValueError, TypeError):
             return default
+
+    @staticmethod
+    def _limpiar_observaciones(texto):
+        """
+        Texto de observaciones listo para un Paragraph de reportlab: quita las
+        etiquetas internas [AUTO_BREAK]{json}[/AUTO_BREAK] (metadato del sistema,
+        no una novedad de planta -- salían en crudo en el PDF) y escapa &, < y >
+        porque Paragraph interpreta su contenido como marcado. Devuelve "Ninguna"
+        si no queda nada.
+        """
+        limpio = re.sub(r'\[AUTO_BREAK\].*?\[/AUTO_BREAK\]', '', str(texto or ''), flags=re.DOTALL).strip()
+        if not limpio or limpio == 'None':
+            return "Ninguna"
+        return escape(limpio)
 
     @staticmethod
     def generar_reporte_inyeccion(datos_fila, filepath, pnc=0, producto_nombre=""):
@@ -190,19 +206,24 @@ class PDFGenerator:
             elements.append(Paragraph(f"Gestión Multi-SKU {Empresa.NOMBRE}", subtitulo_style))
             elements.append(Spacer(1, 0.1 * inch))
 
-            obs_text_turno = str(turno.get('observaciones') or turno.get('observaciones_generales') or "").strip()
-            if (not obs_text_turno or obs_text_turno == 'None') and items:
-                obs_text_turno = str(items[0].get('observaciones') or "").strip()
-            if not obs_text_turno or obs_text_turno == 'None':
-                obs_text_turno = "Ninguna"
+            obs_text_turno = PDFGenerator._limpiar_observaciones(
+                turno.get('observaciones') or turno.get('observaciones_generales')
+            )
+            if obs_text_turno == "Ninguna" and items:
+                obs_text_turno = PDFGenerator._limpiar_observaciones(items[0].get('observaciones'))
 
             # Información de Turno (Ajustada a requerimiento de trazabilidad)
+            # 'fecha_inicio' es la fecha de PRODUCCIÓN del lote (fecha_inicia), no
+            # la de validación -- el rótulo decía "FECHA VALIDACIÓN" y confundía.
             data_turno = [
-                ["FECHA VALIDACIÓN:", turno.get('fecha_inicio', ''), "RESPONSABLE:", str(turno.get('responsable', '')).upper()],
+                ["FECHA PRODUCCIÓN:", turno.get('fecha_inicio', ''), "RESPONSABLE:", str(turno.get('responsable', '')).upper()],
                 ["MÁQUINA:", turno.get('maquina', ''), "ORDEN PROD (OP):", str(turno.get('orden_produccion', '')).upper()],
                 ["ENTRADA:", f"{turno.get('entrada_manual', 0)} kg", "SALIDA:", f"{turno.get('salida_manual', 0)} kg"],
                 ["HORA INICIO:", turno.get('hora_inicio', ''), "HORA TERMINA:", turno.get('hora_termina', '')],
-                ["PESO VELA MÁQ:", f"{turno.get('peso_vela_maquina', 0)} kg", "OBSERVACIONES:", Paragraph(obs_text_turno, styles['Normal'])]
+                ["PESO VELA MÁQ:", f"{turno.get('peso_vela_maquina', 0)} kg", "OBSERVACIONES:", Paragraph(obs_text_turno, styles['Normal'])],
+                # Quien auditó el lote en Validación (JWT), distinto del responsable
+                # de máquina. Casilla propia: el pie sigue mostrando al responsable.
+                ["VALIDADO POR:", str(turno.get('validado_por') or '').upper(), "FECHA VALIDACIÓN:", datetime.now().strftime('%Y-%m-%d %H:%M')]
             ]
             t_turno = Table(data_turno, colWidths=[1.5*inch, 2.0*inch, 1.5*inch, 2.5*inch])
             t_turno.setStyle(TableStyle([
@@ -231,7 +252,14 @@ class PDFGenerator:
             for it in items:
                 cav = PDFGenerator._safe_int(it.get('no_cavidades'), default=1)
                 disp = PDFGenerator._safe_int(it.get('disparos'))
-                proyectado = disp * cav
+                # Proyectado en PIEZAS: se toma la producción teórica ya guardada
+                # del lote. disparos x cavidades daba cavidades veces lo real en
+                # lotes de MES, donde cant_contador ya viene en piezas (cierres x
+                # cavidades): FR-9306 (2 cav, 804 pz) salía con 1608 proyectadas y
+                # 50% de eficiencia siendo 100%. Sin teórica guardada se cae al
+                # cálculo anterior.
+                teorica = PDFGenerator._safe_int(it.get('produccion_teorica'))
+                proyectado = teorica if teorica > 0 else disp * cav
                 
                 # Cantidad Real reportada (bruto o neto según el caso, lo normalizamos a buenas después)
                 real_reportado = PDFGenerator._safe_int(it.get('cantidad_real')) or proyectado
@@ -250,11 +278,13 @@ class PDFGenerator:
                 total_proyectado += proyectado
                 total_buenas += buenas
                 total_pnc += pnc
-                total_peso += peso
+                # Peso total = cantidad buena x peso por buje. Antes se sumaba el
+                # peso UNITARIO de cada referencia, que no significa nada.
+                total_peso += peso * buenas
                 
                 data_items.append([
                     Paragraph(str(it.get('codigo_producto') or 'S/C'), styles['Normal']),
-                    f"{peso:.3f}",
+                    f"{peso:.4f}",  # 4 decimales: un buje pesa centésimas de kg
                     cav,
                     disp,
                     proyectado,
@@ -290,7 +320,9 @@ class PDFGenerator:
             elements.append(Paragraph("<b>RESUMEN DE CUANTIFICACIÓN</b>", styles['Heading4']))
             eficiencia_lote = (total_buenas / total_proyectado * 100) if total_proyectado > 0 else 0
             resumen_data = [
-                ["Eficiencia Promedio OP", f"{eficiencia_lote:.1f}%", "Estado: REGISTRADO"],
+                # Este PDF solo se genera al validar el lote (validar_lote), así que
+                # el estado real es VALIDADO, no "REGISTRADO".
+                ["Eficiencia Promedio OP", f"{eficiencia_lote:.1f}%", "Estado: VALIDADO"],
                 ["Total Cantidad Real (Neto)", f"{total_buenas} pz", "Total Descarte (PNC): " + f"{total_pnc} pz"],
                 ["Total Peso Consolidado", f"{total_peso:.3f} kg", "Almacén Destino: " + str(turno.get('almacen_destino', ''))]
             ]
@@ -307,17 +339,20 @@ class PDFGenerator:
             # Observaciones / Novedades
             elements.append(Paragraph("<b>OBSERVACIONES / NOVEDADES</b>", styles['Heading4']))
             # Buscar observaciones en el turno o en el primer item (usualmente se envían en el payload principal)
-            obs_text = str(turno.get('observaciones') or turno.get('observaciones_generales') or "").strip()
-            if (not obs_text or obs_text == 'None') and items:
-                obs_text = str(items[0].get('observaciones') or "").strip()
-            if not obs_text or obs_text == 'None':
-                obs_text = "Ninguna"
-            elements.append(Paragraph(str(obs_text), styles['Normal']))
+            obs_text = PDFGenerator._limpiar_observaciones(
+                turno.get('observaciones') or turno.get('observaciones_generales')
+            )
+            if obs_text == "Ninguna" and items:
+                obs_text = PDFGenerator._limpiar_observaciones(items[0].get('observaciones'))
+            elements.append(Paragraph(obs_text, styles['Normal']))
 
-            # Pie de página
+            # Pie de página. Antes: Spacer de 0.6" + 150 guiones, que empujaban
+            # el pie a una SEGUNDA hoja con solo esa línea.
             footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=7, textColor=colors.grey, alignment=1)
-            elements.append(Spacer(1, 0.6 * inch))
-            elements.append(Paragraph("-" * 150, footer_style))
+            elements.append(Spacer(1, 0.15 * inch))
+            elements.append(Paragraph("-" * 100, footer_style))
+            # El pie muestra al responsable de la máquina (tal cual estaba); quien
+            # AUDITÓ el lote va en su propia casilla "VALIDADO POR" arriba.
             responsable = str(turno.get('responsable', '')).upper()
             footer_text = f"Documento de Control Interno {Empresa.NOMBRE} | Generado: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Validado en sistema por: {responsable}"
             elements.append(Paragraph(footer_text, footer_style))

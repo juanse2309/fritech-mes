@@ -9,9 +9,9 @@ a queries batch.
 Estos tests cubren los tres bloques que p6 NO tocó y que p5 sí va a mover a
 métodos propios:
   1. Sincronización de campos (item/turno -> atributos de ProduccionInyeccion).
-  2. Cálculo de tiempos: duración neta, descuento de pausas programadas
-     (Desayuno/Almuerzo), tag [AUTO_BREAK] en observaciones, y el guard de
-     duración imposible (TurnoInvalidoException).
+  2. Cálculo de tiempos: duración (sin descuento de pausas desde 2026-09-25:
+     las máquinas de inyección no descansan) y el guard de duración
+     imposible (TurnoInvalidoException).
   3. Lógica de PNC por item (detallado vs. fallback a pnc_total crudo) y PNC
      "huérfanas" (código del pnc_list que no pertenece a ningún item del lote).
 
@@ -161,8 +161,10 @@ class TestCalculoTiemposYPausas(_BaseRegistrarLoteTest):
         self.assertEqual(fila.duracion_segundos, 2 * 3600)
         self.assertNotIn("AUTO_BREAK", fila.observaciones or "")
 
-    def test_duracion_con_solape_de_desayuno_descuenta_y_marca_auto_break(self):
+    def test_duracion_con_solape_de_desayuno_NO_descuenta_las_maquinas_no_descansan(self):
         # 08:50 -> 09:30 cruza la ventana de desayuno 09:00-09:20 completa (20 min).
+        # Desde 2026-09-25 Inyección no descuenta pausas (las máquinas siguen
+        # trabajando): la duración es el bruto y no se marca [AUTO_BREAK].
         data = self._payload(items=[{
             "codigo_producto": "8888001",
             "cantidad_real": 10,
@@ -172,10 +174,22 @@ class TestCalculoTiemposYPausas(_BaseRegistrarLoteTest):
         }])
         InyeccionService.registrar_lote(data, RESPONSABLE_TEST)
         fila = self._fila()
-        bruto = 40 * 60  # 40 minutos
-        descuento = 20 * 60  # 20 minutos de desayuno
-        self.assertEqual(fila.duracion_segundos, bruto - descuento)
-        self.assertIn("[AUTO_BREAK]", fila.observaciones or "")
+        self.assertEqual(fila.duracion_segundos, 40 * 60)
+        self.assertNotIn("AUTO_BREAK", fila.observaciones or "")
+
+    def test_turno_completo_con_desayuno_y_almuerzo_no_descuenta_nada(self):
+        # 07:00 -> 16:00 cruza desayuno (20) y almuerzo (40): antes restaba 60 min.
+        data = self._payload(items=[{
+            "codigo_producto": "8888001",
+            "cantidad_real": 10,
+            "no_cavidades": 1,
+            "hora_inicio": "07:00",
+            "hora_fin": "16:00",
+        }])
+        InyeccionService.registrar_lote(data, RESPONSABLE_TEST)
+        fila = self._fila()
+        self.assertEqual(fila.duracion_segundos, 9 * 3600)
+        self.assertNotIn("AUTO_BREAK", fila.observaciones or "")
 
     def test_duracion_mayor_a_12h_lanza_turno_invalido_y_no_persiste_nada(self):
         data = self._payload(items=[{

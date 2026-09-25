@@ -469,12 +469,40 @@ const ModuloInyeccion = {
         if (document.getElementById('hora-termina-inyeccion')) {
             document.getElementById('hora-termina-inyeccion').value = lotePrincipal.hora_fin || '';
         }
+        // Hora de llegada: la guardada en el lote; si no hay ninguna se sigue
+        // mostrando 06:00 (inicio de jornada) como sugerencia visual, pero ese
+        // valor por defecto NO se guarda a menos que Zoe lo cambie (ver
+        // _turnoOrig y validarRegistro).
+        const _horaLlegadaLote = String(lotePrincipal.hora_llegada || '').substring(0, 5) || '06:00';
         if (document.getElementById('hora-llegada-inyeccion')) {
-            document.getElementById('hora-llegada-inyeccion').value = '06:00';
+            document.getElementById('hora-llegada-inyeccion').value = _horaLlegadaLote;
         }
         if (document.getElementById('orden-produccion-inyeccion')) {
             document.getElementById('orden-produccion-inyeccion').value = lotePrincipal.orden_produccion || '';
         }
+
+        // Con el lote ya cargado en los campos, fecha/máquina/OP quedan bloqueados.
+        this._bloquearIdentidadLote(true);
+
+        // Entrada / Salida (material) y Peso Vela Máquina (kg): se cargan con lo
+        // ya guardado en el lote y solo viajan al validar si Zoe los cambia
+        // (ver validarRegistro). Antes se tecleaban en pantalla y se perdían.
+        this._turnoOrig = {
+            entrada_manual: Number(lotePrincipal.entrada) || 0,
+            salida_manual: Number(lotePrincipal.salida) || 0,
+            peso_vela_maquina: Number(lotePrincipal.peso_vela_maquina) || 0,
+            // Horas tal como quedaron cargadas en los campos (HH:MM): solo viajan
+            // si Zoe las cambia. Cambiar hora_inicio/hora_termina recalcula la
+            // duración y las métricas de tiempo del lote en el backend.
+            hora_llegada: _horaLlegadaLote,
+            hora_inicio: String(lotePrincipal.hora_inicio || '').substring(0, 5),
+            hora_termina: String(lotePrincipal.hora_fin || '').substring(0, 5),
+        };
+        const _idsTurno = { entrada_manual: 'inyeccion-entrada', salida_manual: 'inyeccion-salida', peso_vela_maquina: 'peso-vela-inyeccion' };
+        Object.keys(_idsTurno).forEach(k => {
+            const el = document.getElementById(_idsTurno[k]);
+            if (el) el.value = this._turnoOrig[k] > 0 ? String(this._turnoOrig[k]) : '';
+        });
 
         // 2. Poblar los Items desde los registros del lote
         registrosDelLote.forEach(reg => {
@@ -511,6 +539,10 @@ const ModuloInyeccion = {
                 // Buenas reportadas del lote: a esto se vuelve si Zoe borra el
                 // campo Buenas (ver editarItem).
                 _buenas_orig: cantReal,
+                // Peso por buje (kg) ya guardado en el lote; la casilla "Peso (kg)"
+                // de la tabla se carga con él y solo viaja si Zoe lo cambia.
+                peso_bujes: Number(reg.peso_bujes) || 0,
+                _peso_orig: Number(reg.peso_bujes) || 0,
                 cantidad_real: brutoReal, // TOTAL (Buenas + PNC)
                 manual_buenas: cantReal,   // BUENAS
                 pnc: pncVal,
@@ -604,7 +636,30 @@ const ModuloInyeccion = {
                 // desde el registro original, así que cualquier corrección
                 // hecha aquí (necesaria para que lo exportado a WO cuadre)
                 // se perdía en silencio.
+                // Datos del turno tecleados en el formulario. null = "no lo toques":
+                // solo viaja el que Zoe cambió respecto a lo guardado en el lote.
+                const _leerNum = (id) => parseFloat(String(document.getElementById(id)?.value || '0').replace(/[^0-9.]/g, '')) || 0;
+                const _orig = this._turnoOrig || {};
+                const _actual = {
+                    entrada_manual: _leerNum('inyeccion-entrada'),
+                    salida_manual: _leerNum('inyeccion-salida'),
+                    peso_vela_maquina: _leerNum('peso-vela-inyeccion'),
+                };
+                const turnoPayload = {};
+                Object.keys(_actual).forEach(k => {
+                    // Sin originales cargados no se manda nada: nunca pisar con ceros.
+                    turnoPayload[k] = (!this._turnoOrig || _actual[k] === (_orig[k] || 0)) ? null : _actual[k];
+                });
+                // Horas (texto HH:MM): null si no cambiaron. Un campo vacío tampoco
+                // se manda (no se borra una hora guardada por dejar el input limpio).
+                const _leerHora = (id) => String(document.getElementById(id)?.value || '').substring(0, 5);
+                [['hora_llegada', 'hora-llegada-inyeccion'], ['hora_inicio', 'hora-inicio-inyeccion'], ['hora_termina', 'hora-termina-inyeccion']].forEach(([k, id]) => {
+                    const v = _leerHora(id);
+                    turnoPayload[k] = (!this._turnoOrig || v === '' || v === (_orig[k] || '')) ? null : v;
+                });
+
                 const payload = {
+                    turno: turnoPayload,
                     items: this.items.map(i => ({
                         codigo: i.codigo_producto,
                         pnc_inyeccion: i.pnc || 0,
@@ -619,6 +674,10 @@ const ModuloInyeccion = {
                             ? null : (i.disparos || 0),
                         no_cavidades: (i._cavidades_orig !== undefined && i.no_cavidades === i._cavidades_orig)
                             ? null : (i.no_cavidades || 1),
+                        // Peso (kg) de la tabla: antes NUNCA viajaba y se perdía. null =
+                        // "no lo toques" si Zoe no lo cambió.
+                        peso_bujes: (i._peso_orig !== undefined && (Number(i.peso_bujes) || 0) === i._peso_orig)
+                            ? null : (Number(i.peso_bujes) || 0),
                         buenas: (i.piezasBuenas !== undefined && i.piezasBuenas !== null)
                             ? i.piezasBuenas
                             : (i.manual_buenas != null ? i.manual_buenas : 0)
@@ -658,8 +717,31 @@ const ModuloInyeccion = {
         }
     },
 
+    // Fecha, Máquina y Orden de Producción identifican el lote (y su vínculo con
+    // la OP de World Office): en Validación son SOLO LECTURA. Estaban editables
+    // pero el backend nunca los guardó, así que cualquier cambio se perdía en
+    // silencio; y guardarlos rompería el vínculo del lote con OpGenerada / el
+    // archivo de WO. En "Nuevo Manual" (sin lote cargado) siguen editables.
+    _bloquearIdentidadLote: function (bloquear) {
+        const campos = [
+            ['fecha-inyeccion', 'readOnly'],
+            ['orden-produccion-inyeccion', 'readOnly'],
+            ['maquina-inyeccion', 'disabled'],   // <select>: no tiene readonly
+        ];
+        campos.forEach(([id, prop]) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el[prop] = !!bloquear;
+            el.classList.toggle('bg-light', !!bloquear);
+            if (bloquear) el.title = 'Solo lectura en Validación: identifica el lote y su OP';
+            else el.removeAttribute('title');
+        });
+    },
+
     limpiarFormularioValidacion: function (limpiarSelect = true) {
         this.esValidacionMode = false; // Resetear modo validación
+        this._turnoOrig = null; // Entrada/Salida/Peso Vela originales del lote cargado
+        this._bloquearIdentidadLote(false); // Nuevo Manual / tras validar: campos editables otra vez
         if (limpiarSelect) {
             const select = document.getElementById('select-validar-lote');
             if (select) select.value = '';

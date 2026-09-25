@@ -80,6 +80,11 @@ class ProduccionInyeccion(db.Model):
     observaciones        = db.Column(db.Text,        nullable=True)
     produccion_teorica   = db.Column(db.Numeric(12, 2), default=0)
     peso_bujes           = db.Column(db.Numeric(12, 4), default=0)
+    # Peso de la vela (colada) de la máquina, en kg -- campo "Peso Vela Máquina"
+    # del formulario. Antes se capturaba en pantalla y se descartaba: no había
+    # columna. La crea el bloque de migración de backend/app.py (ADD COLUMN IF
+    # NOT EXISTS) al arrancar cada instancia.
+    peso_vela_maquina    = db.Column(db.Numeric(12, 4), default=0)
     pnc_total            = db.Column(db.BigInteger,  default=0)
     pnc_detalle          = db.Column(db.Text,        nullable=True)
     peso_lote            = db.Column(db.Numeric(18, 4), default=0)

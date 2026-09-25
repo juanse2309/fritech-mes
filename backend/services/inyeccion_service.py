@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 import json
 import logging
@@ -84,6 +85,20 @@ class InyeccionService:
             )
 
     @staticmethod
+    def _normalizar_hora(valor, campo):
+        """
+        'H:MM' / 'HH:MM' / 'HH:MM:SS' -> 'HH:MM'. None o '' -> None (= "no
+        tocar"). Cualquier otra cosa -> ValueError (la ruta lo traduce a 400):
+        una hora basura no debe llegar a la BD ni a los cálculos de tiempo.
+        """
+        if valor is None or str(valor).strip() == '':
+            return None
+        m = re.fullmatch(r'\s*([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?\s*', str(valor))
+        if not m:
+            raise ValueError(f"{campo} inválida: {valor!r} (formato esperado HH:MM, 24 horas)")
+        return f"{int(m.group(1)):02d}:{m.group(2)}"
+
+    @staticmethod
     def _formatear_fecha_es(fecha_dt):
         """DD/Mes/YYYY en español a partir de un datetime ya en hora Colombia (naive)."""
         if not fecha_dt:
@@ -111,6 +126,7 @@ class InyeccionService:
                     i.estado,
                     i.cantidad_real,
                     i.hora_inicio,
+                    i.hora_llegada,
                     i.hora_termina as hora_fin,
                     i.cant_contador,
                     i.almacen_destino,
@@ -118,6 +134,8 @@ class InyeccionService:
                     i.observaciones,
                     COALESCE(i.pnc_total, 0) as pnc_total,
                     i.pnc_detalle,
+                    i.peso_bujes,
+                    i.peso_vela_maquina,
                     i.peso_lote,
                     i.entrada,
                     i.salida
@@ -149,6 +167,7 @@ class InyeccionService:
                     'fecha_display': InyeccionService._formatear_fecha_es(p['fecha']),
                     'hora_inicio': p['hora_inicio'] or (p['fecha'].strftime('%H:%M') if p['fecha'] else ''),
                     'hora_fin': p['hora_fin'] or (p['fecha_fin'].strftime('%H:%M') if p.get('fecha_fin') else ''),
+                    'hora_llegada': p['hora_llegada'] or '',
                     'id_codigo': p['id_codigo'],
                     'responsable': p['responsable'],
                     'cantidad_inyectada': buenas + pnc,  # total bruto inyectado
@@ -166,6 +185,8 @@ class InyeccionService:
                     'pnc_detalle': p['pnc_detalle'],
                     'entrada': _clean_num(p['entrada']),
                     'salida': _clean_num(p['salida']),
+                    'peso_bujes': _clean_num(p['peso_bujes']),
+                    'peso_vela_maquina': _clean_num(p['peso_vela_maquina']),
                     'peso_lote': _clean_num(p['peso_lote'])
                 })
 
@@ -287,14 +308,17 @@ class InyeccionService:
 
         registro.entrada = str(to_float(item.get('entrada') or turno.get('entrada_manual') or 0))
         registro.salida  = str(to_float(item.get('salida') or turno.get('salida_manual') or 0))
+        # El formulario mandaba peso_vela_maquina en el turno y se descartaba:
+        # no existía la columna.
+        registro.peso_vela_maquina = str(to_float(item.get('peso_vela_maquina') or turno.get('peso_vela_maquina') or 0))
 
         return cant_real, pnc_val
 
     @staticmethod
     def _calcular_tiempos_lote(registro, fecha_dt, cant_real):
         """
-        Calcula duración neta, descuento de pausas programadas y métricas de
-        tiempo del `registro` a partir de sus horas ya sincronizadas
+        Calcula duración y métricas de tiempo del `registro` (SIN descuento de
+        pausas: las máquinas de inyección no descansan) a partir de sus horas ya sincronizadas
         (registro.hora_inicio / registro.hora_termina). Si no hay ambas horas,
         no hace nada (el registro queda con los defaults de la columna).
 
@@ -305,7 +329,6 @@ class InyeccionService:
         errores de parseo, que solo se loguean (best-effort, no aborta el lote).
         """
         from backend.utils.formatters import calcular_metricas_inyeccion
-        from backend.services.pausas_service import PausasService
 
         h_inicio = registro.hora_inicio
         h_fin = registro.hora_termina
@@ -328,26 +351,13 @@ class InyeccionService:
             # error de digitar 6:50 en vez de 18:50) antes de persistir nada.
             InyeccionService.validar_duracion_turno(segundos)
 
-            descuento_info = PausasService.calcular_descuento_pausas_programadas(dt_inicio, dt_fin)
-            segundos_descuento = descuento_info['segundos_descuento']
-            segundos_netos = max(0, segundos - segundos_descuento)
-
-            registro.duracion_segundos = segundos_netos
-            registro.tiempo_total_minutos, registro.segundos_por_unidad = calcular_metricas_inyeccion(segundos_netos, cant_real)
-
-            if descuento_info['detalle']:
-                payload = {
-                    "descuento_programado_min": round(segundos_descuento / 60.0, 2),
-                    "detalle": descuento_info['detalle']
-                }
-                tag = f"[AUTO_BREAK]{json.dumps(payload, ensure_ascii=False)}[/AUTO_BREAK]"
-                obs = (registro.observaciones or "")
-                if "[AUTO_BREAK]" in obs and "[/AUTO_BREAK]" in obs:
-                    pre = obs.split("[AUTO_BREAK]")[0]
-                    post = obs.split("[/AUTO_BREAK]")[-1]
-                    registro.observaciones = (pre + tag + post).strip()
-                else:
-                    registro.observaciones = (obs + "\n" + tag).strip() if obs else tag
+            # Sin descuento de pausas (2026-09-25): las máquinas de inyección NO
+            # descansan, siguen trabajando durante desayuno/almuerzo -- descontar
+            # ese tiempo achicaba la duración y dejaba segundos_por_unidad y
+            # tiempo_total_minutos mejores de lo real. El descuento de pausas
+            # programadas sigue aplicando en Pulido (personas), no aquí.
+            registro.duracion_segundos = segundos
+            registro.tiempo_total_minutos, registro.segundos_por_unidad = calcular_metricas_inyeccion(segundos, cant_real)
 
             registro.fecha_inicia = dt_inicio
             registro.fecha_fin = dt_fin
@@ -543,9 +553,14 @@ class InyeccionService:
             'orden_produccion': primero.orden_produccion,
             'responsable': primero.responsable,
             'hora_inicio': primero.hora_inicio or '',
-            'hora_termina': datetime.now().strftime('%H:%M'),
+            # Hora en que terminó la máquina (la del reporte de turno), no la
+            # hora a la que se validó: antes salía datetime.now() y el PDF
+            # mostraba la hora de validación como "HORA TERMINA".
+            'hora_termina': primero.hora_termina or '',
+            'validado_por': primero.validado_por or '',
             'entrada_manual': float(primero.entrada or 0),
             'salida_manual': float(primero.salida or 0),
+            'peso_vela_maquina': float(primero.peso_vela_maquina or 0),
             'observaciones': primero.observaciones or '',
             'almacen_destino': primero.almacen_destino or '',
         }
@@ -553,6 +568,7 @@ class InyeccionService:
             'codigo_producto': r.id_codigo,
             'no_cavidades': r.cavidades,
             'disparos': r.cant_contador,
+            'produccion_teorica': r.produccion_teorica,
             'cantidad_real': r.cantidad_real,
             'manual_buenas': r.cantidad_real,  # ver docstring: evita restar PNC dos veces
             'pnc': r.pnc_total,
@@ -881,6 +897,21 @@ class InyeccionService:
 
                 disparos_payload = item_payload.get('disparos', None)
                 cavidades_payload = item_payload.get('no_cavidades', None)
+                # Peso por buje (kg) tecleado en la tabla de Validación. None =
+                # "no lo toques" (mismo contrato que disparos/cavidades).
+                peso_payload = item_payload.get('peso_bujes', None)
+                # Datos del turno (formulario de Validación): Entrada/Salida de
+                # material y Peso Vela Máquina (kg). Igual: None = no tocar.
+                turno_payload = data.get('turno') or {}
+                entrada_payload = turno_payload.get('entrada_manual', None)
+                salida_payload = turno_payload.get('salida_manual', None)
+                peso_vela_payload = turno_payload.get('peso_vela_maquina', None)
+                # Horas editadas en el formulario. Se validan AQUÍ, antes de tocar
+                # inventario/PNC: una hora inválida aborta toda la validación
+                # (ValueError -> 400) sin dejar nada a medias.
+                hora_inicio_payload = InyeccionService._normalizar_hora(turno_payload.get('hora_inicio'), 'Hora Inicio')
+                hora_termina_payload = InyeccionService._normalizar_hora(turno_payload.get('hora_termina'), 'Hora Termina')
+                hora_llegada_payload = InyeccionService._normalizar_hora(turno_payload.get('hora_llegada'), 'Hora Llegada')
                 # Desglose estructurado que el frontend YA envía por item.
                 pnc_list_item = item_payload.get('pnc_list', [])
                 pnc_pulido_list_item = item_payload.get('pnc_pulido_list', [])
@@ -1006,8 +1037,14 @@ class InyeccionService:
                 # Marcar registro de inyeccion como CERRADO
                 reg.validado_por = validador_actual
                 reg.estado = 'CERRADO'
-                reg.fecha_fin = datetime.now()
                 reg.pnc_total = pnc_inyeccion
+                # fecha_fin es el FIN DEL TRABAJO (la que dejó el reporte de turno),
+                # no el momento de validar: antes se pisaba siempre con now() y el
+                # lote quedaba "terminado" a la hora en que Zoe lo validó (p. ej.
+                # HORA TERMINA 16:55 pero fecha_fin 21:14). Ningún reporte del repo
+                # depende de ese valor. Solo se rellena si no había ninguna.
+                if reg.fecha_fin is None:
+                    reg.fecha_fin = datetime.now()
                 # `cantidad_real` queda con la neta (buenas) auditada en esta
                 # validación -- antes se dejaba el bruto original del reporte
                 # de máquina sin tocar, y WoExportService._lineas_inyeccion
@@ -1019,6 +1056,38 @@ class InyeccionService:
                     reg.cavidades = to_int(cavidades_payload)
                 if disparos_payload is not None or cavidades_payload is not None:
                     reg.produccion_teorica = to_float(reg.cant_contador) * to_float(reg.cavidades or 1)
+                # Peso: el input "Peso (kg)" de la tabla de Validación nunca se
+                # enviaba ni se guardaba (peso_bujes y peso_lote quedaban en 0 en
+                # todo lote de MES). peso_lote = neta validada x peso por buje, misma
+                # fórmula que registrar_lote; de ahí sale el reparto de costo a WO
+                # (WoExportService._asignar_porcentajes).
+                if peso_payload is not None:
+                    reg.peso_bujes = max(0.0, to_float(peso_payload))
+                if to_float(reg.peso_bujes) > 0:
+                    reg.peso_lote = str(round(buenas_neta * to_float(reg.peso_bujes), 4))
+                # Entrada/Salida/Peso Vela del formulario: también se perdían al
+                # validar (solo registrar_lote los guardaba). Valores negativos
+                # o basura quedan en 0, igual que el peso por buje.
+                if entrada_payload is not None:
+                    reg.entrada = str(max(0.0, to_float(entrada_payload)))
+                if salida_payload is not None:
+                    reg.salida = str(max(0.0, to_float(salida_payload)))
+                if peso_vela_payload is not None:
+                    reg.peso_vela_maquina = str(max(0.0, to_float(peso_vela_payload)))
+                if hora_llegada_payload is not None:
+                    reg.hora_llegada = hora_llegada_payload
+                # Horas editadas: se guardan y se RECALCULAN duración y métricas de
+                # tiempo (mismo cálculo y mismo guard de >12h que el reporte de
+                # turno, sin descuento de pausas), sobre las piezas inyectadas.
+                # También deja fecha_inicia/fecha_fin coherentes con las horas.
+                if hora_inicio_payload is not None or hora_termina_payload is not None:
+                    if hora_inicio_payload is not None:
+                        reg.hora_inicio = hora_inicio_payload
+                    if hora_termina_payload is not None:
+                        reg.hora_termina = hora_termina_payload
+                    InyeccionService._calcular_tiempos_lote(
+                        reg, reg.fecha_inicia or datetime.now(), cantidad_inyectada
+                    )
 
                 items_resultado.append({
                     'codigo':             codigo,
@@ -1226,7 +1295,6 @@ class InyeccionService:
         las traduce a HTTP.
         """
         from backend.utils.formatters import normalizar_codigo, calcular_metricas_inyeccion
-        from backend.services.pausas_service import PausasService
 
         id_iny = data.get('id_inyeccion')
         cierres = int(data.get('cierres', 0))
@@ -1285,24 +1353,10 @@ class InyeccionService:
                     delta_seg = int((prod.fecha_fin - fecha_base).total_seconds())
                     InyeccionService.validar_duracion_turno(delta_seg)
 
-                    descuento_info = PausasService.calcular_descuento_pausas_programadas(fecha_base, prod.fecha_fin)
-                    segundos_descuento = descuento_info['segundos_descuento']
-                    prod.duracion_segundos = max(0, delta_seg - segundos_descuento)
+                    # Sin descuento de pausas (2026-09-25): las máquinas de
+                    # inyección no descansan; ver _calcular_tiempos_lote.
+                    prod.duracion_segundos = max(0, delta_seg)
                     prod.tiempo_total_minutos, prod.segundos_por_unidad = calcular_metricas_inyeccion(prod.duracion_segundos, piezas_inyectadas)
-
-                    if descuento_info['detalle']:
-                        payload = {
-                            "descuento_programado_min": round(segundos_descuento / 60.0, 2),
-                            "detalle": descuento_info['detalle']
-                        }
-                        tag = f"[AUTO_BREAK]{json.dumps(payload, ensure_ascii=False)}[/AUTO_BREAK]"
-                        obs = (prod.observaciones or "")
-                        if "[AUTO_BREAK]" in obs and "[/AUTO_BREAK]" in obs:
-                            pre = obs.split("[AUTO_BREAK]")[0]
-                            post = obs.split("[/AUTO_BREAK]")[-1]
-                            prod.observaciones = (pre + tag + post).strip()
-                        else:
-                            prod.observaciones = (obs + "\n" + tag).strip() if obs else tag
                 except TurnoInvalidoException:
                     raise
                 except Exception as ex:

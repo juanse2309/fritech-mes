@@ -100,6 +100,10 @@ def validar_lote_inyeccion(id_inyeccion):
     except ValidadorRequeridoException as e:
         return api_error(e.message, status_code=400, code="VALIDADOR_REQUERIDO")
 
+    except TurnoInvalidoException as e:
+        # Horas editadas en Validación que dan una duración imposible (>12h).
+        return api_error(e.message, status_code=400, code="TURNO_DURACION_INVALIDA")
+
     except ValueError as e:
         return api_error(str(e), status_code=400)
 
