@@ -14,6 +14,7 @@ producción). Datos con prefijo TEST- limpiados en setUp/tearDown.
 """
 import os
 import unittest
+from unittest import mock
 
 os.environ.setdefault("WO_SYNC_API_KEY", "clave_de_prueba_secreta_123")
 
@@ -31,6 +32,14 @@ CODIGO = "TEST-9101"
 
 class _Base(unittest.TestCase):
     def setUp(self):
+        # validar_lote genera el PDF del lote y lo SUBE a Drive. Con un token valido en el
+        # .env local esto subiria archivos de prueba a la carpeta REAL (paso el 2026-09-25):
+        # Drive queda siempre simulado en estos tests.
+        self._patch_drive = mock.patch(
+            'backend.services.drive_service.DriveService.subir_archivo',
+            return_value='https://drive.test/mock')
+        self.mock_subir = self._patch_drive.start()
+        self.addCleanup(self._patch_drive.stop)
         self.ctx = app.test_request_context()
         self.ctx.push()
         self._limpiar()
@@ -285,6 +294,36 @@ class TestValidacionHorasEditadas(_Base):
         res = InyeccionService.obtener_pendientes_validacion()
         lote = [d for d in res['data'] if d['id_inyeccion'] == ID_INY][0]
         self.assertEqual(lote['hora_llegada'], '06:10')
+
+
+class TestEstadoPdfEnLaRespuesta(_Base):
+    """La respuesta de validar_lote informa si el PDF llego a Drive (la pantalla lo avisa)."""
+
+    def test_pdf_subido_devuelve_estado_y_url(self):
+        self._lote_pendiente()
+        res = self._validar()
+        self.assertEqual(res['pdf_status'], 'subido')
+        self.assertEqual(res['pdf_url'], 'https://drive.test/mock')
+        self.assertTrue(self.mock_subir.called)
+
+    def test_drive_caido_no_bloquea_la_validacion_y_lo_informa(self):
+        self._lote_pendiente()
+        self.mock_subir.side_effect = RuntimeError("invalid_grant: Token has been expired or revoked.")
+        res = self._validar()
+        self.assertTrue(res['success'])
+        self.assertEqual(res['pdf_status'], 'generado_no_subido')
+        self.assertIsNone(res['pdf_url'])
+        f = self._fila()
+        self.assertEqual(f.estado, 'CERRADO', "la validacion queda hecha aunque Drive falle")
+        self.assertEqual(int(f.cantidad_real), 330)
+
+    def test_drive_no_configurado_tambien_es_no_subido(self):
+        from backend.services.drive_service import DriveNoConfiguradoException
+        self._lote_pendiente()
+        self.mock_subir.side_effect = DriveNoConfiguradoException("faltan variables")
+        res = self._validar()
+        self.assertEqual(res['pdf_status'], 'generado_no_subido')
+        self.assertEqual(self._fila().estado, 'CERRADO')
 
 
 class TestInyeccionSinDescuentoDePausas(_Base):

@@ -593,6 +593,19 @@ const ModuloInyeccion = {
         if (btnSubmitOriginal) btnSubmitOriginal.classList.add('d-none');
     },
 
+    // Texto de aviso (HTML seguro, sin datos del servidor) cuando el PDF del lote
+    // no quedó en Drive; '' si se subió o si el backend no informó estado (backend
+    // viejo): en ese caso no se muestra nada, nunca un falso aviso.
+    _avisoPdfNoSubido: function (data) {
+        const estado = data && data.pdf_status;
+        if (!estado || estado === 'subido') return '';
+        console.warn('[Inyeccion] PDF del lote no quedó en Drive. Estado:', estado);
+        const detalle = estado === 'generado_no_subido'
+            ? 'El PDF se generó pero <b>no se pudo subir a Drive</b>.'
+            : '<b>No se pudo generar el PDF</b> del lote.';
+        return `<span style="color:#b45309;">${detalle}<br>La validación quedó guardada; avisa a soporte para regenerar el PDF.</span>`;
+    },
+
     validarRegistro: async function (idInyeccion) {
         if (!idInyeccion) return;
 
@@ -700,7 +713,22 @@ const ModuloInyeccion = {
                 mostrarLoading(false);
 
                 if (res && res.success) {
-                    Swal.fire('¡Validado!', res.data?.message, 'success');
+                    // La validación ya quedó guardada. Si el PDF del lote no llegó a
+                    // Drive se avisa en el MISMO diálogo de éxito (mismo botón, no
+                    // bloquea ni agrega pasos): antes el backend devolvía pdf_status
+                    // y la pantalla lo ignoraba, así que un token de Drive vencido
+                    // dejó dos días sin PDF (23-25 sep 2026) sin que nadie lo notara.
+                    const avisoPdf = this._avisoPdfNoSubido(res.data);
+                    if (avisoPdf) {
+                        Swal.fire({
+                            icon: 'warning',
+                            title: '¡Validado!',
+                            html: `${escapeHtml(res.data?.message || '')}<br><br>${avisoPdf}`,
+                            confirmButtonText: 'Entendido'
+                        });
+                    } else {
+                        Swal.fire('¡Validado!', res.data?.message, 'success');
+                    }
                     if (window.FormHelpers) window.FormHelpers.limpiarPersistencia('form-inyeccion');
                     this.limpiarFormularioValidacion(true);
                     if (window.ModuloHistorial && typeof window.ModuloHistorial.cargarHistorial === 'function') {
