@@ -651,6 +651,7 @@ function cargarPagina(nombrePagina, pushToHistory = true) {
         'admin-clientes': window.ModuloAdminClientes,
         'metals-produccion': window.ModuloMetals,
         'metals-dashboard': window.ModuloMetals,
+        'metals-comercial': window.ModuloMetalsComercial,
         'asistencia': window.ModuloAsistencia,
         'notificaciones': window.ModuloNotificaciones,
         'auditoria-op': window.ModuloAuditoriaOP,
@@ -673,7 +674,7 @@ function cargarPagina(nombrePagina, pushToHistory = true) {
 
     // LÓGICA ESPECIAL PARA FRIMETALS (Páginas dinámicas)
     let pageIdToShow = nombrePagina;
-    if (nombrePagina.startsWith('metals-') && nombrePagina !== 'metals-dashboard' && nombrePagina !== 'metals-pedidos') {
+    if (nombrePagina.startsWith('metals-') && nombrePagina !== 'metals-dashboard' && nombrePagina !== 'metals-pedidos' && nombrePagina !== 'metals-comercial') {
         pageIdToShow = 'metals-produccion'; // Todas usan el mismo host dinámico
     }
 
@@ -831,6 +832,7 @@ function inicializarModulo(nombrePagina) {
         'admin-clientes': window.ModuloAdminClientes,
         'metals-produccion': window.ModuloMetals,
         'metals-dashboard': window.ModuloMetals,
+        'metals-comercial': window.ModuloMetalsComercial,
         'metals-torno': window.ModuloMetals,
         'metals-laser': window.ModuloMetals,
         'metals-soldadura': window.ModuloMetals,
@@ -964,6 +966,7 @@ function inicializarModulo(nombrePagina) {
                 'admin-clientes': window.ModuloAdminClientes,
                 'metals-produccion': window.ModuloMetals,
                 'metals-dashboard': window.ModuloMetals,
+                'metals-comercial': window.ModuloMetalsComercial,
                 'asistencia': window.ModuloAsistencia,
                 'inyeccion': window.ModuloInyeccion, // MAPEADO CORRECTO
                 'auditoria-op': window.ModuloAuditoriaOP,

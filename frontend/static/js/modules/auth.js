@@ -7,7 +7,7 @@
 const FRIMETALS_ADMIN_PAGES = [
     'inventario', 'almacen', 'historial', 'metals-pedidos',
     'pedidos', 'asistencia', 'metals-dashboard', 'metals-produccion', 'facturacion',
-    'cartera'
+    'cartera', 'metals-comercial'
 ];
 
 const AuthModule = {

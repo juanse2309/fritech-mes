@@ -558,6 +558,8 @@
             <!-- SECCION FRIMETALS -->
             <li class="menu-item" data-page="metals-dashboard"> <a href="#"><i
                         class="fas fa-chart-pie"></i><span>Dashboard de Metales</span></a> </li>
+            <li class="menu-item" data-page="metals-comercial"> <a href="#"><i
+                        class="fas fa-chart-line"></i><span>Dashboard Comercial</span></a> </li>
             <li class="menu-item" data-page="metals-produccion"> <a href="#"><i
                         class="fas fa-clipboard-list"></i><span>Formularios</span></a> </li>
             <li class="menu-item" data-page="metals-pedidos"> <a href="#" onclick="cargarPagina('metals-pedidos')"><i
@@ -5453,6 +5455,152 @@
         </div>
 
         <!-- MÓDULO CARTERA -->
+        <!-- DASHBOARD COMERCIAL FRIMETALS (ventas + cartera de World Office).
+             Página 'metals-comercial': el prefijo metals- hace que auth.js la oculte
+             en FriParts; en Frimetals solo entra si está en FRIMETALS_ADMIN_PAGES. -->
+        <div id="metals-comercial-page" class="page">
+            <style>
+                #metals-comercial-page .mc-preset.active { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+                #metals-comercial-page .card-header h6 { color: #1e293b; }
+            </style>
+            <header class="top-bar">
+                <button class="btn-icon" id="toggle-sidebar-metals-comercial">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <div class="page-title">
+                    <h1><i class="fas fa-chart-line"></i> Dashboard Comercial</h1>
+                    <p class="subtitle">Ventas y cartera desde World Office · <span id="mc-periodo-txt">—</span></p>
+                </div>
+                <div class="top-controls d-flex align-items-center flex-wrap gap-2">
+                    <div class="btn-group btn-group-sm" role="group" aria-label="Periodos rápidos">
+                        <button type="button" class="btn btn-outline-secondary mc-preset" data-mc-preset="mes" onclick="ModuloMetalsComercial.preset('mes')">Este mes</button>
+                        <button type="button" class="btn btn-outline-secondary mc-preset active" data-mc-preset="anio" onclick="ModuloMetalsComercial.preset('anio')">Este año</button>
+                        <button type="button" class="btn btn-outline-secondary mc-preset" data-mc-preset="12m" onclick="ModuloMetalsComercial.preset('12m')">Últimos 12 meses</button>
+                        <button type="button" class="btn btn-outline-secondary mc-preset" data-mc-preset="anio_pasado" onclick="ModuloMetalsComercial.preset('anio_pasado')">Año pasado</button>
+                    </div>
+                    <input type="date" id="mc-fecha-desde" class="form-control form-control-sm" style="width:auto;" title="Desde">
+                    <input type="date" id="mc-fecha-hasta" class="form-control form-control-sm" style="width:auto;" title="Hasta">
+                    <button class="btn btn-primary btn-sm" onclick="ModuloMetalsComercial.aplicarFiltro()">
+                        <i class="fas fa-search"></i> Analizar
+                    </button>
+                </div>
+            </header>
+
+            <div class="container-fluid py-3" style="background-color:#f8fafc;">
+                <div id="mc-aviso" style="display:none;"></div>
+                <div id="mc-contenido" style="transition: opacity .2s;">
+
+                    <div class="row g-3 mb-3" id="mc-kpis"></div>
+                    <div class="row g-3 mb-4" id="mc-kpis2"></div>
+
+                    <div class="row g-3 mb-4">
+                        <div class="col-lg-8">
+                            <div class="card shadow-sm border-0 h-100" style="border-radius:16px;">
+                                <div class="card-header bg-white border-0 pt-3 pb-0"><h6 class="fw-bold mb-0">Ventas por mes (millones $) · periodo vs año previo</h6></div>
+                                <div class="card-body"><div style="position:relative; height:260px;"><canvas id="mc-chart-mensual"></canvas></div></div>
+                            </div>
+                        </div>
+                        <div class="col-lg-4">
+                            <div class="card shadow-sm border-0 h-100" style="border-radius:16px;">
+                                <div class="card-header bg-white border-0 pt-3 pb-0">
+                                    <h6 class="fw-bold mb-0">Cumplimiento: ventas vs pedidos (%)</h6>
+                                    <div class="text-muted" style="font-size:0.72rem;">100% = lo vendido iguala lo pedido ese mes</div>
+                                </div>
+                                <div class="card-body"><div style="position:relative; height:240px;"><canvas id="mc-chart-cumplimiento"></canvas></div></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card shadow-sm border-0 mb-4" style="border-radius:16px;">
+                        <div class="card-header bg-white border-0 pt-3 pb-0">
+                            <h6 class="fw-bold mb-0"><i class="fas fa-table me-2 text-primary"></i>Pedidos vs facturado, mes a mes</h6>
+                            <div class="text-muted" style="font-size:0.72rem;">
+                                Pedidos = pedidos de venta en WO · Facturado = facturas de venta menos notas crédito · millones $ ·
+                                Diferencia = pedidos − facturado (positivo: pedido aún sin facturar)
+                            </div>
+                        </div>
+                        <div class="card-body pt-2"><div class="table-responsive" id="mc-tabla-mensual"></div></div>
+                    </div>
+
+                    <div class="row g-3 mb-4">
+                        <div class="col-lg-4">
+                            <div class="card shadow-sm border-0 h-100" style="border-radius:16px;">
+                                <div class="card-header bg-white border-0 pt-3 pb-0"><h6 class="fw-bold mb-0"><i class="fas fa-user-tie me-2 text-primary"></i>Ventas por vendedor</h6></div>
+                                <div class="card-body" id="mc-vendedores"></div>
+                            </div>
+                        </div>
+                        <div class="col-lg-4">
+                            <div class="card shadow-sm border-0 h-100" style="border-radius:16px;">
+                                <div class="card-header bg-white border-0 pt-3 pb-0"><h6 class="fw-bold mb-0"><i class="fas fa-coins me-2 text-info"></i>Productos que más generan ($)</h6></div>
+                                <div class="card-body" id="mc-prod-ventas"></div>
+                            </div>
+                        </div>
+                        <div class="col-lg-4">
+                            <div class="card shadow-sm border-0 h-100" style="border-radius:16px;">
+                                <div class="card-header bg-white border-0 pt-3 pb-0"><h6 class="fw-bold mb-0"><i class="fas fa-boxes me-2 text-success"></i>Productos que más se venden (unidades)</h6></div>
+                                <div class="card-body" id="mc-prod-unidades"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row g-3 mb-4">
+                        <div class="col-lg-6">
+                            <div class="card shadow-sm border-0 h-100" style="border-radius:16px;">
+                                <div class="card-header bg-white border-0 pt-3 pb-0"><h6 class="fw-bold mb-0"><i class="fas fa-users me-2 text-primary"></i>Top clientes</h6></div>
+                                <div class="card-body" id="mc-clientes"></div>
+                            </div>
+                        </div>
+                        <div class="col-lg-6">
+                            <div class="card shadow-sm border-0 h-100" style="border-radius:16px;">
+                                <div class="card-header bg-white border-0 pt-3 pb-0"><h6 class="fw-bold mb-0"><i class="fas fa-map-marker-alt me-2" style="color:#8b5cf6;"></i>Ventas por zona</h6></div>
+                                <div class="card-body" id="mc-zonas"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row g-3 mb-4">
+                        <div class="col-lg-6">
+                            <div class="card shadow-sm border-0 h-100" style="border-radius:16px;">
+                                <div class="card-header bg-white border-0 pt-3 pb-0">
+                                    <h6 class="fw-bold mb-0"><i class="fas fa-industry me-2 text-success"></i>Pedidos en planta</h6>
+                                    <div class="text-muted" style="font-size:0.72rem;">Pedidos creados en la app de Frimetals dentro del rango, por estado</div>
+                                </div>
+                                <div class="card-body" id="mc-pedidos-planta"></div>
+                            </div>
+                        </div>
+                        <div class="col-lg-6">
+                            <div class="card shadow-sm border-0 h-100" style="border-radius:16px;">
+                                <div class="card-header bg-white border-0 pt-3 pb-0">
+                                    <h6 class="fw-bold mb-0"><i class="fas fa-user-plus me-2" style="color:#7c3aed;"></i>Clientes nuevos del periodo</h6>
+                                    <div class="text-muted" style="font-size:0.72rem;">Primera compra en toda la historia de WO dentro del rango</div>
+                                </div>
+                                <div class="card-body" id="mc-clientes-nuevos"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row g-3 mb-4">
+                        <div class="col-lg-6">
+                            <div class="card shadow-sm border-0 h-100" style="border-radius:16px;">
+                                <div class="card-header bg-white border-0 pt-3 pb-0">
+                                    <h6 class="fw-bold mb-0"><i class="fas fa-wallet me-2 text-danger"></i>Cartera por edades (millones $)</h6>
+                                    <div class="text-muted" style="font-size:0.72rem;">Foto de hoy: no depende del rango de fechas</div>
+                                </div>
+                                <div class="card-body"><div style="position:relative; height:230px;"><canvas id="mc-chart-edades"></canvas></div></div>
+                            </div>
+                        </div>
+                        <div class="col-lg-6">
+                            <div class="card shadow-sm border-0 h-100" style="border-radius:16px;">
+                                <div class="card-header bg-white border-0 pt-3 pb-0"><h6 class="fw-bold mb-0"><i class="fas fa-exclamation-triangle me-2 text-danger"></i>Mayores saldos vencidos</h6></div>
+                                <div class="card-body" id="mc-morosos"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
         <div id="cartera-page" class="page">
             <style>
                 #cartera-page .table th,
@@ -6231,6 +6379,7 @@
     <script src="/static/js/modules/cartera.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/costo.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/metals.js?v={{ RELEASE_VERSION }}"></script>
+    <script src="/static/js/modules/metals_comercial.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/portal_client.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/admin_clientes.js?v={{ RELEASE_VERSION }}"></script>
     <script src="/static/js/modules/asistencia.js?v={{ RELEASE_VERSION }}"></script>

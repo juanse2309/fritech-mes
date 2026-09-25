@@ -123,6 +123,16 @@ class Empresa:
     # valor real que le corresponda si usa otro.
     PREFIJO_DOCUMENTO_WO_PEDIDO = os.getenv('EMPRESA_PREFIJO_DOCUMENTO_WO_PEDIDO', 'PED')
 
+    # Fragmentos de nombre (separados por coma, sin distinguir mayúsculas) de
+    # clientes que son OTRA empresa del mismo grupo. El dashboard comercial
+    # los cuenta como venta normal (decisión 2026-09-25: FRIPARTS SAS se
+    # incluye en las ventas de Frimetals) pero los marca con una etiqueta
+    # "entre empresas" para que no inflen la lectura del negocio sin que se
+    # note. Default 'FRIPARTS': no requiere variable nueva en Frimetals.
+    CLIENTES_ENTRE_EMPRESAS = [
+        s.strip().upper() for s in os.getenv('EMPRESA_CLIENTES_ENTRE_EMPRESAS', 'FRIPARTS').split(',') if s.strip()
+    ]
+
 
 class Almacenes:
     """Nombres de almacenes estandarizados."""

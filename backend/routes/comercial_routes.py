@@ -7,6 +7,9 @@ from backend.utils.auth_middleware import require_role, ROL_ADMINS, ROL_COMERCIA
 from backend.core.responses import api_success, api_error
 from backend.core import task_runner
 from backend.services.comercial_service import ComercialHistoricoService
+from backend.services.comercial_dashboard_service import ComercialDashboardService
+from backend.schemas.comercial_schemas import ComercialDashboardQuery
+from pydantic import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +132,28 @@ def api_obtener_crecimiento_clientes():
     except Exception as e:
         logger.error(f"[COMERCIAL_ROUTES] Error en /api/comercial/crecimiento-clientes: {e}")
         return jsonify({'success': False, 'error': 'Error interno calculando el crecimiento de clientes', 'detalle': str(e)}), 500
+
+
+@comercial_bp.route('/api/comercial/dashboard', methods=['GET'])
+@require_role(ROL_ADMINS)
+def api_comercial_dashboard():
+    """
+    Dashboard comercial con filtro por rango de fechas (?desde=&hasta=, ambos
+    opcionales). Solo administración: incluye ventas de todos los vendedores.
+    Controlador delgado: valida el query string y delega todo al servicio.
+    """
+    try:
+        filtros = ComercialDashboardQuery.model_validate(request.args.to_dict())
+    except ValidationError as e:
+        detalles = [f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}" for err in e.errors()]
+        return api_error('Parámetros inválidos', 400, detalles=detalles)
+
+    try:
+        data = ComercialDashboardService.obtener_dashboard(filtros.desde, filtros.hasta)
+        return api_success(data)
+    except Exception as e:
+        logger.error(f"[COMERCIAL_ROUTES] Error en /api/comercial/dashboard: {e}")
+        return api_error('No fue posible calcular el dashboard comercial.', 500)
 
 
 def _generar_excel_comercial_task(task_id, user_id, username, user_role, start_year, end_year, vendedor_filtro, fecha_corte):
