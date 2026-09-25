@@ -67,6 +67,8 @@ check_*.py
 verify_*.py
 !tests/
 !tests/*.py
+!tests/e2e/
+!tests/e2e/*.py
 
 
 # Carpetas de trabajo locales
